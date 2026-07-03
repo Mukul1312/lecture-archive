@@ -51,6 +51,8 @@ lines = [transliterate(c) for c in CHUNKS]
 out = ROOT / "data" / "narration" / "diary_chunks.txt"
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+# display copy keeps the proper diacritics (the model read the ASCII; devotees read this)
+(out.parent / "diary_display.txt").write_text("\n".join(CHUNKS) + "\n", encoding="utf-8")
 
 for i, l in enumerate(lines, 1):
     print(f"{i:02d}  {l}")

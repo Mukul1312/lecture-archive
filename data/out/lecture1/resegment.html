@@ -107,7 +107,7 @@ async function boot(){
   if(!SEG.length){
     try{
       const prop=await (await fetch("./resegment_proposed.json")).json();
-      SEG=prop.map(s=>({id:"s"+s.id,start:s.start,end:s.end,text:"",decision:"keep"}));
+      SEG=prop.map(s=>({id:"s"+s.id,start:s.start,end:s.end,text:s.text||"",decision:s.decision||"keep",reason:s.reason||""}));
     }catch(e){ $("#status").textContent="ERROR loading resegment_proposed.json: "+e; return; }
   }
   try{ $("#tref").textContent=await (await fetch("./transcript_ref.txt")).text(); }

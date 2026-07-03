@@ -1,0 +1,5 @@
+# Deploy ONLY the curated narration site. NEVER expose this ML research repo
+# (docs, scripts, experiment labels, clips) to the public.
+/*
+!/site
+!/vercel.json
