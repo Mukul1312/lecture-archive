@@ -1,0 +1,5 @@
+slug	total_speech_min	ggs_min	ggs_pct_of_speech	hindi_min	hindi_pct_of_lidd	lid_coverage_pct	uncertain_min	flags
+ggm-hindi-lecture-01	68.0	68.3	100.4	31.0	53.5	84.9	19.0	-
+ggm-hindi-lecture-02	38.3	38.4	100.3	20.5	71.1	75.1	6.4	-
+ggm-hindi-lecture-03	51.5	51.0	99.2	15.5	45.2	67.1	10.9	-
+ggm-hindi-lecture-04	52.0	52.4	100.6	18.4	48.8	72.0	8.2	low_margin(0.097)
