@@ -49,6 +49,20 @@ LABELS = {
 }
 
 
+def purge_hf_cache(hf_id):
+    """Delete a model's HF hub cache dir to free disk between A/B models (4 large models won't co-fit)."""
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        base = Path(HF_HUB_CACHE)
+    except Exception:
+        base = Path.home() / ".cache" / "huggingface" / "hub"
+    d = base / ("models--" + hf_id.replace("/", "--"))
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
+        return "removed"
+    return "not-found"
+
+
 def build_whisper(hf_id, base, dev):
     from transformers import (pipeline, WhisperForConditionalGeneration,
                               WhisperProcessor, GenerationConfig)
@@ -125,6 +139,8 @@ def main():
     ap.add_argument("--slug", help="one lecture (default: all)")
     ap.add_argument("--n", type=int, default=25, help="clips to sample")
     ap.add_argument("--models", default=DEFAULT_MODELS)
+    ap.add_argument("--keep-cache", action="store_true",
+                    help="don't delete each model's HF cache after use (needs disk for all models at once)")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -142,13 +158,16 @@ def main():
     results = {c: {} for c in clips}  # clip -> {spec: text}
     for spec in specs:
         print(f"\n=== loading {spec} ===", file=sys.stderr)
+        cache_id = None
         try:
             if spec.startswith("whisper:"):
                 body = spec[len("whisper:"):]
                 hf_id, _, base = body.partition("@")
                 base = base or "openai/whisper-large-v2"
+                cache_id = hf_id
                 transcribe, handle = build_whisper(hf_id, base, dev)
             elif spec.startswith("indicconformer"):
+                cache_id = "ai4bharat/indic-conformer-600m-multilingual"
                 dec = spec.split(":", 1)[1] if ":" in spec else "rnnt"
                 transcribe, handle = build_indicconformer(dec, dev)
             else:
@@ -158,6 +177,8 @@ def main():
             print(f"  !! load failed for {spec}: {e}", file=sys.stderr)
             for c in clips:
                 results[c][spec] = f"[[LOAD FAILED: {e}]]"
+            if cache_id and not a.keep_cache:
+                purge_hf_cache(cache_id)  # drop any partial download so the next model has room
             continue
         for i, c in enumerate(clips, 1):
             try:
@@ -169,6 +190,8 @@ def main():
         del handle, transcribe
         if dev == "cuda":
             torch.cuda.empty_cache()
+        if cache_id and not a.keep_cache:
+            print(f"  purged {cache_id} cache: {purge_hf_cache(cache_id)}", file=sys.stderr)
 
     # write JSONL + gallery
     OUT.mkdir(parents=True, exist_ok=True)
