@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--min-sec", type=float, default=8.0)
     ap.add_argument("--max-sec", type=float, default=18.0)
     ap.add_argument("--decoder", default="rnnt", choices=["rnnt", "ctc"], help="IndicConformer decoder")
+    ap.add_argument("--asr", default="indicwhisper", choices=["indicwhisper", "indicconformer"],
+                    help="indicwhisper = ungated Whisper-Hindi drop-in (default); indicconformer = gated "
+                         "AI4Bharat (needs HF access granted)")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -84,20 +87,31 @@ def main():
 
     from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
     vad = load_silero_vad()
-    from transformers import AutoModel
-    print("loading IndicConformer-600M ...", file=sys.stderr)
-    asr = AutoModel.from_pretrained("ai4bharat/indic-conformer-600m-multilingual",
-                                    trust_remote_code=True).to(dev).eval()
+    if a.asr == "indicconformer":
+        from transformers import AutoModel
+        print("loading IndicConformer-600M (RNNT) ...", file=sys.stderr)
+        model = AutoModel.from_pretrained("ai4bharat/indic-conformer-600m-multilingual",
+                                          trust_remote_code=True).to(dev).eval()
 
-    def transcribe(wav_path):
-        w, sr = torchaudio.load(wav_path)
-        if w.shape[0] > 1:
-            w = w.mean(0, keepdim=True)
-        if sr != 16000:
-            w = torchaudio.transforms.Resample(sr, 16000)(w)
-        with torch.no_grad():
-            out = asr(w.to(dev), "hi", a.decoder)
-        return (out[0] if isinstance(out, (list, tuple)) else out)
+        def transcribe(wav_path):
+            w, sr = torchaudio.load(wav_path)
+            if w.shape[0] > 1:
+                w = w.mean(0, keepdim=True)
+            if sr != 16000:
+                w = torchaudio.transforms.Resample(sr, 16000)(w)
+            with torch.no_grad():
+                out = model(w.to(dev), "hi", a.decoder)
+            return out[0] if isinstance(out, (list, tuple)) else out
+    else:
+        from transformers import pipeline
+        print("loading IndicWhisper (parthiv11/indic_whisper_nodcil) ...", file=sys.stderr)
+        pipe = pipeline("automatic-speech-recognition", model="parthiv11/indic_whisper_nodcil",
+                        device=(0 if dev == "cuda" else -1), chunk_length_s=30)
+        pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
+            language="hi", task="transcribe")
+
+        def transcribe(wav_path):
+            return pipe(wav_path)["text"]
 
     langs = set(a.langs.split(","))
     slugs = [a.slug] if a.slug else [p.name for p in sorted(HI.iterdir()) if p.is_dir()]
@@ -137,7 +151,7 @@ def main():
         print(f"  {slug}: {len(rows)} clips, {sec/60:.1f}min from {len(spans)} spans / {len(segs)} vad segs")
 
     print(f"\n==== HINDI CLIP SET v2 ==== {tot_clips} clips, {tot_sec/60:.0f}min "
-          f"(Silero-VAD cuts + IndicConformer-{a.decoder})")
+          f"(Silero-VAD cuts + {a.asr})")
     print("NEXT: rebuild the review gallery; drafts should need only light edits now.")
 
 
