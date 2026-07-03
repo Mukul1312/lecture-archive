@@ -26,7 +26,7 @@ GROUPS = [
     ("ory", "MMS said: Odia", "Only 7 windows in all 116 min. Is even this Odia, or Hindi?"),
     ("eng", "MMS said: English", "Only 1 window total; his English is embedded in Hindi, not pure."),
 ]
-TRUTH = ["Hindi speech", "Kirtana (sung)", "Odia speech", "English", "Noise/unclear"]
+TRUTH = ["Hindi speech", "Kirtana (sung)", "Bengali", "Odia speech", "English", "Sanskrit", "Noise/unclear"]
 
 HEAD = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>MMS-LID ear-check — label it</title>
@@ -68,7 +68,7 @@ const KEY="lid_review_v1", TRUTH=%TRUTH%, GROUPS=%GROUPS%;
 function load(){try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}}
 let S=load();
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
-function truths(id){return (S[id]&&S[id].truth)||[]}         // multi-select: an array of labels
+function truths(id){const t=S[id]&&S[id].truth; return Array.isArray(t)?t:(t?[t]:[])}  // tolerate old string values
 function render(){
   document.querySelectorAll('.clip').forEach(c=>{
     const id=c.dataset.clip, t=truths(id);
@@ -96,7 +96,7 @@ document.addEventListener('click',e=>{
   const l=e.target.closest('.opts label'); if(!l) return;
   const c=l.closest('.clip'), id=c.dataset.clip, v=l.dataset.v;
   S[id]=S[id]||{}; S[id].mms=c.dataset.mms;
-  const set=new Set(S[id].truth||[]); set.has(v)?set.delete(v):set.add(v);   // toggle membership
+  const set=new Set(truths(id)); set.has(v)?set.delete(v):set.add(v);   // toggle membership (string-safe)
   S[id].truth=[...set]; save(); render();
 });
 document.addEventListener('input',e=>{
