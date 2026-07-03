@@ -55,9 +55,10 @@ HEAD = """<!doctype html><html><head><meta charset="utf-8">
  .done{outline:1px solid #3a5f3a}
 </style></head><body><div class="w">
 <h1>MMS-LID ear-check — what is each clip really?</h1>
-<p class="note">MMS-LID called only 34% of his speech "Hindi" and scattered the rest. For each clip, mark what
-it <b>actually</b> is. Watch the tally: if the "Nepali/Gujarati/Assamese" groups fill up with <b>Hindi speech</b>,
-that proves no language-ID can filter his accent. Autosaves here; hit <b>Download</b> when done.</p>
+<p class="note">MMS-LID called only 34% of his speech "Hindi" and scattered the rest. For each clip, tick
+<b>every</b> label that applies (a clip can be Hindi + embedded English, or Hindi with a bit of kirtana at the edge).
+Watch the tally: if "Nepali/Gujarati/Assamese" fill up with <b>Hindi speech</b>, that proves no language-ID can
+filter his accent. Autosaves here; hit <b>Download</b> when done.</p>
 <div class="bar"><button onclick="dl()">⬇ Download labels</button>
 <button class="ghost" onclick="if(confirm('Clear all?')){localStorage.removeItem(KEY);location.reload()}">Clear</button>
 <span id="prog"></span><div class="tally" id="tally"></div></div>
@@ -67,24 +68,25 @@ const KEY="lid_review_v1", TRUTH=%TRUTH%, GROUPS=%GROUPS%;
 function load(){try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return{}}}
 let S=load();
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
+function truths(id){return (S[id]&&S[id].truth)||[]}         // multi-select: an array of labels
 function render(){
   document.querySelectorAll('.clip').forEach(c=>{
-    const id=c.dataset.clip, rec=S[id]||{};
-    c.querySelectorAll('.opts label').forEach(l=>l.classList.toggle('on', rec.truth===l.dataset.v));
-    const ta=c.querySelector('textarea'); if(ta) ta.value=rec.note||"";
-    c.classList.toggle('done', !!rec.truth);
+    const id=c.dataset.clip, t=truths(id);
+    c.querySelectorAll('.opts label').forEach(l=>l.classList.toggle('on', t.includes(l.dataset.v)));
+    const ta=c.querySelector('textarea'); if(ta) ta.value=(S[id]&&S[id].note)||"";
+    c.classList.toggle('done', t.length>0);
   });
   updateBar();
 }
 function updateBar(){
   const clips=document.querySelectorAll('.clip').length;
-  let done=Object.values(S).filter(r=>r.truth).length;
+  let done=Object.values(S).filter(r=>r.truth&&r.truth.length).length;
   document.getElementById('prog').innerHTML=`<b>${done}</b> / ${clips} labeled`;
   let html='';
   GROUPS.forEach(([g,disp])=>{
     const ids=[...document.querySelectorAll(`.clip[data-mms="${g}"]`)].map(c=>c.dataset.clip);
     if(!ids.length) return;
-    const cnt={}; ids.forEach(id=>{const t=S[id]&&S[id].truth; if(t)cnt[t]=(cnt[t]||0)+1;});
+    const cnt={}; ids.forEach(id=>truths(id).forEach(t=>cnt[t]=(cnt[t]||0)+1));   // a clip counts for each tag
     const parts=Object.entries(cnt).map(([k,v])=>`${k}: <b>${v}</b>`).join(' · ')||'—';
     html+=`<div>${disp}: ${parts}</div>`;
   });
@@ -92,8 +94,10 @@ function updateBar(){
 }
 document.addEventListener('click',e=>{
   const l=e.target.closest('.opts label'); if(!l) return;
-  const c=l.closest('.clip'), id=c.dataset.clip;
-  S[id]=S[id]||{}; S[id].truth=l.dataset.v; S[id].mms=c.dataset.mms; save(); render();
+  const c=l.closest('.clip'), id=c.dataset.clip, v=l.dataset.v;
+  S[id]=S[id]||{}; S[id].mms=c.dataset.mms;
+  const set=new Set(S[id].truth||[]); set.has(v)?set.delete(v):set.add(v);   // toggle membership
+  S[id].truth=[...set]; save(); render();
 });
 document.addEventListener('input',e=>{
   if(e.target.tagName==='TEXTAREA'){const c=e.target.closest('.clip'); S[c.dataset.clip]=S[c.dataset.clip]||{};
