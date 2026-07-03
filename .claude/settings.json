@@ -203,7 +203,21 @@
       "WebFetch(domain:dev.to)",
       "Read(//c/Users/Mukul/code/personal-projects/AudioSignalProcessingForML/**)",
       "Bash(gh search *)",
-      "Read(//c/Users/Mukul/code/Dump/repo-hunter/**)"
+      "Read(//c/Users/Mukul/code/Dump/repo-hunter/**)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -E \"\\\\.\\(ipynb|sh|yaml|yml\\)$\")",
+      "Bash(grep -E \"^[^/]*\\\\.py$\")",
+      "Bash(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30 -o LogLevel=ERROR -i ~/.ssh/id_ed25519 -p 12331 root@47.47.180.58 ' *)",
+      "Bash(\"C:/Users/Mukul/code/personal-projects/voice-cloning/.venv/Scripts/python.exe\" \"C:/Users/Mukul/code/personal-projects/voice-cloning/scripts/score_denoise_retrain.py\")",
+      "Bash(\"C:/Users/Mukul/code/personal-projects/voice-cloning/.venv/Scripts/python.exe\" \"C:/Users/Mukul/code/personal-projects/voice-cloning/scripts/build_clone_ab.py\")",
+      "Bash(\"C:/Users/Mukul/code/personal-projects/voice-cloning/.venv/Scripts/python.exe\" \"C:/Users/Mukul/code/personal-projects/voice-cloning/scripts/build_blind_clone_ab.py\")",
+      "WebFetch(domain:speech.fish.audio)",
+      "WebFetch(domain:www.alibabacloud.com)",
+      "WebFetch(domain:funaudiollm.github.io)",
+      "Bash(pdftotext webfetch-1782828330648-1fdb8u.pdf cosyvoice2.txt)",
+      "WebFetch(domain:www.themoonlight.io)",
+      "Bash(pip list *)",
+      "mcp__runpod__get-pod"
     ],
     "additionalDirectories": [
       "\\tmp"
