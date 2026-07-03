@@ -78,6 +78,9 @@ def main():
                          "AI4Bharat (needs HF access granted)")
     ap.add_argument("--whisper-model", default="vasista22/whisper-hindi-large-v2",
                     help="HF Whisper-Hindi checkpoint for --asr indicwhisper")
+    ap.add_argument("--base-whisper", default="openai/whisper-large-v2",
+                    help="base Whisper whose up-to-date generation_config is grafted onto --whisper-model "
+                         "(vasista22's shipped config is outdated: no language map, empty suppress_tokens)")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -105,15 +108,21 @@ def main():
                 out = model(w.to(dev), "hi", a.decoder)
             return out[0] if isinstance(out, (list, tuple)) else out
     else:
-        from transformers import pipeline
+        from transformers import (pipeline, WhisperForConditionalGeneration,
+                                   WhisperProcessor, GenerationConfig)
         print(f"loading Hindi Whisper ({a.whisper_model}) ...", file=sys.stderr)
-        pipe = pipeline("automatic-speech-recognition", model=a.whisper_model,
+        model = WhisperForConditionalGeneration.from_pretrained(a.whisper_model)
+        # vasista22's shipped generation_config is outdated (no language-token map, empty suppress_tokens),
+        # which breaks BOTH the forced_decoder_ids path and the language= path on transformers 4.46.
+        # Graft the base whisper-large-v2 generation config, then force language via generate_kwargs.
+        model.generation_config = GenerationConfig.from_pretrained(a.base_whisper)
+        proc = WhisperProcessor.from_pretrained(a.whisper_model)
+        pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,
+                        feature_extractor=proc.feature_extractor,
                         device=(0 if dev == "cuda" else -1), chunk_length_s=30)
-        pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
-            language="hi", task="transcribe")
 
         def transcribe(wav_path):
-            return pipe(wav_path)["text"]
+            return pipe(wav_path, generate_kwargs={"language": "hi", "task": "transcribe"})["text"]
 
     langs = set(a.langs.split(","))
     slugs = [a.slug] if a.slug else [p.name for p in sorted(HI.iterdir()) if p.is_dir()]
