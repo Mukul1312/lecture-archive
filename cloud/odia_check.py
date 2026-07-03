@@ -24,10 +24,17 @@ import torch
 import torchaudio
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "cloud"))
-import pod_dataprep as pdp                       # to_wav_16k
-
 HI = ROOT / "data" / "hi" / "lectures"
+
+
+def to_wav_16k(src, dst):
+    """mp3 -> cached 16k mono wav via ffmpeg. Standalone so we don't drag in pod_dataprep's librosa dep."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if not dst.exists():
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+                        "-ac", "1", "-ar", "16000", str(dst)], check=True)
+    return dst
 MID = "facebook/mms-lid-256"
 NAMES = {"hin": "Hindi", "ory": "Odia", "ben": "Bengali", "asm": "Assamese", "npi": "Nepali",
          "urd": "Urdu", "eng": "English", "san": "Sanskrit", "mar": "Marathi", "guj": "Gujarati"}
@@ -62,7 +69,7 @@ def main():
             print(f"  skip {slug}: no content_triage.json")
             continue
         intervals = json.loads(tj.read_text(encoding="utf-8")).get("ggs_intervals", [])
-        wav16 = pdp.to_wav_16k(d / "audio.mp3", ROOT / "_work" / f"hi_{slug}.wav")
+        wav16 = to_wav_16k(d / "audio.mp3", ROOT / "_work" / f"hi_{slug}.wav")
         y, sr = torchaudio.load(str(wav16))
         if y.shape[0] > 1:
             y = y.mean(0, keepdim=True)
