@@ -18,6 +18,25 @@ data/out/lecture1/samples/
 # Generated, servable web tools (HTML + wav/png assets) — reproducible from scripts/
 voice_lab/
 
+# Generated AUDIO + galleries under data/out (large ~1.7GB / ~2k files, reproducible from scripts + pod).
+# Only the heavy types are ignored, so small metadata (idcheck_*.json, *.tsv) stays tracked.
+data/out/**/*.wav
+data/out/**/*.mp3
+data/out/**/*.m4a
+data/out/**/*.flac
+data/out/**/*.png
+data/out/**/*.html
+data/out/**/_*cache*.json
+data/hi/
+data/.triage_cache/
+
+# More LoRA checkpoints (large; kept locally, like cloud/lora_ckpts/)
+cloud/lora_ckpts_dn/
+
+# Deploy bundle audio + vercel link (regenerable; served to devotees via Vercel, not git)
+site/audio/
+site/.vercel/
+
 # OS / editor cruft
 .DS_Store
 
@@ -28,3 +47,6 @@ voice_lab/
 # Local skill cache
 .claude/skills/
 skills-lock.json
+
+# local scratch (16k decodes, temp)
+_work/
