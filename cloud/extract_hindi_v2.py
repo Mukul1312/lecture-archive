@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--asr", default="indicwhisper", choices=["indicwhisper", "indicconformer"],
                     help="indicwhisper = ungated Whisper-Hindi drop-in (default); indicconformer = gated "
                          "AI4Bharat (needs HF access granted)")
+    ap.add_argument("--whisper-model", default="vasista22/whisper-hindi-large-v2",
+                    help="HF Whisper-Hindi checkpoint for --asr indicwhisper")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -104,8 +106,8 @@ def main():
             return out[0] if isinstance(out, (list, tuple)) else out
     else:
         from transformers import pipeline
-        print("loading IndicWhisper (parthiv11/indic_whisper_nodcil) ...", file=sys.stderr)
-        pipe = pipeline("automatic-speech-recognition", model="parthiv11/indic_whisper_nodcil",
+        print(f"loading Hindi Whisper ({a.whisper_model}) ...", file=sys.stderr)
+        pipe = pipeline("automatic-speech-recognition", model=a.whisper_model,
                         device=(0 if dev == "cuda" else -1), chunk_length_s=30)
         pipe.model.config.forced_decoder_ids = pipe.tokenizer.get_decoder_prompt_ids(
             language="hi", task="transcribe")
