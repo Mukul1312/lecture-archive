@@ -43,13 +43,17 @@ def merge_spans(wins, langs, min_prob, gap=1.0):
 
 
 def clips_from_speech(segs, min_s, max_s, gap_bridge=0.6):
-    """segs: [(start,end)] VAD speech (within a span) -> clips ~min..max sec, flushed at a real pause
-    (a gap > gap_bridge once the clip is long enough, or hard max). Boundaries sit at speech edges,
-    i.e. next to silence -> clean cuts, never mid-word."""
+    """segs: [(start,end)] VAD speech (within a span) -> clips ~min..max sec. ANY pause > gap_bridge
+    ENDS the current clip: flush it if it's already long enough, else DISCARD the short fragment.
+    Because merged Hindi spans are >1s apart, a clip can never bridge across the gap between two spans,
+    so it stays inside contiguous in-span (Hindi) speech and does NOT swallow the Odia in between.
+    (The old code only flushed on a gap once the clip had reached min_s, so short Hindi bits bridged
+    the Odia to the next Hindi bit -> ~2x over-extraction + Odia contamination.)"""
     clips, cur = [], []
     for s, e in segs:
-        if cur and (s - cur[-1][1] > gap_bridge) and (cur[-1][1] - cur[0][0] >= min_s):
-            clips.append((cur[0][0], cur[-1][1]))
+        if cur and (s - cur[-1][1] > gap_bridge):
+            if cur[-1][1] - cur[0][0] >= min_s:
+                clips.append((cur[0][0], cur[-1][1]))
             cur = []
         cur.append((s, e))
         if cur[-1][1] - cur[0][0] >= max_s:
