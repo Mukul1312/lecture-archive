@@ -1,0 +1,39 @@
+# VoxCPM2 LoRA fine-tune — GGS HINDI voice clone (lecture 1, 106 reviewed clips, ~14.5 min)
+# Same proven recipe as the English clone (cloud/voxcpm_lora.yaml); only the manifest path differs.
+# Recipe: https://voxcpm.readthedocs.io/en/latest/finetuning/finetune.html  (primary source)
+pretrained_path: /workspace/VoxCPM2
+train_manifest: /workspace/voice-cloning/data/hi/train_final/train.voxcpm.jsonl
+val_manifest:                      # empty -> skip validation; we evaluate by inference (ear)
+
+sample_rate: 16000                 # VoxCPM2 AudioVAE encoder input rate (clips already 16k)
+out_sample_rate: 48000             # decoder output rate (inference only)
+batch_size: 2                      # fits 24GB once base is bf16 (pod_train.sh memfix)
+grad_accum_steps: 8                # 2x8 = effective batch 16
+num_workers: 2
+num_iters: 500
+log_interval: 10
+valid_interval: 100
+save_interval: 50                  # SAVE OFTEN: 106 clips overfit fast — pick best checkpoint by ear
+                                   # (106 clips / eff-batch 16 ~= 6.6 steps/epoch; 500 steps ~= 75 epochs,
+                                   #  so the sweet spot is likely an EARLY ckpt ~150-300, not 500)
+
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 40
+max_steps: 500
+max_batch_tokens: 8192             # length filter; keeps all clips (max clip ~20s)
+
+save_path: /workspace/ckpt/lora_hi
+tensorboard: /workspace/logs/lora_hi
+
+lambdas:
+  loss/diff: 1.0
+  loss/stop: 1.0
+
+lora:
+  enable_lm: true
+  enable_dit: true                 # essential for voice quality
+  enable_proj: false
+  r: 32                            # speaker cloning (doc default); bump to 48-64 if undertrained
+  alpha: 32
+  dropout: 0.0

@@ -53,12 +53,15 @@ echo "=== 4) base model openbmb/VoxCPM2 (~several GB; set HF_TOKEN if it 403s) =
 hf download openbmb/VoxCPM2 --local-dir /workspace/VoxCPM2
 
 echo "=== 5) sanity: torch CUDA + data present ==="
-python - <<'PY'
-import torch
+CONFIG="$CONFIG" python - <<'PY'
+import os, re, torch
 print("torch", torch.__version__, "| cuda", torch.cuda.is_available(),
       "|", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU")
-n=sum(1 for _ in open("/workspace/voice-cloning/data/out/lecture1/final/train.voxcpm.jsonl"))
-print("train samples:", n)
+cfg = os.environ["CONFIG"]                       # count the manifest THIS config trains on
+m = re.search(r'^\s*train_manifest:\s*(\S+)', open(cfg).read(), re.M)
+mf = m.group(1) if m else None
+n = sum(1 for _ in open(mf)) if mf else -1
+print("config:", cfg, "| manifest:", mf, "| train samples:", n)
 PY
 
 echo "=== 6) train (LoRA r=32; checkpoints -> /workspace/ckpt/lora every 50 steps) ==="
