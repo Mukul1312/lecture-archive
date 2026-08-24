@@ -1,6 +1,7 @@
 # Python env (recreated on each machine — never commit)
 .venv/
 .venv-*/
+.venv-transcribe/
 __pycache__/
 *.pyc
 

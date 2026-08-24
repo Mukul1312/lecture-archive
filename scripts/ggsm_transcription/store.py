@@ -285,18 +285,20 @@ class JobTransaction:
 class JobStore:
     """Owns aggregate manifests, trusted paths, OS locks, and strict identity scans."""
 
-    def __init__(self, data_root: str | Path) -> None:
+    def __init__(self, data_root: str | Path, *, create: bool = True) -> None:
         self.data_root = Path(data_root)
         self.jobs_root, self.incoming_root = self.data_root / "jobs", self.data_root / ".incoming"
         self.creation_root = self.data_root / ".creating"
-        self.data_root.mkdir(parents=True, exist_ok=True)
+        if create:
+            self.data_root.mkdir(parents=True, exist_ok=True)
+            self.jobs_root.mkdir(exist_ok=True)
+            self.incoming_root.mkdir(exist_ok=True)
+            self.creation_root.mkdir(exist_ok=True)
         self._assert_safe_directory(self.data_root, "data root")
-        self.jobs_root.mkdir(exist_ok=True)
-        self.incoming_root.mkdir(exist_ok=True)
-        self.creation_root.mkdir(exist_ok=True)
         self._assert_safe_directory(self.jobs_root, "jobs root")
-        self._assert_safe_directory(self.incoming_root, "incoming root")
-        self._assert_safe_directory(self.creation_root, "creation root")
+        if create:
+            self._assert_safe_directory(self.incoming_root, "incoming root")
+            self._assert_safe_directory(self.creation_root, "creation root")
         self._held_locks: set[str] = set()
         self._held_guard = threading.Lock()
 
