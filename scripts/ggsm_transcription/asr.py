@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import importlib
 import importlib.metadata
 import json
@@ -23,7 +24,7 @@ DEFAULT_ASR_CONFIGURATION: dict[str, object] = {
     "beam_size": 5, "word_timestamps": True, "vad_filter": False,
     "condition_on_previous_text": False,
 }
-_REQUIRED_MEDIA_RUNTIME_KEYS = {"ffmpeg", "ffprobe"}
+_REQUIRED_MEDIA_RUNTIME_KEYS = {"execution_mode", "ffmpeg", "ffprobe"}
 _LOCAL_EXECUTION_MODE = "local"
 _PINNED_FASTER_WHISPER_VERSION = "1.2.1"
 _ASR_RUNTIME_KEYS = {
@@ -33,6 +34,19 @@ _FULL_ASR_METADATA_KEYS = {"source_sha256", "configuration", "runtime"}
 _RERUN_METADATA_KEYS = {
     "source_sha256", "start_seconds", "end_seconds", "configuration", "runtime", "media_runtime",
 }
+
+
+class _StrictJsonParseError(ValueError):
+    """Serialized ASR evidence cannot be safely interpreted."""
+
+
+@dataclass(frozen=True)
+class _JsonNumber:
+    """A finite JSON number with its original token retained for validation."""
+
+    lexeme: str
+    kind: str
+    value: int | float
 
 
 class ASRAdapter(Protocol):
@@ -118,7 +132,11 @@ class FfmpegMediaAdapter:
             raise JobValidationError("ffmpeg failed to extract requested ASR span") from error
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"ffmpeg": _command_version("ffmpeg"), "ffprobe": _command_version("ffprobe")}
+        return {
+            "execution_mode": _LOCAL_EXECUTION_MODE,
+            "ffmpeg": _command_version("ffmpeg"),
+            "ffprobe": _command_version("ffprobe"),
+        }
 
 
 def _segment_to_record(index: int, segment: Any) -> dict[str, object]:
@@ -154,10 +172,74 @@ def _jsonl(records: list[dict[str, object]]) -> str:
     return "".join(json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n" for record in records)
 
 
+def _strict_json_number(token: str, kind: str) -> _JsonNumber:
+    try:
+        value: int | float = int(token) if kind == "integer" else float(token)
+    except (OverflowError, ValueError) as error:
+        raise _StrictJsonParseError("JSON number is unreadable") from error
+    if not math.isfinite(value):
+        raise _StrictJsonParseError("JSON number must be finite")
+    return _JsonNumber(token, kind, value)
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _StrictJsonParseError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise _StrictJsonParseError(f"non-finite JSON constant: {value}")
+
+
+def _strict_json_loads(text: str) -> object:
+    """Decode untrusted ASR evidence without losing duplicate keys or numeric spelling."""
+    try:
+        return json.loads(
+            text,
+            object_pairs_hook=_strict_json_object,
+            parse_int=lambda token: _strict_json_number(token, "integer"),
+            parse_float=lambda token: _strict_json_number(token, "float"),
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, _StrictJsonParseError, OverflowError, ValueError) as error:
+        raise _StrictJsonParseError("JSON evidence is unreadable") from error
+
+
+def _normalise_json_value(value: object) -> object:
+    """Drop private parser annotations only after lexical validation succeeds."""
+    if isinstance(value, _JsonNumber):
+        return value.value
+    if isinstance(value, dict):
+        return {key: _normalise_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalise_json_value(item) for item in value]
+    return value
+
+
+def _json_integer(value: object, label: str) -> int:
+    if isinstance(value, _JsonNumber):
+        if value.kind != "integer" or type(value.value) is not int:
+            raise JobValidationError(f"ASR {label} must be an integer")
+        return value.value
+    if type(value) is not int:
+        raise JobValidationError(f"ASR {label} must be an integer")
+    return value
+
+
 def _finite_number(value: object, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, _JsonNumber):
+        if value.kind not in {"integer", "float"} or type(value.value) not in {int, float}:
+            raise JobValidationError(f"ASR {label} must be a finite number")
+        candidate = value.value
+    else:
+        candidate = value
+    if isinstance(candidate, bool) or type(candidate) not in {int, float} or not math.isfinite(candidate):
         raise JobValidationError(f"ASR {label} must be a finite number")
-    return float(value)
+    return float(candidate)
 
 
 def _validate_runtime(runtime: object, required_keys: set[str], label: str) -> dict[str, str]:
@@ -166,6 +248,15 @@ def _validate_runtime(runtime: object, required_keys: set[str], label: str) -> d
     if any(not isinstance(key, str) or not isinstance(value, str) or not value.strip() for key, value in runtime.items()):
         raise JobValidationError(f"{label} runtime metadata must have non-empty strings")
     return dict(runtime)
+
+
+def _validate_media_provenance(runtime: object) -> dict[str, str]:
+    if not isinstance(runtime, dict) or set(runtime) != _REQUIRED_MEDIA_RUNTIME_KEYS:
+        raise JobValidationError("media runtime metadata must use exactly the fixed local fields")
+    validated = _validate_runtime(runtime, _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
+    if validated["execution_mode"] != _LOCAL_EXECUTION_MODE:
+        raise JobValidationError("media runtime provenance must record local execution")
+    return validated
 
 
 def _validate_local_snapshot_identity(value: object) -> str:
@@ -196,7 +287,10 @@ def _validate_asr_provenance(runtime: object) -> dict[str, str]:
 
 
 def _validate_record(record: object, previous_start: float | None = None) -> dict[str, object]:
-    if not isinstance(record, dict) or not isinstance(record.get("id"), int) or isinstance(record["id"], bool) or not isinstance(record.get("text"), str):
+    if not isinstance(record, dict) or not isinstance(record.get("text"), str):
+        raise JobValidationError("raw ASR JSONL segment is malformed")
+    identifier = _json_integer(record.get("id"), "segment ID")
+    if identifier < 0:
         raise JobValidationError("raw ASR JSONL segment is malformed")
     start, end = _finite_number(record.get("start"), "segment start"), _finite_number(record.get("end"), "segment end")
     if start < 0 or end < start:
@@ -217,7 +311,11 @@ def _validate_record(record: object, previous_start: float | None = None) -> dic
                 raise JobValidationError("raw ASR word timestamp is outside its segment")
             if "probability" in word:
                 _finite_number(word["probability"], "word probability")
-    return dict(record)
+    normalised = _normalise_json_value(record)
+    if not isinstance(normalised, dict):  # Defensive: record was already checked as an object above.
+        raise JobValidationError("raw ASR JSONL segment is malformed")
+    normalised["id"] = identifier
+    return normalised
 
 
 def _validate_sequence(records: list[dict[str, object]], duration: float) -> list[dict[str, object]]:
@@ -238,8 +336,8 @@ def _metadata_text(metadata: dict[str, object]) -> str:
 
 def _metadata_from_text(text: str, label: str) -> dict[str, object]:
     try:
-        value = json.loads(text)
-    except json.JSONDecodeError as error:
+        value = _strict_json_loads(text)
+    except _StrictJsonParseError as error:
         raise ArtifactValidationError(f"{label} metadata is unreadable") from error
     if not isinstance(value, dict):
         raise ArtifactValidationError(f"{label} metadata must be an object")
@@ -254,14 +352,71 @@ def _read_metadata(path: Path) -> dict[str, object]:
     return _metadata_from_text(text, "full ASR")
 
 
+def _matches_fixed_json_value(value: object, expected: object) -> bool:
+    """Compare the JSON kind and value, without Python's bool/number aliases."""
+    if type(expected) is bool:
+        return type(value) is bool and value == expected
+    if type(expected) is int:
+        return ((type(value) is int or (isinstance(value, _JsonNumber) and value.kind == "integer"))
+                and _json_integer(value, "fixed configuration value") == expected)
+    if type(expected) is float:
+        if isinstance(value, _JsonNumber):
+            return value.kind == "float" and type(value.value) is float and value.value == expected
+        return type(value) is float and value == expected
+    if type(expected) is str:
+        return type(value) is str and value == expected
+    if expected is None:
+        return value is None
+    if type(expected) is list:
+        return (isinstance(value, list) and len(value) == len(expected)
+                and all(_matches_fixed_json_value(item, reference) for item, reference in zip(value, expected)))
+    if type(expected) is dict:
+        return (isinstance(value, dict) and set(value) == set(expected)
+                and all(_matches_fixed_json_value(value[key], reference) for key, reference in expected.items()))
+    return False
+
+
+def _validate_fixed_configuration(configuration: object, label: str) -> None:
+    if not _matches_fixed_json_value(configuration, DEFAULT_ASR_CONFIGURATION):
+        raise JobValidationError(f"{label} metadata does not use the fixed local configuration")
+
+
+def _canonical_span_lexeme(value: float) -> str:
+    return json.dumps(value, allow_nan=False)
+
+
+def _validate_canonical_span_value(value: object, expected: float, label: str) -> float:
+    if not isinstance(value, _JsonNumber) or value.kind != "float" or type(value.value) is not float:
+        raise JobValidationError(f"{label} must use a canonical decimal span bound")
+    if not math.isfinite(value.value) or value.lexeme != _canonical_span_lexeme(expected):
+        raise JobValidationError(f"{label} must use a canonical decimal span bound")
+    return value.value
+
+
+def _validate_exact_context(value: object, expected: dict[str, object], kind: str) -> None:
+    if not isinstance(value, dict) or set(value) != set(expected):
+        raise ArtifactValidationError("publication recovery intent does not match this operation")
+    if kind == "rerun":
+        for key in ("start_seconds", "end_seconds"):
+            try:
+                _validate_canonical_span_value(value.get(key), float(expected[key]), f"publication {key}")
+            except (KeyError, JobValidationError) as error:
+                raise ArtifactValidationError("publication recovery intent does not match this operation") from error
+        return
+    if not _matches_fixed_json_value(value, expected):
+        raise ArtifactValidationError("publication recovery intent does not match this operation")
+
+
 def _validate_full_metadata(metadata: dict[str, object], state: dict[str, Any], label: str) -> None:
     if set(metadata) != _FULL_ASR_METADATA_KEYS:
         raise ArtifactValidationError(f"{label} metadata must use exactly the fixed local fields")
     if metadata.get("source_sha256") != state["source_sha256"]:
         raise ArtifactValidationError(f"{label} metadata is not source-bound")
-    if metadata.get("configuration") != DEFAULT_ASR_CONFIGURATION:
-        raise ArtifactValidationError(f"{label} metadata does not use the fixed local configuration")
-    _validate_asr_provenance(metadata.get("runtime"))
+    try:
+        _validate_fixed_configuration(metadata.get("configuration"), label)
+        _validate_asr_provenance(metadata.get("runtime"))
+    except JobValidationError as error:
+        raise ArtifactValidationError(str(error)) from error
 
 
 def _validate_rerun_metadata(
@@ -270,21 +425,19 @@ def _validate_rerun_metadata(
     if set(metadata) != _RERUN_METADATA_KEYS:
         raise ArtifactValidationError(f"{label} metadata must use exactly the fixed rerun fields")
     try:
-        metadata_start = _finite_number(metadata.get("start_seconds"), "rerun metadata start")
-        metadata_end = _finite_number(metadata.get("end_seconds"), "rerun metadata end")
+        metadata_start = _validate_canonical_span_value(metadata.get("start_seconds"), start, f"{label} metadata start")
+        metadata_end = _validate_canonical_span_value(metadata.get("end_seconds"), end, f"{label} metadata end")
+        _validate_fixed_configuration(metadata.get("configuration"), label)
     except JobValidationError as error:
         raise ArtifactValidationError(f"{label} metadata has invalid rerun bounds") from error
-    if ((metadata_start == 0 and math.copysign(1.0, metadata_start) < 0)
-            or (metadata_end == 0 and math.copysign(1.0, metadata_end) < 0)):
-        raise ArtifactValidationError(f"{label} metadata must canonicalize zero span bounds")
-    metadata_start = 0.0 if metadata_start == 0 else metadata_start
-    metadata_end = 0.0 if metadata_end == 0 else metadata_end
     if (metadata.get("source_sha256") != state["source_sha256"]
-            or metadata_start != start or metadata_end != end
-            or metadata.get("configuration") != DEFAULT_ASR_CONFIGURATION):
+            or metadata_start != start or metadata_end != end):
         raise ArtifactValidationError(f"{label} metadata is not bound to this source and span")
-    _validate_asr_provenance(metadata.get("runtime"))
-    _validate_runtime(metadata.get("media_runtime"), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
+    try:
+        _validate_asr_provenance(metadata.get("runtime"))
+        _validate_media_provenance(metadata.get("media_runtime"))
+    except JobValidationError as error:
+        raise ArtifactValidationError(str(error)) from error
 
 
 def validate_primary_asr_evidence(store: JobStore, job_id: str) -> list[dict[str, object]]:
@@ -300,7 +453,8 @@ def validate_primary_asr_evidence(store: JobStore, job_id: str) -> list[dict[str
         _validate_full_metadata(asr, state, "full ASR provenance")
         metadata = _read_metadata(metadata_path)
         _validate_full_metadata(metadata, state, "full ASR")
-        if metadata != asr:
+        normalised_metadata = _normalise_json_value(metadata)
+        if not isinstance(normalised_metadata, dict) or normalised_metadata != asr:
             raise ArtifactValidationError("full ASR metadata does not match bound provenance")
         duration = _finite_number(state["source"]["duration_seconds"], "source duration")
         return _validate_sequence(_read_raw_segments(raw_path), duration)
@@ -388,16 +542,27 @@ def _load_publication_intent(
     if not path.exists():
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ArtifactValidationError("publication recovery intent is unreadable") from error
+    try:
+        value = _strict_json_loads(text)
+    except _StrictJsonParseError as error:
         raise ArtifactValidationError("publication recovery intent is unreadable") from error
     if not isinstance(value, dict) or set(value) != {"schema_version", "kind", "source_sha256", "context", "outputs"}:
         raise ArtifactValidationError("publication recovery intent is malformed")
-    if value.get("schema_version") == 1:
+    schema_version = value.get("schema_version")
+    if isinstance(schema_version, _JsonNumber) and schema_version.kind == "integer" and schema_version.value == 1:
         raise ArtifactValidationError("legacy publication recovery intent lacks retained candidate payloads")
-    if value.get("schema_version") != 2 or value.get("kind") != kind or value.get("source_sha256") != source_sha256:
+    try:
+        valid_schema_version = _json_integer(schema_version, "publication schema version") == 2
+    except JobValidationError as error:
+        raise ArtifactValidationError("publication recovery intent is not source-bound to this operation") from error
+    if (not valid_schema_version or type(value.get("kind")) is not str or value["kind"] != kind
+            or type(value.get("source_sha256")) is not str or value["source_sha256"] != source_sha256):
         raise ArtifactValidationError("publication recovery intent is not source-bound to this operation")
-    if value.get("context") != context or not isinstance(value.get("outputs"), dict):
+    _validate_exact_context(value.get("context"), context, kind)
+    if not isinstance(value.get("outputs"), dict):
         raise ArtifactValidationError("publication recovery intent does not match this operation")
     outputs = value["outputs"]
     if set(outputs) != set(output_paths):
@@ -406,14 +571,19 @@ def _load_publication_intent(
     for relative, record in outputs.items():
         if (not isinstance(record, dict) or set(record) != {"sha256", "byte_size", "payload_base64"}
                 or not isinstance(record.get("sha256"), str) or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
-                or not isinstance(record.get("byte_size"), int) or isinstance(record["byte_size"], bool)
-                or record["byte_size"] < 0 or not isinstance(record.get("payload_base64"), str)):
+                or not isinstance(record.get("payload_base64"), str)):
+            raise ArtifactValidationError("publication recovery intent has invalid output records")
+        try:
+            byte_size = _json_integer(record.get("byte_size"), "publication output byte size")
+        except JobValidationError as error:
+            raise ArtifactValidationError("publication recovery intent has invalid output records") from error
+        if byte_size < 0:
             raise ArtifactValidationError("publication recovery intent has invalid output records")
         try:
             payload = base64.b64decode(record["payload_base64"].encode("ascii"), validate=True)
         except (UnicodeEncodeError, ValueError) as error:
             raise ArtifactValidationError("publication recovery intent has malformed retained candidate payloads") from error
-        if _sha256_bytes(payload) != record["sha256"] or len(payload) != record["byte_size"]:
+        if _sha256_bytes(payload) != record["sha256"] or len(payload) != byte_size:
             raise ArtifactValidationError("publication recovery intent retained candidate payload does not match its binding")
         payloads[relative] = payload
     return payloads
@@ -515,7 +685,10 @@ def _validate_full_candidate_payloads(
         records = _validate_sequence(
             _parse_raw_segments_text(_candidate_text(payloads["asr/full.jsonl"])), duration
         )
-        return metadata, records
+        normalised_metadata = _normalise_json_value(metadata)
+        if not isinstance(normalised_metadata, dict):
+            raise ArtifactValidationError("recoverable full ASR metadata is malformed")
+        return normalised_metadata, records
     except KeyError as error:
         raise ArtifactValidationError("recoverable full ASR candidate is missing a required payload") from error
     except ArtifactValidationError:
@@ -684,6 +857,7 @@ class ASRService:
                 temporary = self.store.validate_output_path(job_id, temporary_relative)
                 if temporary.exists():
                     raise ArtifactValidationError("deterministic rerun media staging already exists")
+                media_runtime = _validate_media_provenance(self.media_adapter.runtime_metadata())
                 try:
                     self.media_adapter.extract_span(source, temporary, start_value, end_value)
                     temporary = self.store.validate_output_path(job_id, temporary_relative)
@@ -700,7 +874,6 @@ class ASRService:
                     except FileNotFoundError:
                         pass
                 runtime = _validate_asr_provenance(self.model_adapter.runtime_metadata())
-                media_runtime = _validate_runtime(self.media_adapter.runtime_metadata(), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
                 self.store.validate_source(job_id)
                 self._validate_primary_asr_evidence(job_id, state)
                 metadata = {
@@ -794,8 +967,8 @@ def _parse_raw_segments_text(text: str) -> list[dict[str, object]]:
         if not line.strip():
             raise JobValidationError(f"raw ASR JSONL has a blank line at {line_number}")
         try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError as error:
+            parsed = _strict_json_loads(line)
+        except _StrictJsonParseError as error:
             raise JobValidationError(f"raw ASR JSONL is malformed at line {line_number}") from error
         record = _validate_record(parsed, previous_start)
         previous_start = float(record["start"])

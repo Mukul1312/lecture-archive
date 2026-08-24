@@ -90,7 +90,7 @@ class FakeMediaAdapter:
         target.write_bytes(source.read_bytes() + f"{start}:{end}".encode())
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
+        return {"execution_mode": "local", "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
 
 
 class ASRContractTests(unittest.TestCase):
@@ -108,22 +108,26 @@ class ASRContractTests(unittest.TestCase):
         job_id: str,
         runtime: dict[str, str],
         metadata_extra: dict[str, object] | None = None,
+        configuration: dict[str, object] | None = None,
+        raw_metadata: str | None = None,
+        raw_jsonl: str | None = None,
     ) -> None:
         state = self.store.load_job(job_id)
         root = self.store.job_root(job_id)
         metadata = {
             "source_sha256": state["source_sha256"],
-            "configuration": dict(DEFAULT_ASR_CONFIGURATION),
+            "configuration": dict(DEFAULT_ASR_CONFIGURATION) if configuration is None else dict(configuration),
             "runtime": runtime,
         }
         if metadata_extra is not None:
             metadata.update(metadata_extra)
         (root / "asr" / "full.jsonl").write_text(
-            '{"end": 1.0, "id": 0, "start": 0.0, "text": "direct candidate"}\n',
+            raw_jsonl or '{"end": 1.0, "id": 0, "start": 0.0, "text": "direct candidate"}\n',
             encoding="utf-8",
         )
         (root / "asr" / "metadata.json").write_text(
-            json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+            raw_metadata if raw_metadata is not None else json.dumps(metadata, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
         with self.store.transaction(job_id) as transaction:
             transaction.register_artifact("asr/full.jsonl")
@@ -139,6 +143,40 @@ class ASRContractTests(unittest.TestCase):
             "payload_base64": base64.b64encode(payload).decode("ascii"),
         }
         intent_path.write_text(json.dumps(intent, sort_keys=True) + "\n", encoding="utf-8")
+
+    def _interrupt_full_after_first_final(self, job_id: str) -> tuple[Path, Path, Path]:
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.name == "full.jsonl":
+                raise OSError("full JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter()).transcribe(job_id)
+        root = self.store.job_root(job_id)
+        return root, root / "asr" / "full.jsonl", root / "asr" / "metadata.json"
+
+    def _interrupt_rerun_after_first_final(
+        self, job_id: str, start: float = 0.0, end: float = 1.0
+    ) -> tuple[Path, Path, Path, Path]:
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.parent.name == "reruns" and path.name.endswith(".jsonl"):
+                raise OSError("rerun JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter()).rerun_span(job_id, start, end)
+        root = self.store.job_root(job_id)
+        intent_path = next((root / "asr" / "reruns").glob(".*.publication.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        jsonl_relative = next(relative for relative in intent["outputs"] if relative.endswith(".jsonl"))
+        metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
+        return root, root / Path(jsonl_relative), root / Path(metadata_relative), intent_path
 
     def test_full_run_uses_the_fixed_configuration_and_records_runtime_metadata(self) -> None:
         # Break caught: a quiet model/configuration change makes a future draft irreproducible.
@@ -189,6 +227,106 @@ class ASRContractTests(unittest.TestCase):
                     with self.store.transaction(job["job_id"]) as transaction:
                         transaction.complete_asr()
                 self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_typed_asr_completion_rejects_duplicate_metadata_provenance_keys(self) -> None:
+        # Break caught: default JSON parsing discarded an earlier explicit remote runtime claim before typed provenance validation.
+        configuration_text = json.dumps(DEFAULT_ASR_CONFIGURATION, sort_keys=True)
+        local_runtime = local_runtime_metadata()
+        local_runtime_text = json.dumps(local_runtime, sort_keys=True)
+        remote_runtime_text = json.dumps(
+            local_runtime_metadata(execution_mode="remote", snapshot="https://runpod.example/small"),
+            sort_keys=True,
+        )
+        nested_duplicate_runtime = (
+            '{"execution_mode":"remote","execution_mode":"local",'
+            f'"faster_whisper":{json.dumps(local_runtime["faster_whisper"])},'
+            f'"ffmpeg":{json.dumps(local_runtime["ffmpeg"])},'
+            f'"ffprobe":{json.dumps(local_runtime["ffprobe"])},'
+            f'"model_snapshot":{json.dumps(local_runtime["model_snapshot"])},'
+            f'"python":{json.dumps(local_runtime["python"])}'
+            '}'
+        )
+        cases = (
+            ("top-level runtime", lambda source: (
+                f'{{"source_sha256":{json.dumps(source)},"configuration":{configuration_text},'
+                f'"runtime":{remote_runtime_text},"runtime":{local_runtime_text}}}\n'
+            )),
+            ("nested execution mode", lambda source: (
+                f'{{"source_sha256":{json.dumps(source)},"configuration":{configuration_text},'
+                f'"runtime":{nested_duplicate_runtime}}}\n'
+            )),
+        )
+        for name, metadata_text in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/duplicate-{name.replace(' ', '-')}"
+                )
+                self._register_direct_full_asr_candidate(
+                    job["job_id"], local_runtime, raw_metadata=metadata_text(job["source_sha256"])
+                )
+                with self.assertRaises(ArtifactValidationError):
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.complete_asr()
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_typed_asr_completion_rejects_type_confused_fixed_configuration(self) -> None:
+        # Break caught: Python dictionary equality accepted JSON numeric substitutes for fixed Boolean/integer configuration fields.
+        cases = (
+            ("word timestamps integer", {"word_timestamps": 1}),
+            ("vad integer", {"vad_filter": 0}),
+            ("previous text float", {"condition_on_previous_text": 0.0}),
+            ("beam float", {"beam_size": 5.0}),
+        )
+        for name, replacement in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/type-confused-{name.replace(' ', '-')}"
+                )
+                configuration = {**DEFAULT_ASR_CONFIGURATION, **replacement}
+                self._register_direct_full_asr_candidate(
+                    job["job_id"], local_runtime_metadata(), configuration=configuration
+                )
+                with self.assertRaises(ArtifactValidationError):
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.complete_asr()
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_typed_asr_completion_rejects_duplicate_raw_jsonl_fields(self) -> None:
+        # Break caught: a hidden timestamp was discarded by permissive JSON parsing before raw-ASR validation.
+        cases = (
+            (
+                "segment field",
+                '{"end": 1.0, "id": 0, "start": 31.0, "start": 0.0, "text": "direct candidate"}\n',
+            ),
+            (
+                "nested word field",
+                '{"end": 1.0, "id": 0, "start": 0.0, "text": "direct candidate", '
+                '"words": [{"end": 0.5, "start": 0.25, "start": 0.0, "word": " word"}]}\n',
+            ),
+        )
+        for name, raw_jsonl in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/duplicate-jsonl-{name.replace(' ', '-')}"
+                )
+                self._register_direct_full_asr_candidate(
+                    job["job_id"], local_runtime_metadata(), raw_jsonl=raw_jsonl
+                )
+                with self.assertRaises(ArtifactValidationError):
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.complete_asr()
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_strict_evidence_parser_rejects_nonfinite_constants_but_keeps_raw_timestamp_spelling_flexible(self) -> None:
+        # Break caught: strict workflow identity must not accidentally impose canonical spelling on ordinary ASR timestamps.
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                with self.assertRaises(asr_module._StrictJsonParseError):
+                    asr_module._strict_json_loads(f'{{"value": {constant}}}')
+        records = asr_module._parse_raw_segments_text(
+            '{"end": 1E0, "id": 0, "start": 0e0, "text": "ordinary ASR timestamps"}\n'
+        )
+        self.assertEqual(records, [{"end": 1.0, "id": 0, "start": 0.0, "text": "ordinary ASR timestamps"}])
 
     def test_typed_asr_completion_accepts_historical_missing_local_snapshot(self) -> None:
         # Break caught: review of an old local job would fail merely because its historical cache directory was later removed.
@@ -356,6 +494,38 @@ class ASRContractTests(unittest.TestCase):
         with self.assertRaisesRegex(JobValidationError, "media runtime metadata"):
             ASRService(self.store, self.model, IncompleteMedia()).rerun_span(ready["job_id"], 1, 2)
         self.assertEqual(list((self.store.job_root(ready["job_id"]) / "asr" / "reruns").iterdir()), [])
+
+    def test_nonlocal_or_extra_media_provenance_refuses_rerun_before_output_publication(self) -> None:
+        # Break caught: supplemental local-only evidence accepted an explicit remote mode/backend as arbitrary descriptive metadata.
+        cases = (
+            ("remote execution", {"execution_mode": "remote", "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}),
+            ("extra backend", {"execution_mode": "local", "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe", "backend": "runpod"}),
+        )
+        for name, runtime in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/untrusted-media-{name.replace(' ', '-')}"
+                )
+                ready = ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter()).transcribe(job["job_id"])
+
+                class UntrustedMedia(FakeMediaAdapter):
+                    def runtime_metadata(self) -> dict[str, str]:
+                        return dict(runtime)
+
+                model, media = FakeModelAdapter(), UntrustedMedia()
+                with self.assertRaises(JobValidationError):
+                    ASRService(self.store, model, media).rerun_span(ready["job_id"], 1, 2)
+                self.assertEqual(model.calls, [])
+                self.assertEqual(media.calls, [])
+                self.assertEqual(list((self.store.job_root(ready["job_id"]) / "asr" / "reruns").iterdir()), [])
+
+    def test_ffmpeg_media_adapter_records_explicit_local_provenance(self) -> None:
+        # Break caught: the production FFmpeg adapter omitted the local execution attestation required for supplemental evidence.
+        with patch.object(asr_module, "_command_version", side_effect=lambda command: f"{command}-version"):
+            self.assertEqual(
+                FfmpegMediaAdapter().runtime_metadata(),
+                {"execution_mode": "local", "ffmpeg": "ffmpeg-version", "ffprobe": "ffprobe-version"},
+            )
 
     def test_runtime_metadata_with_a_non_json_extra_is_rejected_before_any_full_asr_file(self) -> None:
         # Break caught: a later metadata serialization failure stranded raw full evidence at a source_ready job.
@@ -673,6 +843,155 @@ class ASRContractTests(unittest.TestCase):
         self.assertFalse(metadata_path.exists())
         self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
 
+    def test_full_asr_recovery_rejects_duplicate_retained_metadata_before_missing_final_write(self) -> None:
+        # Break caught: duplicate provenance names let a remote claim disappear during recovery parsing and become immutable evidence.
+        job = IntakeService(self.store, FakeSourceAdapter(b"duplicate-recovery")).intake(
+            "https://archive.example/duplicate-recovery"
+        )
+        root, full_path, metadata_path = self._interrupt_full_after_first_final(job["job_id"])
+        intent_path = root / "asr" / ".full-publication.json"
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        original_metadata = json.loads(
+            base64.b64decode(intent["outputs"]["asr/metadata.json"]["payload_base64"].encode("ascii"))
+        )
+        remote_runtime = {
+            **original_metadata["runtime"],
+            "execution_mode": "remote",
+            "model_snapshot": "https://runpod.example/small",
+        }
+        poisoned_metadata = (
+            f'{{"source_sha256":{json.dumps(original_metadata["source_sha256"])},'
+            f'"configuration":{json.dumps(original_metadata["configuration"], sort_keys=True)},'
+            f'"runtime":{json.dumps(remote_runtime, sort_keys=True)},'
+            f'"runtime":{json.dumps(original_metadata["runtime"], sort_keys=True)}}}\n'
+        ).encode("utf-8")
+        self._replace_retained_intent_payload(intent_path, "asr/metadata.json", poisoned_metadata)
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("duplicate recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("duplicate recovery called a runtime adapter")
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, PoisonRetryModel(), FakeMediaAdapter()).transcribe(job["job_id"])
+        self.assertTrue(full_path.is_file())
+        self.assertFalse(metadata_path.exists())
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_full_asr_recovery_rejects_nested_duplicate_runtime_before_missing_final_write(self) -> None:
+        # Break caught: a duplicate nested execution mode could conceal a remote provenance claim within otherwise valid metadata.
+        job = IntakeService(self.store, FakeSourceAdapter(b"nested-duplicate-recovery")).intake(
+            "https://archive.example/nested-duplicate-recovery"
+        )
+        root, full_path, metadata_path = self._interrupt_full_after_first_final(job["job_id"])
+        intent_path = root / "asr" / ".full-publication.json"
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        metadata = json.loads(
+            base64.b64decode(intent["outputs"]["asr/metadata.json"]["payload_base64"].encode("ascii"))
+        )
+        runtime = metadata["runtime"]
+        nested_runtime = (
+            '{"execution_mode":"remote",'
+            f'"execution_mode":{json.dumps(runtime["execution_mode"])},'
+            f'"faster_whisper":{json.dumps(runtime["faster_whisper"])},'
+            f'"ffmpeg":{json.dumps(runtime["ffmpeg"])},'
+            f'"ffprobe":{json.dumps(runtime["ffprobe"])},'
+            f'"model_snapshot":{json.dumps(runtime["model_snapshot"])},'
+            f'"python":{json.dumps(runtime["python"])}'
+            '}'
+        )
+        poisoned_metadata = (
+            f'{{"source_sha256":{json.dumps(metadata["source_sha256"])},'
+            f'"configuration":{json.dumps(metadata["configuration"], sort_keys=True)},'
+            f'"runtime":{nested_runtime}}}\n'
+        ).encode("utf-8")
+        self._replace_retained_intent_payload(intent_path, "asr/metadata.json", poisoned_metadata)
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("nested duplicate recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("nested duplicate recovery called a runtime adapter")
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, PoisonRetryModel(), FakeMediaAdapter()).transcribe(job["job_id"])
+        self.assertTrue(full_path.is_file())
+        self.assertFalse(metadata_path.exists())
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_full_asr_recovery_rejects_type_confused_retained_configuration_before_missing_final_write(self) -> None:
+        # Break caught: type-confused JSON configuration values passed the same coercive equality used by recovery and typed completion.
+        job = IntakeService(self.store, FakeSourceAdapter(b"configuration-recovery")).intake(
+            "https://archive.example/configuration-recovery"
+        )
+        root, full_path, metadata_path = self._interrupt_full_after_first_final(job["job_id"])
+        intent_path = root / "asr" / ".full-publication.json"
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        metadata = json.loads(
+            base64.b64decode(intent["outputs"]["asr/metadata.json"]["payload_base64"].encode("ascii"))
+        )
+        metadata["configuration"].update(
+            {"word_timestamps": 1, "vad_filter": 0, "condition_on_previous_text": 0.0, "beam_size": 5.0}
+        )
+        self._replace_retained_intent_payload(
+            intent_path,
+            "asr/metadata.json",
+            (json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8"),
+        )
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("configuration recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("configuration recovery called a runtime adapter")
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, PoisonRetryModel(), FakeMediaAdapter()).transcribe(job["job_id"])
+        self.assertTrue(full_path.is_file())
+        self.assertFalse(metadata_path.exists())
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_full_asr_recovery_rejects_duplicate_publication_intent_before_missing_final_write(self) -> None:
+        # Break caught: duplicate v2 envelope/output names made a private recovery intent ambiguous while permissive parsing kept only one.
+        def add_duplicate_envelope(path: Path) -> None:
+            text = path.read_text(encoding="utf-8")
+            needle = '"kind": "full_asr",'
+            self.assertIn(needle, text)
+            path.write_text(text.replace(needle, f'{needle}\n  {needle}', 1), encoding="utf-8", newline="\n")
+
+        def add_duplicate_output_record(path: Path) -> None:
+            intent = json.loads(path.read_text(encoding="utf-8"))
+            digest = intent["outputs"]["asr/metadata.json"]["sha256"]
+            text = path.read_text(encoding="utf-8")
+            needle = f'"sha256": "{digest}"'
+            self.assertIn(needle, text)
+            path.write_text(text.replace(needle, f'{needle},\n      {needle}', 1), encoding="utf-8", newline="\n")
+
+        for name, mutate_intent in (("envelope", add_duplicate_envelope), ("output record", add_duplicate_output_record)):
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/duplicate-intent-{name.replace(' ', '-')}"
+                )
+                root, full_path, metadata_path = self._interrupt_full_after_first_final(job["job_id"])
+                mutate_intent(root / "asr" / ".full-publication.json")
+
+                class PoisonRetryModel:
+                    def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                        raise AssertionError("duplicate intent recovery called a model adapter")
+
+                    def runtime_metadata(self) -> dict[str, str]:
+                        raise AssertionError("duplicate intent recovery called a runtime adapter")
+
+                with self.assertRaises(ArtifactValidationError):
+                    ASRService(self.store, PoisonRetryModel(), FakeMediaAdapter()).transcribe(job["job_id"])
+                self.assertTrue(full_path.is_file())
+                self.assertFalse(metadata_path.exists())
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
     def test_full_asr_recovery_refuses_stale_malformed_legacy_or_partially_registered_intents_without_retrying(self) -> None:
         # Break caught: a compromised or insufficient interrupted-publication state could silently rerun ASR or overwrite immutable evidence.
         original_atomic = asr_module._atomic_text
@@ -864,6 +1183,98 @@ class ASRContractTests(unittest.TestCase):
         self.assertEqual(retry_model.calls, [])
         self.assertEqual(retry_media.calls, [])
         self.assertFalse(metadata_path.exists())
+
+    def test_rerun_recovery_rejects_noncanonical_or_untrusted_metadata_and_context_before_missing_final_write(self) -> None:
+        # Break caught: parsing before canonicality/provenance checks accepted textual aliases and remote supplemental evidence.
+        def poison_metadata_start(path: Path, replacement: str) -> None:
+            intent = json.loads(path.read_text(encoding="utf-8"))
+            metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
+            payload = base64.b64decode(intent["outputs"][metadata_relative]["payload_base64"].encode("ascii"))
+            text = payload.decode("utf-8")
+            self.assertIn('"start_seconds": 0.0', text)
+            self._replace_retained_intent_payload(
+                path, metadata_relative, text.replace('"start_seconds": 0.0', f'"start_seconds": {replacement}', 1).encode("utf-8")
+            )
+
+        def poison_context(path: Path, replacement: str) -> None:
+            text = path.read_text(encoding="utf-8")
+            self.assertIn('"start_seconds": 0.0', text)
+            path.write_text(
+                text.replace('"start_seconds": 0.0', f'"start_seconds": {replacement}', 1),
+                encoding="utf-8",
+                newline="\n",
+            )
+
+        def poison_media_runtime(path: Path, media_runtime: dict[str, str]) -> None:
+            intent = json.loads(path.read_text(encoding="utf-8"))
+            metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
+            payload = base64.b64decode(intent["outputs"][metadata_relative]["payload_base64"].encode("ascii"))
+            metadata = json.loads(payload)
+            metadata["media_runtime"] = media_runtime
+            self._replace_retained_intent_payload(
+                path,
+                metadata_relative,
+                (json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8"),
+            )
+
+        cases = (
+            ("metadata negative zero", lambda path: poison_metadata_start(path, "-0")),
+            ("metadata exponential zero", lambda path: poison_metadata_start(path, "0e0")),
+            ("context false", lambda path: poison_context(path, "false")),
+            ("context negative zero", lambda path: poison_context(path, "-0.0")),
+            ("context integer zero", lambda path: poison_context(path, "0")),
+            ("context exponential zero", lambda path: poison_context(path, "0e0")),
+            (
+                "metadata remote media",
+                lambda path: poison_media_runtime(
+                    path, {"execution_mode": "remote", "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
+                ),
+            ),
+            (
+                "metadata extra media backend",
+                lambda path: poison_media_runtime(
+                    path,
+                    {
+                        "execution_mode": "local",
+                        "ffmpeg": "fake-ffmpeg",
+                        "ffprobe": "fake-ffprobe",
+                        "backend": "runpod",
+                    },
+                ),
+            ),
+        )
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("noncanonical recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("noncanonical recovery called a model runtime adapter")
+
+        class PoisonRetryMedia:
+            def extract_span(self, *_args: object, **_kwargs: object) -> None:
+                raise AssertionError("noncanonical recovery called a media adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("noncanonical recovery called a media runtime adapter")
+
+        for name, poison in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/noncanonical-{name.replace(' ', '-')}"
+                )
+                ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter()).transcribe(job["job_id"])
+                _root, jsonl_path, metadata_path, intent_path = self._interrupt_rerun_after_first_final(job["job_id"])
+                original_jsonl = jsonl_path.read_bytes()
+                self.assertFalse(metadata_path.exists())
+                poison(intent_path)
+                with self.assertRaises(ArtifactValidationError):
+                    ASRService(self.store, PoisonRetryModel(), PoisonRetryMedia()).rerun_span(
+                        job["job_id"], 0.0, 1.0
+                    )
+                self.assertEqual(jsonl_path.read_bytes(), original_jsonl)
+                self.assertFalse(metadata_path.exists())
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "asr_ready")
 
     def test_inspection_recovery_rejects_semantically_poisoned_retained_markdown_before_missing_final_write(self) -> None:
         # Break caught: inspection recovery wrote retained non-deterministic Markdown before semantic validation.

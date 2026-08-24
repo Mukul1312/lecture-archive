@@ -61,7 +61,7 @@ class FakeMediaAdapter:
         target.write_bytes(b"fake span")
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"ffmpeg": "fake", "ffprobe": "fake"}
+        return {"execution_mode": "local", "ffmpeg": "fake", "ffprobe": "fake"}
 
 
 class FakeHttpResponse(BytesIO):
