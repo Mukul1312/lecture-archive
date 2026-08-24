@@ -47,6 +47,7 @@ class FakeModelAdapter:
 
     def runtime_metadata(self) -> dict[str, str]:
         return {
+            "execution_mode": "local",
             "model_snapshot": "/fake/small",
             "faster_whisper": "1.2.1",
             "python": "fake",

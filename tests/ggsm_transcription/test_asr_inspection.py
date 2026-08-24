@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +22,25 @@ from scripts.ggsm_transcription.store import (
     RepositoryHealthError,
     StageTransitionError,
 )
+
+
+def local_runtime_metadata(
+    *,
+    snapshot: str = "C:/fake/snapshot",
+    faster_whisper: str = "1.2.1",
+    execution_mode: str = "local",
+    python: str = "fake-python",
+    ffmpeg: str = "fake-ffmpeg",
+    ffprobe: str = "fake-ffprobe",
+) -> dict[str, str]:
+    return {
+        "execution_mode": execution_mode,
+        "model_snapshot": snapshot,
+        "faster_whisper": faster_whisper,
+        "python": python,
+        "ffmpeg": ffmpeg,
+        "ffprobe": ffprobe,
+    }
 
 
 class FakeSourceAdapter:
@@ -57,7 +77,7 @@ class FakeModelAdapter:
         return self.segments
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"model_snapshot": "/fake/snapshot", "faster_whisper": "fake-1.2.1", "python": "fake-python", "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
+        return local_runtime_metadata()
 
 
 class FakeMediaAdapter:
@@ -82,6 +102,26 @@ class ASRContractTests(unittest.TestCase):
         self.media = FakeMediaAdapter()
         self.service = ASRService(self.store, self.model, self.media)
 
+    def _register_direct_full_asr_candidate(self, job_id: str, runtime: dict[str, str]) -> None:
+        state = self.store.load_job(job_id)
+        root = self.store.job_root(job_id)
+        metadata = {
+            "source_sha256": state["source_sha256"],
+            "configuration": dict(DEFAULT_ASR_CONFIGURATION),
+            "runtime": runtime,
+        }
+        (root / "asr" / "full.jsonl").write_text(
+            '{"end": 1.0, "id": 0, "start": 0.0, "text": "direct candidate"}\n',
+            encoding="utf-8",
+        )
+        (root / "asr" / "metadata.json").write_text(
+            json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        with self.store.transaction(job_id) as transaction:
+            transaction.register_artifact("asr/full.jsonl")
+            transaction.register_artifact("asr/metadata.json")
+            transaction.record_asr_metadata(metadata)
+
     def test_full_run_uses_the_fixed_configuration_and_records_runtime_metadata(self) -> None:
         # Break caught: a quiet model/configuration change makes a future draft irreproducible.
         result = self.service.transcribe(self.job["job_id"])
@@ -89,10 +129,43 @@ class ASRContractTests(unittest.TestCase):
         self.assertEqual(result["stage"], "asr_ready")
         metadata = json.loads((self.store.job_root(result["job_id"]) / "asr" / "metadata.json").read_text(encoding="utf-8"))
         self.assertEqual(metadata["configuration"], DEFAULT_ASR_CONFIGURATION)
-        self.assertEqual(metadata["runtime"]["model_snapshot"], "/fake/snapshot")
+        self.assertEqual(metadata["runtime"]["model_snapshot"], "C:/fake/snapshot")
         self.assertEqual(metadata["source_sha256"], hashlib.sha256(b"source audio").hexdigest())
         self.store.validate_artifact(result["job_id"], "asr/full.jsonl")
         self.store.validate_artifact(result["job_id"], "asr/metadata.json")
+
+    def test_typed_asr_completion_rejects_explicitly_remote_or_unpinned_provenance(self) -> None:
+        # Break caught: fixed decoder settings let a public typed transaction attest an explicitly remote or unpinned ASR run.
+        cases = (
+            ("https snapshot", local_runtime_metadata(snapshot="https://runpod.example/small")),
+            ("wrong library version", local_runtime_metadata(faster_whisper="1.2.0")),
+            ("remote execution mode", local_runtime_metadata(execution_mode="remote")),
+            ("extra remote backend claim", {**local_runtime_metadata(), "backend": "runpod"}),
+        )
+        for name, runtime in cases:
+            with self.subTest(name=name):
+                job = IntakeService(self.store, FakeSourceAdapter(name.encode())).intake(
+                    f"https://archive.example/provenance-{name.replace(' ', '-')}"
+                )
+                self._register_direct_full_asr_candidate(job["job_id"], runtime)
+                with self.assertRaises(ArtifactValidationError):
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.complete_asr()
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_typed_asr_completion_accepts_historical_missing_local_snapshot(self) -> None:
+        # Break caught: review of an old local job would fail merely because its historical cache directory was later removed.
+        job = IntakeService(self.store, FakeSourceAdapter(b"historical-local")).intake(
+            "https://archive.example/historical-local"
+        )
+        missing_snapshot = str((Path(self.tmp.name) / "historical-cache" / "small-snapshot").resolve())
+        self.assertFalse(Path(missing_snapshot).exists())
+        self._register_direct_full_asr_candidate(
+            job["job_id"], local_runtime_metadata(snapshot=missing_snapshot)
+        )
+        with self.store.transaction(job["job_id"]) as transaction:
+            transaction.complete_asr()
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "asr_ready")
 
     def test_local_adapter_imports_faster_whisper_only_when_transcribing(self) -> None:
         # Break caught: ordinary workflow/tests would require the dedicated ASR environment just to import modules.
@@ -266,6 +339,35 @@ class ASRContractTests(unittest.TestCase):
         self.service.rerun_span(ready["job_id"], 0.0, 1.0)
         with self.assertRaises(ArtifactValidationError):
             self.service.rerun_span(ready["job_id"], -0.0, 1.0)
+
+    def test_signed_zero_interrupted_rerun_recovers_across_spellings_without_recalling_adapters(self) -> None:
+        # Break caught: canonical rerun filenames still stranded a partial intent because signed zero leaked into metadata/context.
+        original_atomic = asr_module._atomic_text
+        for first_start, retry_start in ((-0.0, 0.0), (0.0, -0.0)):
+            with self.subTest(first_start=repr(first_start), retry_start=repr(retry_start)):
+                isolated = JobStore(Path(self.tmp.name) / f"zero-{repr(first_start)}" / "data" / "transcribe")
+                job = IntakeService(isolated, FakeSourceAdapter(repr(first_start).encode())).intake(
+                    f"https://archive.example/zero-{repr(first_start).replace('-', 'neg')}"
+                )
+                ASRService(isolated, FakeModelAdapter(), FakeMediaAdapter()).transcribe(job["job_id"])
+                model, media = FakeModelAdapter(), FakeMediaAdapter()
+                rerun = ASRService(isolated, model, media)
+
+                def fail_after_jsonl(path: Path, text: str) -> None:
+                    original_atomic(path, text)
+                    if path.parent.name == "reruns" and path.name.endswith(".jsonl"):
+                        raise OSError("signed-zero rerun JSONL interrupted")
+
+                with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+                    with self.assertRaises(OSError):
+                        rerun.rerun_span(job["job_id"], first_start, 1.0)
+                recovered = rerun.rerun_span(job["job_id"], retry_start, 1.0)
+                metadata = json.loads(recovered["metadata_path"].read_text(encoding="utf-8"))
+                self.assertEqual(len(model.calls), 1)
+                self.assertEqual(len(media.calls), 1)
+                self.assertEqual(metadata["start_seconds"], 0.0)
+                self.assertEqual(math.copysign(1.0, metadata["start_seconds"]), 1.0)
+                self.assertNotIn("-0.0", recovered["metadata_path"].read_text(encoding="utf-8"))
 
     def test_asr_reparse_output_parents_are_rejected_before_model_or_media_writes(self) -> None:
         # Break caught: output validation after external ASR/media work could write through a replaced job directory.
@@ -453,6 +555,157 @@ class ASRContractTests(unittest.TestCase):
                 self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
                 self.assertEqual(service.transcribe(job["job_id"])["stage"], "asr_ready")
 
+    def test_full_asr_first_output_recovery_reuses_retained_candidate_without_a_second_model_call(self) -> None:
+        # Break caught: retrying an interrupted JSONL/metadata pair regenerated changing ASR output instead of publishing the original candidate.
+        class ChangingModel(FakeModelAdapter):
+            def __init__(self) -> None:
+                super().__init__()
+                self.runtime_calls = 0
+
+            def transcribe(self, source_path: Path, configuration: dict[str, object]) -> list[dict[str, object]]:
+                self.calls.append((source_path, dict(configuration)))
+                return [{"id": 0, "start": 0.0, "end": 1.0, "text": f"full-run-{len(self.calls)}"}]
+
+            def runtime_metadata(self) -> dict[str, str]:
+                self.runtime_calls += 1
+                return local_runtime_metadata(
+                    snapshot=f"C:/fake/snapshot-{self.runtime_calls}",
+                    python=f"fake-python-{self.runtime_calls}",
+                )
+
+        job = IntakeService(self.store, FakeSourceAdapter(b"changing-full")).intake(
+            "https://archive.example/changing-full"
+        )
+        model = ChangingModel()
+        service = ASRService(self.store, model, FakeMediaAdapter())
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.name == "full.jsonl":
+                raise OSError("full JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                service.transcribe(job["job_id"])
+        recovered = service.transcribe(job["job_id"])
+        root = self.store.job_root(job["job_id"])
+        self.assertEqual(recovered["stage"], "asr_ready")
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.runtime_calls, 1)
+        self.assertIn("full-run-1", (root / "asr" / "full.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(
+            json.loads((root / "asr" / "metadata.json").read_text(encoding="utf-8"))["runtime"]["model_snapshot"],
+            "C:/fake/snapshot-1",
+        )
+
+    def test_full_asr_recovery_refuses_stale_malformed_legacy_or_partially_registered_intents_without_retrying(self) -> None:
+        # Break caught: a compromised or insufficient interrupted-publication state could silently rerun ASR or overwrite immutable evidence.
+        original_atomic = asr_module._atomic_text
+        for condition in ("stale source", "changed final", "malformed payload", "legacy intent", "partial registration"):
+            with self.subTest(condition=condition):
+                job = IntakeService(self.store, FakeSourceAdapter(condition.encode())).intake(
+                    f"https://archive.example/closed-recovery-{condition.replace(' ', '-')}"
+                )
+                model = FakeModelAdapter()
+                service = ASRService(self.store, model, FakeMediaAdapter())
+
+                def fail_after_jsonl(path: Path, text: str) -> None:
+                    original_atomic(path, text)
+                    if path.name == "full.jsonl":
+                        raise OSError("full JSONL interrupted")
+
+                with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+                    with self.assertRaises(OSError):
+                        service.transcribe(job["job_id"])
+
+                root = self.store.job_root(job["job_id"])
+                full = root / "asr" / "full.jsonl"
+                before_retry = full.read_bytes()
+                intent_path = root / "asr" / ".full-publication.json"
+                if condition == "stale source":
+                    (root / "source" / "source.bin").write_bytes(b"changed after candidate publication")
+                elif condition == "changed final":
+                    full.write_text("changed immutable final\n", encoding="utf-8")
+                    before_retry = full.read_bytes()
+                elif condition in {"malformed payload", "legacy intent"}:
+                    intent = json.loads(intent_path.read_text(encoding="utf-8"))
+                    if condition == "malformed payload":
+                        intent["outputs"]["asr/metadata.json"]["payload_base64"] = "not base64!"
+                    else:
+                        intent["schema_version"] = 1
+                        for output in intent["outputs"].values():
+                            output.pop("payload_base64")
+                    intent_path.write_text(json.dumps(intent, sort_keys=True) + "\n", encoding="utf-8")
+                else:
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.register_artifact("asr/full.jsonl")
+
+                with self.assertRaises(ArtifactValidationError):
+                    service.transcribe(job["job_id"])
+                self.assertEqual(len(model.calls), 1)
+                self.assertEqual(full.read_bytes(), before_retry)
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_inspection_rejects_legacy_private_publication_intent_explicitly(self) -> None:
+        # Break caught: old hash-only inspection recovery state could be treated as a regenerable candidate without an explicit safety decision.
+        ready = self.service.transcribe(self.job["job_id"])
+        root = self.store.job_root(ready["job_id"])
+        (root / "inspection" / ".publication.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "inspection",
+                    "source_sha256": ready["source_sha256"],
+                    "context": {"full_asr_sha256": ready["artifacts"]["asr/full.jsonl"]["sha256"]},
+                    "outputs": {},
+                },
+                sort_keys=True,
+            ) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ArtifactValidationError, "legacy publication recovery intent"):
+            self.service.inspect(ready["job_id"])
+        self.assertEqual(self.store.load_job(ready["job_id"])["stage"], "asr_ready")
+
+    def test_rerun_first_output_recovery_reuses_retained_candidate_without_a_second_adapter_call(self) -> None:
+        # Break caught: retrying an interrupted span JSONL/metadata pair reran both media extraction and changing ASR output.
+        ready = self.service.transcribe(self.job["job_id"])
+
+        class ChangingRerunModel(FakeModelAdapter):
+            def __init__(self) -> None:
+                super().__init__()
+                self.runtime_calls = 0
+
+            def transcribe(self, source_path: Path, configuration: dict[str, object]) -> list[dict[str, object]]:
+                self.calls.append((source_path, dict(configuration)))
+                return [{"id": 0, "start": 0.0, "end": 0.5, "text": f"rerun-{len(self.calls)}"}]
+
+            def runtime_metadata(self) -> dict[str, str]:
+                self.runtime_calls += 1
+                return local_runtime_metadata(
+                    snapshot=f"C:/fake/rerun-{self.runtime_calls}",
+                    python=f"fake-rerun-python-{self.runtime_calls}",
+                )
+
+        model, media = ChangingRerunModel(), FakeMediaAdapter()
+        service = ASRService(self.store, model, media)
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.parent.name == "reruns" and path.name.endswith(".jsonl"):
+                raise OSError("rerun JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                service.rerun_span(ready["job_id"], 1.0, 2.0)
+        recovered = service.rerun_span(ready["job_id"], 1.0, 2.0)
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.runtime_calls, 1)
+        self.assertEqual(len(media.calls), 1)
+        self.assertIn("rerun-1", recovered["jsonl_path"].read_text(encoding="utf-8"))
+
     def test_rerun_and_inspection_publication_recover_exact_partial_evidence_at_each_boundary(self) -> None:
         # Break caught: supplemental and inspection evidence became permanently non-retryable after a two-file interruption.
         original_atomic = asr_module._atomic_text
@@ -553,7 +806,8 @@ class ASRContractTests(unittest.TestCase):
         job = IntakeService(self.store, FakeSourceAdapter(b"unsafe partial")).intake(
             "https://archive.example/unsafe-partial"
         )
-        service = ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter())
+        model = FakeModelAdapter()
+        service = ASRService(self.store, model, FakeMediaAdapter())
 
         def fail_after_full(path: Path, text: str) -> None:
             original_atomic(path, text)
@@ -573,6 +827,7 @@ class ASRContractTests(unittest.TestCase):
             with self.assertRaises(ArtifactValidationError):
                 service.transcribe(job["job_id"])
         self.assertFalse(metadata.exists())
+        self.assertEqual(len(model.calls), 1)
         self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
 
 

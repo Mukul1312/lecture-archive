@@ -58,8 +58,14 @@ class FakeASRAdapter:
         return [{"id": 0, "start": 0.0, "end": 1.0, "text": " ASR evidence."}]
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"model_snapshot": "/fake/snapshot", "faster_whisper": "fake-1.2.1", "python": "fake-python",
-                "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
+        return {
+            "execution_mode": "local",
+            "model_snapshot": "/fake/snapshot",
+            "faster_whisper": "1.2.1",
+            "python": "fake-python",
+            "ffmpeg": "fake-ffmpeg",
+            "ffprobe": "fake-ffprobe",
+        }
 
 
 class JobStoreContractTests(unittest.TestCase):

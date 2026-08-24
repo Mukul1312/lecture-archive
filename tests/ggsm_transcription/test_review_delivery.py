@@ -47,8 +47,14 @@ class FakeModelAdapter:
         return self.segments
 
     def runtime_metadata(self) -> dict[str, str]:
-        return {"model_snapshot": "/fake/small", "faster_whisper": "1.2.1", "python": "fake",
-                "ffmpeg": "fake", "ffprobe": "fake"}
+        return {
+            "execution_mode": "local",
+            "model_snapshot": "/fake/small",
+            "faster_whisper": "1.2.1",
+            "python": "fake",
+            "ffmpeg": "fake",
+            "ffprobe": "fake",
+        }
 
 
 class ReviewDeliveryContractTests(unittest.TestCase):
