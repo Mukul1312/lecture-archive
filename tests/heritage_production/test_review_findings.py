@@ -56,13 +56,40 @@ def open_round() -> ReviewRound:
     )
 
 
-def submit_finding(round_: ReviewRound) -> ReviewFinding:
+def submit_finding(
+    round_: ReviewRound,
+    *,
+    author_actor_id: ActorId | None = None,
+    review_finding_id: ReviewFindingId | None = None,
+    review_submission_id: ReviewSubmissionId | None = None,
+    client_finding_nonce: ClientFindingNonce | None = None,
+    observation: str = "Wrong word",
+) -> ReviewFinding:
     member = round_.target_manifest.members[0]
-    return ReviewFinding.submit(
-        review_finding_id=ReviewFindingId(uid(23)),
+    author = author_actor_id or ActorId(uid(20))
+    finding_id = review_finding_id or ReviewFindingId(uid(23))
+    submission_id = review_submission_id or ReviewSubmissionId(uid(24))
+    nonce = client_finding_nonce or ClientFindingNonce("finding-1")
+    payload_digest = ReviewFinding.compute_payload_digest(
+        client_finding_nonce=nonce,
         review_round_id=round_.review_round_id,
-        review_submission_id=ReviewSubmissionId(uid(24)),
-        client_finding_nonce=ClientFindingNonce("finding-1"),
+        edition_ref=round_.edition_ref,
+        rubric_ref=round_.rubric_ref,
+        target_key=member.target_key,
+        segment_revision_ref=member.segment_revision_ref,
+        character_span=ReviewCharacterSpan(0, 3),
+        source_subspan=None,
+        category_code=FindingCategoryCode("accuracy"),
+        severity_code=FindingSeverityCode("major"),
+        observation=observation,
+        proposed_change=ProposedChange.text_replacement("won"),
+        author_actor_id=author,
+    )
+    return ReviewFinding.submit(
+        review_finding_id=finding_id,
+        review_round_id=round_.review_round_id,
+        review_submission_id=submission_id,
+        client_finding_nonce=nonce,
         context=round_.open_context(),
         edition_ref=round_.edition_ref,
         rubric_ref=round_.rubric_ref,
@@ -72,13 +99,10 @@ def submit_finding(round_: ReviewRound) -> ReviewFinding:
         source_subspan=None,
         category_code=FindingCategoryCode("accuracy"),
         severity_code=FindingSeverityCode("major"),
-        observation="Wrong word",
+        observation=observation,
         proposed_change=ProposedChange.text_replacement("won"),
-        author_actor_id=ActorId(uid(20)),
-        finding_payload_digest=ContentDigest(
-            "sha256",
-            "caccc3a4f721ae093657bd336945eab6577e6992890142522942f40a4feaf5ac",
-        ),
+        author_actor_id=author,
+        finding_payload_digest=payload_digest,
         event_id=DomainEventId(uid(25)),
         event_occurred_at_us=3,
     )

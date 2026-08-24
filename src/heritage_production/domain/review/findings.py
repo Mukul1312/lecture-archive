@@ -305,7 +305,6 @@ class ReviewFindingEvidence:
     review_finding_id: ReviewFindingId
     review_round_id: ReviewRoundId
     review_submission_id: ReviewSubmissionId
-    client_finding_nonce: ClientFindingNonce
     target_key: ReviewTargetKey
     segment_revision_ref: SegmentRevisionRef
     category_code: FindingCategoryCode
@@ -318,7 +317,6 @@ class ReviewFindingEvidence:
             ("review_finding_id", self.review_finding_id, ReviewFindingId),
             ("review_round_id", self.review_round_id, ReviewRoundId),
             ("review_submission_id", self.review_submission_id, ReviewSubmissionId),
-            ("client_finding_nonce", self.client_finding_nonce, ClientFindingNonce),
             ("target_key", self.target_key, ReviewTargetKey),
             ("segment_revision_ref", self.segment_revision_ref, SegmentRevisionRef),
             ("category_code", self.category_code, FindingCategoryCode),
@@ -562,13 +560,37 @@ class ReviewFinding(AggregateEventRecorder):
     def disposition(self) -> FindingDisposition | None:
         return self._disposition
 
+    def validated_evidence(
+        self, *, target_manifest: ReviewTargetManifest
+    ) -> ReviewFindingEvidence:
+        validated = type(self).reconstitute(
+            target_manifest=target_manifest,
+            disposition=self._disposition,
+            review_finding_id=self.review_finding_id,
+            review_round_id=self.review_round_id,
+            review_submission_id=self.review_submission_id,
+            client_finding_nonce=self.client_finding_nonce,
+            edition_ref=self.edition_ref,
+            rubric_ref=self.rubric_ref,
+            target_key=self.target_key,
+            segment_revision_ref=self.segment_revision_ref,
+            character_span=self.character_span,
+            source_subspan=self.source_subspan,
+            category_code=self.category_code,
+            severity_code=self.severity_code,
+            observation=self.observation,
+            proposed_change=self.proposed_change,
+            author_actor_id=self.author_actor_id,
+            finding_payload_digest=self.finding_payload_digest,
+        )
+        return validated.evidence
+
     @property
     def evidence(self) -> ReviewFindingEvidence:
         return ReviewFindingEvidence(
             self.review_finding_id,
             self.review_round_id,
             self.review_submission_id,
-            self.client_finding_nonce,
             self.target_key,
             self.segment_revision_ref,
             self.category_code,

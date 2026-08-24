@@ -42,6 +42,7 @@ from .signoffs import (
     ReviewSignOff,
     ReviewSignOffRequirement,
     review_signoff_context_digest,
+    review_signoff_intent_digest,
 )
 
 __all__ = [
@@ -80,4 +81,5 @@ __all__ = [
     "ReviewSignOff",
     "ReviewSignOffRequirement",
     "review_signoff_context_digest",
+    "review_signoff_intent_digest",
 ]

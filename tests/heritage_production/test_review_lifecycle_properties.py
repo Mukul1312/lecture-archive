@@ -35,7 +35,9 @@ from tests.heritage_production.test_review_rounds import uid
 from tests.heritage_production.test_review_submissions import assigned_round
 
 
-def build_finding(round_, suffix: int, nonce: str, observation: str) -> ReviewFinding:
+def build_finding(
+    round_, suffix: int, nonce: str, observation: str, author_actor_id: ActorId
+) -> ReviewFinding:
     member = round_.target_manifest.members[0]
     body = {
         "client_finding_nonce": ClientFindingNonce(nonce),
@@ -50,7 +52,7 @@ def build_finding(round_, suffix: int, nonce: str, observation: str) -> ReviewFi
         "severity_code": FindingSeverityCode("major"),
         "observation": observation,
         "proposed_change": None,
-        "author_actor_id": ActorId(uid(150)),
+        "author_actor_id": author_actor_id,
     }
     finding = ReviewFinding.submit(
         review_finding_id=ReviewFindingId(uid(suffix)),
@@ -92,8 +94,12 @@ def build_finding(round_, suffix: int, nonce: str, observation: str) -> ReviewFi
 
 def ready_round():
     round_, assignment, assurance = assigned_round()
-    first = build_finding(round_, 160, "finding-a", "First concern")
-    second = build_finding(round_, 161, "finding-b", "Second concern")
+    first = build_finding(
+        round_, 160, "finding-a", "First concern", assignment.actor_id
+    )
+    second = build_finding(
+        round_, 161, "finding-b", "Second concern", assignment.actor_id
+    )
     refs = tuple(
         ImportedFindingRef(
             value.client_finding_nonce,
@@ -153,7 +159,7 @@ class ReviewLifecyclePropertyTests(unittest.TestCase):
         before = (round_.state, round_.submissions, round_.coverage, round_.evidence_ref)
         with self.assertRaises(ValidationError):
             round_.close(
-                closure_snapshot=ReviewClosureSnapshot((findings[0].evidence,), ()),
+                closure_snapshot=ReviewClosureSnapshot((findings[0],), ()),
                 closed_by=ActorId(uid(170)),
                 closed_at_us=200,
                 event_id=DomainEventId(uid(171)),
@@ -167,7 +173,7 @@ class ReviewLifecyclePropertyTests(unittest.TestCase):
 
         evidence = round_.close(
             closure_snapshot=ReviewClosureSnapshot(
-                tuple(findings[index].evidence for index in order), ()
+                tuple(findings[index] for index in order), ()
             ),
             closed_by=ActorId(uid(170)),
             closed_at_us=200,
@@ -177,7 +183,7 @@ class ReviewLifecyclePropertyTests(unittest.TestCase):
         baseline_round, baseline_findings = ready_round()
         baseline = baseline_round.close(
             closure_snapshot=ReviewClosureSnapshot(
-                tuple(value.evidence for value in baseline_findings), ()
+                tuple(baseline_findings), ()
             ),
             closed_by=ActorId(uid(170)),
             closed_at_us=200,

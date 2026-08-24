@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from heritage_production.domain.review import ReviewerAssignment, ReviewSignOffRequirement
+
 try:
     from heritage_production.domain.shared import (
         ActorAssuranceEvidence,
@@ -23,6 +25,7 @@ from heritage_production.domain.shared import (
     AssuranceLevel,
     ContentDigest,
     CredentialVerificationMethod,
+    RoleCode,
     ValidationError,
 )
 
@@ -40,6 +43,38 @@ def artifact(suffix: int, character: str) -> ArtifactRef:
 
 
 class SharedTrustVocabularyTests(unittest.TestCase):
+    def test_declared_minimum_cannot_exceed_pinned_credential_assurance(self) -> None:
+        role = RoleCode("reviewer")
+        attested = ActorCredentialRef(
+            ActorId(uid(10)),
+            CredentialVerificationMethod.STEWARD_ATTESTATION,
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+        for value_type in (ReviewerAssignment, ReviewSignOffRequirement):
+            with self.subTest(value_type=value_type.__name__):
+                with self.assertRaises(ValidationError):
+                    value_type(attested, role, AssuranceLevel.VERIFIED_SIGNATURE)
+
+        verified = ActorCredentialRef(
+            ActorId(uid(11)),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            digest("7"),
+            artifact(12, "8"),
+        )
+        self.assertEqual(
+            ReviewerAssignment(
+                verified, role, AssuranceLevel.STEWARD_ATTESTED
+            ).minimum_assurance,
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+        self.assertEqual(
+            ReviewSignOffRequirement(
+                verified, role, AssuranceLevel.STEWARD_ATTESTED
+            ).minimum_assurance,
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+
     def test_verified_and_attested_assurance_have_exact_nonoverlapping_shapes(self) -> None:
         self.assertIsNotNone(
             ActorAssuranceEvidence,

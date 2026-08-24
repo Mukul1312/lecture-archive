@@ -39,6 +39,22 @@ class ActorAssuranceKind(str, Enum):
     STEWARD_ATTESTATION = "steward_attestation"
 
 
+_ASSURANCE_STRENGTH = {
+    AssuranceLevel.UNVERIFIED: 0,
+    AssuranceLevel.STEWARD_ATTESTED: 1,
+    AssuranceLevel.VERIFIED_SIGNATURE: 2,
+}
+
+
+def assurance_satisfies(
+    actual: AssuranceLevel,
+    minimum: AssuranceLevel,
+) -> bool:
+    if type(actual) is not AssuranceLevel or type(minimum) is not AssuranceLevel:
+        raise ValidationError("assurance comparison requires exact AssuranceLevel values")
+    return _ASSURANCE_STRENGTH[actual] >= _ASSURANCE_STRENGTH[minimum]
+
+
 @dataclass(frozen=True, slots=True)
 class SignatureProof:
     algorithm: str

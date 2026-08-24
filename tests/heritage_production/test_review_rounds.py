@@ -7,6 +7,7 @@ try:
         FindingCategoryCode,
         FindingSeverityCode,
         ReviewerAssignment,
+        ReviewClosureSnapshot,
         ReviewRound,
         ReviewRoundState,
         ReviewTargetKey,
@@ -149,6 +150,66 @@ class ReviewRoundOpenTests(unittest.TestCase):
                 event_id=DomainEventId(uid(12)),
                 event_occurred_at_us=101,
             )
+
+    def test_round_state_is_behavior_only_while_aggregate_methods_can_mutate(self) -> None:
+        target = make_target()
+        round_ = ReviewRound.open(
+            review_round_id=target.review_round_id,
+            production_id=target.production_id,
+            edition_ref=target.edition_ref,
+            target_manifest=target,
+            rubric_ref=target.rubric_ref,
+            package_schema_version=1,
+            reviewer_assignments=(),
+            sign_off_requirements=(),
+            opened_by=ActorId(uid(11)),
+            opened_at_us=100,
+            event_id=DomainEventId(uid(12)),
+            event_occurred_at_us=101,
+        )
+        round_.pull_events()
+
+        protected_fields = (
+            "review_round_id",
+            "production_id",
+            "edition_ref",
+            "target_manifest",
+            "rubric_ref",
+            "package_schema_version",
+            "reviewer_assignments",
+            "sign_off_requirements",
+            "opened_by",
+            "opened_at_us",
+            "state",
+            "submissions",
+            "sign_offs",
+            "coverage",
+            "evidence_ref",
+            "closed_evidence",
+            "closed_by",
+            "closed_at_us",
+        )
+        before = tuple(getattr(round_, name) for name in protected_fields)
+        for name in protected_fields:
+            with self.subTest(name=name):
+                with self.assertRaises(AttributeError):
+                    setattr(round_, name, getattr(round_, name))
+        self.assertEqual(tuple(getattr(round_, name) for name in protected_fields), before)
+        self.assertEqual(round_.pull_events(), ())
+
+        evidence = round_.close(
+            closure_snapshot=ReviewClosureSnapshot((), ()),
+            closed_by=ActorId(uid(14)),
+            closed_at_us=102,
+            event_id=DomainEventId(uid(15)),
+            event_occurred_at_us=103,
+        )
+        self.assertIs(round_.state, ReviewRoundState.CLOSED)
+        self.assertEqual(round_.closed_evidence, evidence)
+        self.assertEqual(len(round_.pull_events()), 1)
+        with self.assertRaises(AttributeError):
+            round_.state = ReviewRoundState.OPEN
+        self.assertIs(round_.state, ReviewRoundState.CLOSED)
 
 
 if __name__ == "__main__":

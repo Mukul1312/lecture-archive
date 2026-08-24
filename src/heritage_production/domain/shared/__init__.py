@@ -66,6 +66,7 @@ from .trust import (
     SignOffDecision,
     SignOffTargetKind,
     SignatureProof,
+    assurance_satisfies,
 )
 
 __all__ = [
@@ -116,6 +117,7 @@ __all__ = [
     "SignOffDecision",
     "SignOffTargetKind",
     "SignatureProof",
+    "assurance_satisfies",
     "RubricId",
     "RubricRef",
     "SegmentId",

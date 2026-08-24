@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 import unittest
 
 try:
@@ -10,7 +11,9 @@ try:
         ReviewerAssignment,
         ReviewCompleteness,
         ReviewRound,
+        ReviewRoundState,
         ReviewSubmissionSummary,
+        ReviewFinding,
         ReviewTargetOutcome,
         TargetOutcomeKind,
         ReviewTargetKey,
@@ -39,6 +42,7 @@ from heritage_production.domain.shared import (
     ReviewFindingId,
     ReviewPackageId,
     ReviewPackageRef,
+    ReviewRoundId,
     ReviewSubmissionId,
     RoleCode,
     SignatureProof,
@@ -139,7 +143,638 @@ def zero_finding_summary(
     )
 
 
+def summary_for_finding(
+    round_: ReviewRound,
+    assignment: ReviewerAssignment,
+    assurance: ActorAssuranceEvidence,
+    finding: ReviewFinding,
+    *,
+    submission_nonce: str,
+    package_suffix: int,
+    predecessor: ContentDigest | None,
+    package_digest: ContentDigest | None = None,
+) -> ReviewSubmissionSummary:
+    ref = ImportedFindingRef(
+        finding.client_finding_nonce,
+        finding.review_finding_id,
+        finding.finding_payload_digest,
+        finding.target_key,
+        finding.review_submission_id,
+    )
+    return ReviewSubmissionSummary.seal(
+        review_submission_id=finding.review_submission_id,
+        client_submission_nonce=ClientSubmissionNonce(submission_nonce),
+        review_package_ref=ReviewPackageRef(
+            ReviewPackageId(uid(package_suffix)),
+            package_digest
+            or ContentDigest("sha256", f"{package_suffix % 10}" * 64),
+            artifact(package_suffix + 1, "b", "application/zip"),
+        ),
+        review_round_id=round_.review_round_id,
+        production_id=round_.production_id,
+        edition_ref=round_.edition_ref,
+        rubric_ref=round_.rubric_ref,
+        target_manifest_ref=round_.target_manifest.ref,
+        submission_schema_version=round_.package_schema_version,
+        predecessor_submission_digest=predecessor,
+        assigned_actor_id=assignment.actor_id,
+        role=assignment.role,
+        assurance=assurance,
+        completeness=ReviewCompleteness.COMPLETE,
+        outcomes=(
+            ReviewTargetOutcome(
+                finding.target_key, TargetOutcomeKind.FINDINGS, (ref,)
+            ),
+        ),
+        unreviewed_target_keys=(),
+        raw_result_artifact=artifact(package_suffix + 2, "c", "application/zip"),
+        completed_nonce_map_digest=ContentDigest("sha256", "d" * 64),
+        imported_at_us=package_suffix,
+        target_manifest=round_.target_manifest,
+    )
+
+
+def zero_finding_variant(
+    round_: ReviewRound,
+    assignment: ReviewerAssignment,
+    assurance: ActorAssuranceEvidence,
+    *,
+    submission_suffix: int,
+    submission_nonce: str,
+    package_ref: ReviewPackageRef,
+    predecessor: ContentDigest | None,
+    raw_artifact: ArtifactRef,
+    imported_at_us: int,
+    nonce_map_digest: ContentDigest | None = None,
+) -> ReviewSubmissionSummary:
+    target = round_.target_manifest
+    return ReviewSubmissionSummary.seal(
+        review_submission_id=ReviewSubmissionId(uid(submission_suffix)),
+        client_submission_nonce=ClientSubmissionNonce(submission_nonce),
+        review_package_ref=package_ref,
+        review_round_id=round_.review_round_id,
+        production_id=round_.production_id,
+        edition_ref=round_.edition_ref,
+        rubric_ref=round_.rubric_ref,
+        target_manifest_ref=target.ref,
+        submission_schema_version=round_.package_schema_version,
+        predecessor_submission_digest=predecessor,
+        assigned_actor_id=assignment.actor_id,
+        role=assignment.role,
+        assurance=assurance,
+        completeness=ReviewCompleteness.COMPLETE,
+        outcomes=(
+            ReviewTargetOutcome(
+                target.members[0].target_key, TargetOutcomeKind.NO_ISSUE, ()
+            ),
+        ),
+        unreviewed_target_keys=(),
+        raw_result_artifact=raw_artifact,
+        completed_nonce_map_digest=nonce_map_digest
+        or ContentDigest("sha256", "d" * 64),
+        imported_at_us=imported_at_us,
+        target_manifest=target,
+    )
+
+
+def forged(value: object, **changes: object) -> object:
+    forged_value = copy(value)
+    for name, replacement in changes.items():
+        object.__setattr__(forged_value, name, replacement)
+    return forged_value
+
+
+def reconstitute_open(
+    round_: ReviewRound,
+    *,
+    submissions: tuple[ReviewSubmissionSummary, ...],
+) -> ReviewRound:
+    return ReviewRound.reconstitute(
+        review_round_id=round_.review_round_id,
+        production_id=round_.production_id,
+        edition_ref=round_.edition_ref,
+        target_manifest=round_.target_manifest,
+        rubric_ref=round_.rubric_ref,
+        package_schema_version=round_.package_schema_version,
+        reviewer_assignments=round_.reviewer_assignments,
+        sign_off_requirements=round_.sign_off_requirements,
+        opened_by=round_.opened_by,
+        opened_at_us=round_.opened_at_us,
+        state=ReviewRoundState.OPEN,
+        submissions=submissions,
+        sign_offs=(),
+        closure_snapshot=None,
+        closed_evidence=None,
+        closed_by=None,
+        closed_at_us=None,
+    )
+
+
 class ReviewSubmissionTests(unittest.TestCase):
+    def test_finalize_revalidates_loaded_finding_root_body_atomically(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        finding = submit_finding(round_, author_actor_id=assignment.actor_id)
+        finding.pull_events()
+        summary = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            finding,
+            submission_nonce="root-revalidation",
+            package_suffix=215,
+            predecessor=None,
+        )
+        forged = type(finding).reconstitute(
+            target_manifest=round_.target_manifest,
+            disposition=finding.disposition,
+            review_finding_id=finding.review_finding_id,
+            review_round_id=finding.review_round_id,
+            review_submission_id=finding.review_submission_id,
+            client_finding_nonce=finding.client_finding_nonce,
+            edition_ref=finding.edition_ref,
+            rubric_ref=finding.rubric_ref,
+            target_key=finding.target_key,
+            segment_revision_ref=finding.segment_revision_ref,
+            character_span=finding.character_span,
+            source_subspan=finding.source_subspan,
+            category_code=finding.category_code,
+            severity_code=finding.severity_code,
+            observation=finding.observation,
+            proposed_change=finding.proposed_change,
+            author_actor_id=finding.author_actor_id,
+            finding_payload_digest=finding.finding_payload_digest,
+        )
+        object.__setattr__(forged, "observation", "Forged imported body")
+
+        with self.assertRaises(ValidationError):
+            round_.finalize_submission(
+                summary=summary,
+                findings=(forged,),
+                event_id=DomainEventId(uid(219)),
+                event_occurred_at_us=5,
+            )
+        self.assertEqual(round_.submissions, ())
+        self.assertEqual(round_.pull_events(), ())
+
+    def test_reconstitution_reuses_complete_submission_attachment_invariants(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        first = zero_finding_summary(round_, assignment, assurance)
+        correction = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=220,
+            submission_nonce="correction",
+            package_ref=ReviewPackageRef(
+                ReviewPackageId(uid(221)),
+                first.review_package_ref.semantic_digest,
+                artifact(222, "e", "application/zip"),
+            ),
+            predecessor=first.submission_digest,
+            raw_artifact=artifact(223, "f", "application/zip"),
+            imported_at_us=20,
+        )
+        self.assertEqual(
+            reconstitute_open(round_, submissions=(first, correction)).submissions,
+            (first, correction),
+        )
+
+        weak_assurance = forged(
+            correction.assurance, assurance=AssuranceLevel.UNVERIFIED
+        )
+        reused_package = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=224,
+            submission_nonce=first.client_submission_nonce.value,
+            package_ref=ReviewPackageRef(
+                first.review_package_ref.review_package_id,
+                first.review_package_ref.semantic_digest,
+                artifact(225, "1", "application/zip"),
+            ),
+            predecessor=first.submission_digest,
+            raw_artifact=artifact(226, "2", "application/zip"),
+            imported_at_us=21,
+        )
+        duplicate_id = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=51,
+            submission_nonce="different-id-mapping",
+            package_ref=ReviewPackageRef(
+                ReviewPackageId(uid(227)),
+                ContentDigest("sha256", "3" * 64),
+                artifact(228, "4", "application/zip"),
+            ),
+            predecessor=first.submission_digest,
+            raw_artifact=artifact(229, "5", "application/zip"),
+            imported_at_us=22,
+        )
+        invalid_graphs = {
+            "schema": (first, forged(correction, submission_schema_version=2)),
+            "assurance": (first, forged(correction, assurance=weak_assurance)),
+            "predecessor": (
+                first,
+                forged(correction, predecessor_submission_digest=None),
+            ),
+            "reused-package-and-qualified-nonce": (first, reused_package),
+            "duplicate-submission-id": (first, duplicate_id),
+            "duplicate-semantic-digest": (first, first),
+            "foreign-round": (
+                first,
+                forged(correction, review_round_id=ReviewRoundId(uid(230))),
+            ),
+            "foreign-production": (
+                first,
+                forged(correction, production_id=ProductionId(uid(231))),
+            ),
+            "foreign-edition": (
+                first,
+                forged(
+                    correction,
+                    edition_ref=type(round_.edition_ref)(
+                        round_.edition_ref.transcript_edition_id,
+                        ContentDigest("sha256", "6" * 64),
+                    ),
+                ),
+            ),
+            "foreign-rubric": (
+                first,
+                forged(
+                    correction,
+                    rubric_ref=type(round_.rubric_ref)(
+                        round_.rubric_ref.rubric_id,
+                        round_.rubric_ref.schema_version,
+                        ContentDigest("sha256", "7" * 64),
+                    ),
+                ),
+            ),
+            "foreign-target": (
+                first,
+                forged(
+                    correction,
+                    target_manifest_ref=type(round_.target_manifest.ref)(
+                        round_.review_round_id,
+                        ContentDigest("sha256", "8" * 64),
+                        round_.target_manifest.ref.artifact,
+                    ),
+                ),
+            ),
+        }
+        for name, submissions in invalid_graphs.items():
+            with self.subTest(name=name):
+                with self.assertRaises(ValidationError):
+                    reconstitute_open(round_, submissions=submissions)
+
+    def test_reconstitution_rejects_historical_finding_identity_and_payload_collisions(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        first_finding = submit_finding(
+            round_,
+            author_actor_id=assignment.actor_id,
+            review_submission_id=ReviewSubmissionId(uid(240)),
+            review_finding_id=ReviewFindingId(uid(241)),
+            client_finding_nonce=ClientFindingNonce("history-one"),
+        )
+        first = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            first_finding,
+            submission_nonce="history-submission-one",
+            package_suffix=242,
+            predecessor=None,
+        )
+        duplicate_id_finding = submit_finding(
+            round_,
+            author_actor_id=assignment.actor_id,
+            review_submission_id=ReviewSubmissionId(uid(245)),
+            review_finding_id=first_finding.review_finding_id,
+            client_finding_nonce=ClientFindingNonce("history-two"),
+            observation="Different body",
+        )
+        duplicate_id = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            duplicate_id_finding,
+            submission_nonce="history-submission-two",
+            package_suffix=246,
+            predecessor=first.submission_digest,
+        )
+        duplicate_payload_finding = submit_finding(
+            round_,
+            author_actor_id=assignment.actor_id,
+            review_submission_id=ReviewSubmissionId(uid(249)),
+            review_finding_id=ReviewFindingId(uid(250)),
+            client_finding_nonce=first_finding.client_finding_nonce,
+        )
+        self.assertEqual(
+            duplicate_payload_finding.finding_payload_digest,
+            first_finding.finding_payload_digest,
+        )
+        duplicate_payload = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            duplicate_payload_finding,
+            submission_nonce="history-submission-three",
+            package_suffix=251,
+            predecessor=first.submission_digest,
+        )
+
+        for name, candidate in (
+            ("finding-id", duplicate_id),
+            ("finding-payload", duplicate_payload),
+        ):
+            with self.subTest(name=name):
+                with self.assertRaises(ValidationError):
+                    reconstitute_open(round_, submissions=(first, candidate))
+
+    def test_semantic_replay_retains_first_wrapper_but_rejects_mapping_conflicts(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        first = zero_finding_summary(round_, assignment, assurance)
+        round_.finalize_submission(
+            summary=first,
+            findings=(),
+            event_id=DomainEventId(uid(200)),
+            event_occurred_at_us=5,
+        )
+        correction = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=201,
+            submission_nonce="new-head",
+            package_ref=ReviewPackageRef(
+                ReviewPackageId(uid(202)),
+                first.review_package_ref.semantic_digest,
+                artifact(203, "e", "application/zip"),
+            ),
+            predecessor=first.submission_digest,
+            raw_artifact=artifact(204, "f", "application/zip"),
+            imported_at_us=10,
+        )
+        round_.finalize_submission(
+            summary=correction,
+            findings=(),
+            event_id=DomainEventId(uid(205)),
+            event_occurred_at_us=6,
+        )
+        round_.pull_events()
+
+        replay = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=51,
+            submission_nonce=first.client_submission_nonce.value,
+            package_ref=first.review_package_ref,
+            predecessor=None,
+            raw_artifact=artifact(206, "1", "application/zip"),
+            imported_at_us=99,
+        )
+        self.assertEqual(replay.submission_digest, first.submission_digest)
+        self.assertNotEqual(replay.raw_result_artifact, first.raw_result_artifact)
+        stored = round_.finalize_submission(
+            summary=replay,
+            findings=(),
+            event_id=DomainEventId(uid(207)),
+            event_occurred_at_us=7,
+        )
+        self.assertIs(stored, first)
+        self.assertEqual(round_.submissions, (first, correction))
+        self.assertEqual(round_.pull_events(), ())
+
+        conflicts = (
+            zero_finding_variant(
+                round_,
+                assignment,
+                assurance,
+                submission_suffix=208,
+                submission_nonce=first.client_submission_nonce.value,
+                package_ref=first.review_package_ref,
+                predecessor=None,
+                raw_artifact=artifact(209, "2", "application/zip"),
+                imported_at_us=100,
+            ),
+            zero_finding_variant(
+                round_,
+                assignment,
+                assurance,
+                submission_suffix=51,
+                submission_nonce=first.client_submission_nonce.value,
+                package_ref=first.review_package_ref,
+                predecessor=None,
+                raw_artifact=artifact(210, "3", "application/zip"),
+                imported_at_us=101,
+                nonce_map_digest=ContentDigest("sha256", "e" * 64),
+            ),
+        )
+        for index, conflict in enumerate(conflicts):
+            self.assertEqual(conflict.submission_digest, first.submission_digest)
+            with self.subTest(index=index):
+                with self.assertRaises(ValidationError):
+                    round_.finalize_submission(
+                        summary=conflict,
+                        findings=(),
+                        event_id=DomainEventId(uid(211 + index)),
+                        event_occurred_at_us=8 + index,
+                    )
+                self.assertEqual(round_.submissions, (first, correction))
+                self.assertEqual(round_.pull_events(), ())
+
+    def test_correction_requires_new_package_id_and_outer_artifact(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        first = zero_finding_summary(round_, assignment, assurance)
+        round_.finalize_submission(
+            summary=first,
+            findings=(),
+            event_id=DomainEventId(uid(190)),
+            event_occurred_at_us=5,
+        )
+        round_.pull_events()
+
+        reused_id = ReviewPackageRef(
+            first.review_package_ref.review_package_id,
+            first.review_package_ref.semantic_digest,
+            artifact(191, "e", "application/zip"),
+        )
+        reused_artifact = ReviewPackageRef(
+            ReviewPackageId(uid(192)),
+            first.review_package_ref.semantic_digest,
+            first.review_package_ref.artifact,
+        )
+        for index, package_ref in enumerate((reused_id, reused_artifact)):
+            correction = zero_finding_variant(
+                round_,
+                assignment,
+                assurance,
+                submission_suffix=193 + index,
+                submission_nonce=f"fresh-package-{index}",
+                package_ref=package_ref,
+                predecessor=first.submission_digest,
+                raw_artifact=artifact(195 + index, "f", "application/zip"),
+                imported_at_us=10 + index,
+            )
+            with self.subTest(index=index):
+                with self.assertRaises(ValidationError):
+                    round_.finalize_submission(
+                        summary=correction,
+                        findings=(),
+                        event_id=DomainEventId(uid(197 + index)),
+                        event_occurred_at_us=6 + index,
+                    )
+                self.assertEqual(round_.submissions, (first,))
+                self.assertEqual(round_.pull_events(), ())
+
+    def test_correction_protects_global_finding_history_but_scopes_nonces_to_package(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        first_finding = submit_finding(
+            round_,
+            author_actor_id=assignment.actor_id,
+            review_finding_id=ReviewFindingId(uid(150)),
+            review_submission_id=ReviewSubmissionId(uid(151)),
+            client_finding_nonce=ClientFindingNonce("historical-finding"),
+        )
+        first_finding.pull_events()
+        first = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            first_finding,
+            submission_nonce="historical-submission",
+            package_suffix=152,
+            predecessor=None,
+        )
+        round_.finalize_submission(
+            summary=first,
+            findings=(first_finding,),
+            event_id=DomainEventId(uid(155)),
+            event_occurred_at_us=5,
+        )
+        round_.pull_events()
+
+        candidates = (
+            submit_finding(
+                round_,
+                author_actor_id=assignment.actor_id,
+                review_finding_id=first_finding.review_finding_id,
+                review_submission_id=ReviewSubmissionId(uid(156)),
+                client_finding_nonce=ClientFindingNonce("new-id-collision"),
+                observation="Different body",
+            ),
+            submit_finding(
+                round_,
+                author_actor_id=assignment.actor_id,
+                review_finding_id=ReviewFindingId(uid(157)),
+                review_submission_id=ReviewSubmissionId(uid(158)),
+                client_finding_nonce=first_finding.client_finding_nonce,
+            ),
+        )
+        for index, finding in enumerate(candidates):
+            finding.pull_events()
+            correction = summary_for_finding(
+                round_,
+                assignment,
+                assurance,
+                finding,
+                submission_nonce=f"collision-{index}",
+                package_suffix=161 + index * 4,
+                predecessor=first.submission_digest,
+            )
+            with self.subTest(index=index):
+                with self.assertRaises(ValidationError):
+                    round_.finalize_submission(
+                        summary=correction,
+                        findings=(finding,),
+                        event_id=DomainEventId(uid(180 + index)),
+                        event_occurred_at_us=6 + index,
+                    )
+                self.assertEqual(round_.submissions, (first,))
+                self.assertEqual(round_.pull_events(), ())
+
+        package_local_nonce = submit_finding(
+            round_,
+            author_actor_id=assignment.actor_id,
+            review_finding_id=ReviewFindingId(uid(159)),
+            review_submission_id=ReviewSubmissionId(uid(160)),
+            client_finding_nonce=first_finding.client_finding_nonce,
+            observation="Different body",
+        )
+        package_local_nonce.pull_events()
+        correction = summary_for_finding(
+            round_,
+            assignment,
+            assurance,
+            package_local_nonce,
+            submission_nonce=first.client_submission_nonce.value,
+            package_suffix=169,
+            predecessor=first.submission_digest,
+            package_digest=first.review_package_ref.semantic_digest,
+        )
+        round_.finalize_submission(
+            summary=correction,
+            findings=(package_local_nonce,),
+            event_id=DomainEventId(uid(181)),
+            event_occurred_at_us=8,
+        )
+        self.assertEqual(round_.submissions, (first, correction))
+
+    def test_finalize_rejects_finding_authored_by_another_actor_atomically(self) -> None:
+        round_, assignment, assurance = assigned_round()
+        finding = submit_finding(round_)
+        finding.pull_events()
+        ref = ImportedFindingRef(
+            finding.client_finding_nonce,
+            finding.review_finding_id,
+            finding.finding_payload_digest,
+            finding.target_key,
+            finding.review_submission_id,
+        )
+        target = round_.target_manifest
+        summary = ReviewSubmissionSummary.seal(
+            review_submission_id=finding.review_submission_id,
+            client_submission_nonce=ClientSubmissionNonce("spoofed-author"),
+            review_package_ref=ReviewPackageRef(
+                ReviewPackageId(uid(141)),
+                ContentDigest("sha256", "a" * 64),
+                artifact(142, "b", "application/zip"),
+            ),
+            review_round_id=round_.review_round_id,
+            production_id=round_.production_id,
+            edition_ref=round_.edition_ref,
+            rubric_ref=round_.rubric_ref,
+            target_manifest_ref=target.ref,
+            submission_schema_version=1,
+            predecessor_submission_digest=None,
+            assigned_actor_id=assignment.actor_id,
+            role=assignment.role,
+            assurance=assurance,
+            completeness=ReviewCompleteness.COMPLETE,
+            outcomes=(
+                ReviewTargetOutcome(
+                    finding.target_key, TargetOutcomeKind.FINDINGS, (ref,)
+                ),
+            ),
+            unreviewed_target_keys=(),
+            raw_result_artifact=artifact(143, "c", "application/zip"),
+            completed_nonce_map_digest=ContentDigest("sha256", "d" * 64),
+            imported_at_us=4,
+            target_manifest=target,
+        )
+
+        with self.assertRaises(ValidationError):
+            round_.finalize_submission(
+                summary=summary,
+                findings=(finding,),
+                event_id=DomainEventId(uid(144)),
+                event_occurred_at_us=5,
+            )
+        self.assertEqual(round_.submissions, ())
+        self.assertEqual(round_.pull_events(), ())
+
     def test_verified_submission_signature_binds_payload_role_and_target_context(self) -> None:
         round_, assignment, attested = assigned_round()
         baseline = zero_finding_summary(round_, assignment, attested)
@@ -346,7 +981,7 @@ class ReviewSubmissionTests(unittest.TestCase):
 
     def test_finding_evidence_must_exactly_match_finalized_refs(self) -> None:
         round_, assignment, assurance = assigned_round()
-        finding = submit_finding(round_)
+        finding = submit_finding(round_, author_actor_id=assignment.actor_id)
         finding.pull_events()
         ref = ImportedFindingRef(
             finding.client_finding_nonce,
