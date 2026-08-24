@@ -238,6 +238,26 @@ class ASRContractTests(unittest.TestCase):
             ASRService(self.store, self.model, IncompleteMedia()).rerun_span(ready["job_id"], 1, 2)
         self.assertEqual(list((self.store.job_root(ready["job_id"]) / "asr" / "reruns").iterdir()), [])
 
+    def test_runtime_metadata_with_a_non_json_extra_is_rejected_before_any_full_asr_file(self) -> None:
+        # Break caught: a later metadata serialization failure stranded raw full evidence at a source_ready job.
+        class UnsafeExtraRuntimeModel(FakeModelAdapter):
+            def runtime_metadata(self) -> dict[str, object]:
+                return {**super().runtime_metadata(), "unsafe": float("nan")}
+
+        with self.assertRaisesRegex(JobValidationError, "runtime metadata"):
+            ASRService(self.store, UnsafeExtraRuntimeModel(), self.media).transcribe(self.job["job_id"])
+        root = self.store.job_root(self.job["job_id"])
+        self.assertEqual(self.store.load_job(self.job["job_id"])["stage"], "source_ready")
+        self.assertFalse((root / "asr" / "full.jsonl").exists())
+        self.assertFalse((root / "asr" / "metadata.json").exists())
+
+    def test_negative_zero_and_zero_share_one_rerun_identity(self) -> None:
+        # Break caught: numerically identical span bounds could create duplicate supplemental evidence histories.
+        ready = self.service.transcribe(self.job["job_id"])
+        self.service.rerun_span(ready["job_id"], 0.0, 1.0)
+        with self.assertRaises(ArtifactValidationError):
+            self.service.rerun_span(ready["job_id"], -0.0, 1.0)
+
 
 class InspectionContractTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -277,6 +297,12 @@ class InspectionContractTests(unittest.TestCase):
         manifest.write_text(json.dumps(state), encoding="utf-8")
         with self.assertRaises(RepositoryHealthError):
             self.store.load_job(self.job["job_id"])
+
+    def test_bare_asr_ready_to_inspected_transition_cannot_commit_without_both_reports(self) -> None:
+        # Break caught: an inspected state could be forged without the inspection evidence the stage represents.
+        with self.assertRaises(RepositoryHealthError):
+            self.store.advance_stage(self.job["job_id"], "inspected")
+        self.assertEqual(self.store.load_job(self.job["job_id"])["stage"], "asr_ready")
 
     def test_inspection_rejects_out_of_order_raw_evidence_and_reports_confidence_and_repetition(self) -> None:
         # Break caught: corrupted raw JSONL could make coverage/diagnostics look trustworthy.

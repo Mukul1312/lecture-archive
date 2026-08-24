@@ -145,7 +145,7 @@ def _finite_number(value: object, label: str) -> float:
 def _validate_runtime(runtime: object, required_keys: set[str], label: str) -> dict[str, str]:
     if not isinstance(runtime, dict) or not required_keys.issubset(runtime):
         raise JobValidationError(f"{label} runtime metadata is incomplete")
-    if any(not isinstance(runtime[key], str) or not runtime[key].strip() for key in required_keys):
+    if any(not isinstance(key, str) or not isinstance(value, str) or not value.strip() for key, value in runtime.items()):
         raise JobValidationError(f"{label} runtime metadata must have non-empty strings")
     return dict(runtime)
 
@@ -189,6 +189,8 @@ def _validate_sequence(records: list[dict[str, object]], duration: float) -> lis
 
 def _span_component(value: float) -> str:
     """A valid finite float has one lossless canonical hexadecimal representation."""
+    if value == 0:
+        value = 0.0
     return value.hex().replace("-", "neg").replace("+", "plus")
 
 
@@ -212,8 +214,10 @@ class ASRService:
             runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
             self.store.validate_source(job_id)
             metadata: dict[str, object] = {"source_sha256": state["source_sha256"], "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": dict(runtime)}
-            _atomic_text(full_path, _jsonl(records))
-            _atomic_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
+            full_jsonl = _jsonl(records)
+            metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+            _atomic_text(full_path, full_jsonl)
+            _atomic_text(metadata_path, metadata_json)
             transaction.register_artifact("asr/full.jsonl")
             transaction.register_artifact("asr/metadata.json")
             transaction.record_asr_metadata(metadata)
@@ -254,8 +258,10 @@ class ASRService:
             self._validate_primary_asr_evidence(job_id, state)
             metadata = {"source_sha256": state["source_sha256"], "start_seconds": start_value, "end_seconds": end_value,
                         "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": runtime, "media_runtime": media_runtime}
-            _atomic_text(jsonl_path, _jsonl(records))
-            _atomic_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
+            rerun_jsonl = _jsonl(records)
+            rerun_metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+            _atomic_text(jsonl_path, rerun_jsonl)
+            _atomic_text(metadata_path, rerun_metadata_json)
             transaction.register_artifact(f"asr/reruns/{jsonl_path.name}")
             transaction.register_artifact(f"asr/reruns/{metadata_path.name}")
         return {"jsonl_path": jsonl_path, "metadata_path": metadata_path}

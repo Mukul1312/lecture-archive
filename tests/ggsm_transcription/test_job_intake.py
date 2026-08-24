@@ -289,7 +289,7 @@ class IntakeContractTests(unittest.TestCase):
                 first = IntakeService(isolated, first_adapter).intake("https://archive.example/original")
                 ASRService(isolated, FakeASRAdapter()).transcribe(first["job_id"])
                 if target_stage == "inspected":
-                    isolated.advance_stage(first["job_id"], "inspected")
+                    ASRService(isolated, FakeASRAdapter()).inspect(first["job_id"])
                 class NoProbeAdapter(FakeSourceAdapter):
                     def probe(self, source_path):
                         raise AssertionError("probe must not run for a bound hash identity")
@@ -351,9 +351,11 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         root = self.store.job_root(job["job_id"])
         ASRService(self.store, FakeASRAdapter()).transcribe(job["job_id"])
         (root / "inspection" / "report.json").write_text("{}", encoding="utf-8")
+        (root / "inspection" / "report.md").write_text("# inspection\n", encoding="utf-8")
         before = self.store.load_job(job["job_id"])["revision"]
         with self.store.transaction(job["job_id"]) as transaction:
             transaction.register_artifact("inspection/report.json")
+            transaction.register_artifact("inspection/report.md")
             transaction.advance_stage("inspected")
         after = self.store.load_job(job["job_id"])
         self.assertEqual(after["revision"], before + 1)
