@@ -10,7 +10,6 @@ import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
-import shutil
 import stat
 import tempfile
 import threading
@@ -109,7 +108,8 @@ class _OSFileLock:
         self.handle: Any | None = None
 
     def acquire(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.parent.is_dir():
+            raise JobLockError(f"lock parent is unavailable: {self.path.name}")
         self.handle = self.path.open("a+b")
         try:
             if os.name == "nt":
@@ -178,8 +178,7 @@ class JobTransaction:
     def complete_asr(self) -> None:
         if self._state["stage"] != "source_ready":
             raise StageTransitionError("ASR completion requires a source_ready job")
-        if self._state.get("asr") is None or not {"asr/full.jsonl", "asr/metadata.json"}.issubset(self._state["artifacts"]):
-            raise ArtifactValidationError("ASR completion requires bound full ASR evidence")
+        self.store.validate_asr_completion(self.job_id)
         self._state["stage"] = "asr_ready"
         self._state["stage_history"].append({"stage": "asr_ready", "at": _utcnow()})
         self._dirty = True
@@ -187,8 +186,7 @@ class JobTransaction:
     def complete_inspection(self) -> None:
         if self._state["stage"] != "asr_ready":
             raise StageTransitionError("inspection completion requires an asr_ready job")
-        if not {"inspection/report.json", "inspection/report.md"}.issubset(self._state["artifacts"]):
-            raise ArtifactValidationError("inspection completion requires both inspection artifacts")
+        self.store.validate_inspection_completion(self.job_id)
         self._state["stage"] = "inspected"
         self._state["stage_history"].append({"stage": "inspected", "at": _utcnow()})
         self._dirty = True
@@ -241,16 +239,18 @@ class JobTransaction:
         digest, size = source["sha256"], source["byte_size"]
         if digest != self._state["source_sha256"]:
             raise ArtifactValidationError("incoming source hash does not match this deterministic job")
+        staging_path = self.store.validate_incoming_staging_path(staging_path)
         root = self.store.job_root(self.job_id)
-        target = root / "source" / "source.bin"
+        target = self.store.validate_output_path(self.job_id, "source/source.bin")
         if target.exists():
             self.store._assert_safe_artifact_path(root, target)
             if _hash_file(target) != (digest, size):
                 raise ArtifactValidationError("existing source evidence is corrupt")
         else:
-            self.store._assert_safe_artifact_path(root, target)
             if not staging_path.is_file() or _is_reparse(staging_path) or _hash_file(staging_path) != (digest, size):
                 raise ArtifactValidationError("staging source is unsafe or changed before installation")
+            self.store.validate_incoming_staging_path(staging_path)
+            self.store.validate_output_path(self.job_id, "source/source.bin")
             staging_path.replace(target)
         if self._state["source"] is not None:
             immutable_fields = ("sha256", "byte_size", "duration_seconds", "codec", "streams")
@@ -290,10 +290,10 @@ class JobStore:
         self.jobs_root, self.incoming_root = self.data_root / "jobs", self.data_root / ".incoming"
         self.creation_root = self.data_root / ".creating"
         if create:
-            self.data_root.mkdir(parents=True, exist_ok=True)
-            self.jobs_root.mkdir(exist_ok=True)
-            self.incoming_root.mkdir(exist_ok=True)
-            self.creation_root.mkdir(exist_ok=True)
+            self._create_safe_directory(self.data_root, "data root")
+            self._create_safe_directory(self.jobs_root, "jobs root")
+            self._create_safe_directory(self.incoming_root, "incoming root")
+            self._create_safe_directory(self.creation_root, "creation root")
         self._assert_safe_directory(self.data_root, "data root")
         self._assert_safe_directory(self.jobs_root, "jobs root")
         if create:
@@ -325,7 +325,9 @@ class JobStore:
                 except JobValidationError as health_error:
                     raise RepositoryHealthError(f"existing job directory is corrupt: {job_id}") from health_error
             raise JobValidationError(f"job already exists: {job_id}")
+        self._assert_safe_directory(self.creation_root, "creation root")
         temporary = Path(tempfile.mkdtemp(prefix=f"{job_id}-", dir=self.creation_root))
+        self._assert_safe_directory(temporary, "creation staging")
         now = _utcnow()
         state: dict[str, Any] = {
             "schema_version": 1, "revision": 0, "job_id": job_id, "source_sha256": source_sha256,
@@ -333,15 +335,18 @@ class JobStore:
             "stage_history": [{"stage": "created", "at": now}], "source": None,
             "source_url_aliases": [], "tool_versions": {}, "artifacts": {},
         }
-        try:
-            for relative in _LAYOUT:
-                (temporary / relative).mkdir(parents=True, exist_ok=True)
-            self._validate_manifest(state, job_id)
-            self._write_manifest(temporary, state)
-            os.replace(temporary, root)
-        except Exception:
-            shutil.rmtree(temporary, ignore_errors=True)
-            raise
+        # Keep failed construction under the already-ignored crash staging root.
+        # Retention is safer than recursively deleting a tree that may have been
+        # replaced with a reparse point after its last validation.
+        for relative in _LAYOUT:
+            self._create_safe_directory(temporary / relative, "job creation layout")
+        self._validate_manifest(state, job_id)
+        self._assert_safe_directory(temporary, "creation staging")
+        self._write_manifest(temporary, state)
+        self._assert_safe_directory(self.jobs_root, "jobs root")
+        if root.exists() or _is_reparse(root):
+            raise RepositoryHealthError("job creation target is no longer a safe new directory")
+        os.replace(temporary, root)
         return state
 
     def load_job(self, job_id: str) -> dict[str, Any]:
@@ -388,11 +393,13 @@ class JobStore:
         root = self.job_root(job_id)
         if not root.is_dir():
             raise JobValidationError(f"job does not exist: {job_id}")
+        self._validate_lock_path(root, root / ".lock")
         with self._lock(f"job:{job_id}", root / ".lock"):
             yield
 
     @contextmanager
     def identity_lock(self) -> Iterator[None]:
+        self._validate_lock_path(self.jobs_root, self.jobs_root / ".identity.lock")
         with self._lock("identity", self.jobs_root / ".identity.lock"):
             yield
 
@@ -401,6 +408,7 @@ class JobStore:
         root = self.job_root(job_id)
         if not root.is_dir():
             raise JobValidationError(f"job does not exist: {job_id}")
+        self._validate_lock_path(root, root / ".lock")
         with self._lock(f"job:{job_id}", root / ".lock"):
             transaction = JobTransaction(self, job_id)
             yield transaction
@@ -444,13 +452,42 @@ class JobStore:
         self._assert_safe_artifact_path(root, target)
         if not target.parent.is_dir() or _is_reparse(target.parent):
             raise ArtifactValidationError(f"artifact output parent is unsafe: {relative.as_posix()}")
-        if target.exists() and (not target.is_file() or _is_reparse(target)):
+        if _is_reparse(target) or (target.exists() and not target.is_file()):
             raise ArtifactValidationError(f"artifact output target is unsafe: {relative.as_posix()}")
         return target
+
+    def validate_incoming_staging_path(self, staging_path: str | Path) -> Path:
+        """Require a direct, non-reparse child of the current trusted incoming root."""
+        staging = Path(staging_path)
+        self._assert_safe_directory(self.data_root, "data root")
+        self._assert_safe_directory(self.incoming_root, "incoming root")
+        if staging.parent != self.incoming_root:
+            raise ArtifactValidationError("staging source must be a direct child of the trusted incoming root")
+        if not staging.name or staging.name in {".", ".."}:
+            raise ArtifactValidationError("staging source path is invalid")
+        if _is_reparse(staging) or (staging.exists() and not staging.is_file()):
+            raise ArtifactValidationError("staging source is not a safe regular file")
+        return staging
 
     def validate_review_completion(self, job_id: str) -> None:
         from .review import ReviewDeliveryService
         ReviewDeliveryService(self).validate_review_completion(job_id)
+
+    def validate_asr_completion(self, job_id: str) -> None:
+        from .asr import validate_asr_completion
+        validate_asr_completion(self, job_id)
+
+    def validate_inspection_completion(self, job_id: str) -> None:
+        from .asr import validate_inspection_completion
+        validate_inspection_completion(self, job_id)
+
+    def validate_asr_evidence(self, job_id: str) -> None:
+        from .asr import validate_primary_asr_evidence
+        validate_primary_asr_evidence(self, job_id)
+
+    def validate_inspection_evidence(self, job_id: str) -> None:
+        from .asr import validate_inspection_evidence
+        validate_inspection_evidence(self, job_id)
 
     def validate_verification_completion(self, job_id: str) -> None:
         from .review import ReviewDeliveryService
@@ -497,8 +534,51 @@ class JobStore:
         return posix
 
     def _assert_safe_directory(self, path: Path, label: str) -> None:
+        """Check the directory and every existing lexical ancestor before use."""
+        current = Path(path)
+        checked: set[Path] = set()
+        while current not in checked:
+            checked.add(current)
+            if _is_reparse(current) or (current.exists() and not current.is_dir()):
+                raise RepositoryHealthError(f"{label} must be a non-reparse directory")
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
         if not path.is_dir() or _is_reparse(path):
             raise RepositoryHealthError(f"{label} must be a non-reparse directory")
+
+    def _create_safe_directory(self, path: Path, label: str) -> None:
+        """Create a requested root one component at a time without traversing reparses."""
+        path = Path(path)
+        missing: list[Path] = []
+        current = path
+        while not current.exists():
+            if _is_reparse(current):
+                raise RepositoryHealthError(f"{label} must be a non-reparse directory")
+            missing.append(current)
+            parent = current.parent
+            if parent == current:
+                raise RepositoryHealthError(f"{label} has no existing safe parent")
+            current = parent
+        self._assert_safe_directory(current, label)
+        for directory in reversed(missing):
+            if _is_reparse(directory):
+                raise RepositoryHealthError(f"{label} must be a non-reparse directory")
+            self._assert_safe_directory(directory.parent, label)
+            try:
+                directory.mkdir()
+            except FileExistsError:
+                pass
+            self._assert_safe_directory(directory, label)
+
+    def _validate_lock_path(self, root: Path, path: Path) -> Path:
+        self._assert_safe_directory(root, "lock root")
+        if path.parent != root:
+            raise ArtifactValidationError("lock path escapes its trusted root")
+        if _is_reparse(path) or (path.exists() and not path.is_file()):
+            raise ArtifactValidationError("lock path is unsafe")
+        return path
 
     def _assert_safe_artifact_path(self, root: Path, target: Path) -> None:
         self._assert_safe_directory(self.data_root, "data root")
@@ -511,7 +591,7 @@ class JobStore:
         current = root
         for part in parts:
             current = current / part
-            if current.exists() and _is_reparse(current):
+            if _is_reparse(current):
                 raise ArtifactValidationError("symlink/reparse artifacts are not allowed")
         try:
             target.resolve(strict=False).relative_to(root.resolve())

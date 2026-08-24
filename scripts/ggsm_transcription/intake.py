@@ -116,8 +116,10 @@ class IntakeService:
 
             staging = self.store.incoming_root / f"download-{uuid4().hex}.part"
             try:
+                self.store.validate_incoming_staging_path(staging)
                 download = self.source_adapter.download(requested_url, staging)
                 resolved = validate_https_url(download.resolved_url)
+                self.store.validate_incoming_staging_path(staging)
                 if not staging.is_file() or staging.is_symlink():
                     raise ArtifactValidationError("downloader did not create a regular staging source")
                 digest, size = _sha256_and_size(staging)
@@ -149,6 +151,8 @@ class IntakeService:
                 return self.store.load_job(job_id)
             finally:
                 try:
-                    staging.unlink()
+                    safe_staging = self.store.validate_incoming_staging_path(staging)
+                    if safe_staging.exists():
+                        safe_staging.unlink()
                 except FileNotFoundError:
                     pass

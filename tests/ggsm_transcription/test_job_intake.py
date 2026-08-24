@@ -336,6 +336,61 @@ class IntakeContractTests(unittest.TestCase):
                     self._service(adapter).intake("https://archive.example/malformed-" + key)
                 self.assertEqual([path for path in self.store.jobs_root.iterdir() if path.is_dir()], [])
 
+    def test_reparse_incoming_root_is_rejected_before_downloader_receives_a_staging_path(self) -> None:
+        # Break caught: an external downloader could write through a replaced incoming root before intake validates it.
+        import scripts.ggsm_transcription.store as store_module
+
+        adapter = FakeSourceAdapter()
+        real_reparse = store_module._is_reparse
+        with patch.object(
+            store_module,
+            "_is_reparse",
+            side_effect=lambda path: Path(path) == self.store.incoming_root or real_reparse(path),
+        ):
+            with self.assertRaises(RepositoryHealthError):
+                self._service(adapter).intake("https://archive.example/reparse-incoming")
+        self.assertEqual(adapter.download_calls, 0)
+
+    def test_reparse_incoming_staging_leaf_is_rejected_before_downloader_write(self) -> None:
+        # Break caught: a dangling/replaced direct staging leaf could bypass an exists()-guard and reach the downloader.
+        import scripts.ggsm_transcription.store as store_module
+
+        adapter = FakeSourceAdapter()
+        real_reparse = store_module._is_reparse
+        with patch.object(
+            store_module,
+            "_is_reparse",
+            side_effect=lambda path: (
+                Path(path).parent == self.store.incoming_root and Path(path).suffix == ".part"
+            ) or real_reparse(path),
+        ):
+            with self.assertRaises(ArtifactValidationError):
+                self._service(adapter).intake("https://archive.example/reparse-incoming-leaf")
+        self.assertEqual(adapter.download_calls, 0)
+
+    def test_complete_source_intake_refuses_an_external_staging_file_before_move(self) -> None:
+        # Break caught: a direct aggregate call could move arbitrary matching bytes from outside trusted incoming staging.
+        payload = b"outside staging bytes"
+        digest = hashlib.sha256(payload).hexdigest()
+        job = self.store.create_job("external-staging", digest)
+        external = Path(self.tmp.name) / "external.part"
+        external.write_bytes(payload)
+        source = {
+            "requested_url": "https://archive.example/requested",
+            "resolved_url": "https://archive.example/resolved.mp3",
+            "sha256": digest,
+            "byte_size": len(payload),
+            "duration_seconds": 1.0,
+            "codec": "mp3",
+            "streams": [{"codec_type": "audio", "codec_name": "mp3"}],
+        }
+        versions = {"downloader": "fake", "ffprobe": "fake"}
+        with self.assertRaises(ArtifactValidationError):
+            with self.store.transaction(job["job_id"]) as transaction:
+                transaction.complete_source_intake(external, source, versions)
+        self.assertTrue(external.is_file())
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "created")
+
 
 class AdapterAndTransactionRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -375,6 +430,68 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         with patch.object(store_module, "_is_reparse", side_effect=lambda path: path == root or real_reparse(path)):
             with self.assertRaises(RepositoryHealthError):
                 self.store.load_job(job["job_id"])
+
+    def test_reparse_creation_and_lock_paths_are_rejected_before_creation_or_open(self) -> None:
+        # Break caught: creation/lock helpers could create or open files through a replaced trusted root or lock leaf.
+        import scripts.ggsm_transcription.store as store_module
+
+        real_reparse = store_module._is_reparse
+        with patch.object(
+            store_module,
+            "_is_reparse",
+            side_effect=lambda path: Path(path) == self.store.creation_root or real_reparse(path),
+        ):
+            with self.assertRaises(RepositoryHealthError):
+                self.store.create_job("reparse-creation", "e" * 64)
+        self.assertEqual(list(self.store.creation_root.iterdir()), [])
+
+        job = self.store.create_job("lock-leaf", "f" * 64)
+        lock_path = self.store.job_root(job["job_id"]) / ".lock"
+        with patch.object(
+            store_module,
+            "_is_reparse",
+            side_effect=lambda path: Path(path) == lock_path or real_reparse(path),
+        ):
+            with self.assertRaises(ArtifactValidationError):
+                with self.store.lock_job(job["job_id"]):
+                    pass
+        self.assertFalse(lock_path.exists())
+
+    def test_reparse_creation_layout_component_is_rejected_before_job_publication(self) -> None:
+        # Break caught: a reparse inserted under creation staging could receive layout writes before the job is published.
+        import scripts.ggsm_transcription.store as store_module
+
+        temporary = self.store.creation_root / "controlled-creation-staging"
+        real_reparse = store_module._is_reparse
+
+        def controlled_mkdtemp(**_kwargs: object) -> str:
+            temporary.mkdir()
+            return str(temporary)
+
+        with patch("scripts.ggsm_transcription.store.tempfile.mkdtemp", side_effect=controlled_mkdtemp):
+            with patch.object(
+                store_module,
+                "_is_reparse",
+                side_effect=lambda path: Path(path) == temporary / "asr" or real_reparse(path),
+            ):
+                with self.assertRaises(RepositoryHealthError):
+                    self.store.create_job("layout-reparse", "1" * 64)
+        self.assertFalse((self.store.jobs_root / "layout-reparse-11111111").exists())
+
+    def test_failed_creation_retains_staging_instead_of_recursively_deleting_a_swappable_tree(self) -> None:
+        # Break caught: failure cleanup could recursively traverse a creation tree after its safety state changed.
+        temporary = self.store.creation_root / "retained-on-failure"
+
+        def controlled_mkdtemp(**_kwargs: object) -> str:
+            temporary.mkdir()
+            return str(temporary)
+
+        with patch("scripts.ggsm_transcription.store.tempfile.mkdtemp", side_effect=controlled_mkdtemp):
+            with patch.object(JobStore, "_write_manifest", side_effect=OSError("initial manifest interrupted")):
+                with self.assertRaises(OSError):
+                    self.store.create_job("retain-staging", "2" * 64)
+        self.assertTrue(temporary.is_dir())
+        self.assertFalse((self.store.jobs_root / "retain-staging-22222222").exists())
 
     def test_atomic_failure_preserves_the_last_complete_manifest(self) -> None:
         # Break caught: replacement failure must not leave a torn or partially serialized job.json.

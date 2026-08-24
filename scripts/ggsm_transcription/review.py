@@ -291,11 +291,8 @@ class ReviewDeliveryService:
         self.store = store
 
     def _validate_upstream(self, job_id: str, state: dict[str, Any]) -> tuple[Path, list[dict[str, object]]]:
-        self.store.validate_source(job_id)
+        self.store.validate_inspection_evidence(job_id)
         raw = self.store.validate_artifact(job_id, "asr/full.jsonl")
-        self.store.validate_artifact(job_id, "asr/metadata.json")
-        self.store.validate_artifact(job_id, "inspection/report.json")
-        self.store.validate_artifact(job_id, "inspection/report.md")
         records = _read_raw_segments(raw)
         duration = _finite(state["source"]["duration_seconds"], "source duration")
         if any(float(record["end"]) > duration for record in records):

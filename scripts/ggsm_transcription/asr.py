@@ -190,6 +190,260 @@ def _validate_sequence(records: list[dict[str, object]], duration: float) -> lis
     return validated
 
 
+def _metadata_text(metadata: dict[str, object]) -> str:
+    return json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
+def _read_metadata(path: Path) -> dict[str, object]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ArtifactValidationError("full ASR metadata is unreadable") from error
+    if not isinstance(value, dict):
+        raise ArtifactValidationError("full ASR metadata must be an object")
+    return value
+
+
+def validate_primary_asr_evidence(store: JobStore, job_id: str) -> list[dict[str, object]]:
+    """Validate current, persisted primary ASR evidence without advancing a stage."""
+    state = store.load_job(job_id)
+    try:
+        store.validate_source(job_id)
+        raw_path = store.validate_artifact(job_id, "asr/full.jsonl")
+        metadata_path = store.validate_artifact(job_id, "asr/metadata.json")
+        asr = state.get("asr")
+        if not isinstance(asr, dict):
+            raise ArtifactValidationError("job has no bound full ASR provenance")
+        if asr.get("source_sha256") != state["source_sha256"]:
+            raise ArtifactValidationError("full ASR provenance is not source-bound")
+        if asr.get("configuration") != DEFAULT_ASR_CONFIGURATION:
+            raise ArtifactValidationError("full ASR provenance does not use the fixed local configuration")
+        _validate_runtime(asr.get("runtime"), _REQUIRED_RUNTIME_KEYS, "ASR")
+        metadata = _read_metadata(metadata_path)
+        if metadata != asr:
+            raise ArtifactValidationError("full ASR metadata does not match bound provenance")
+        duration = _finite_number(state["source"]["duration_seconds"], "source duration")
+        return _validate_sequence(_read_raw_segments(raw_path), duration)
+    except ArtifactValidationError:
+        raise
+    except JobValidationError as error:
+        raise ArtifactValidationError("full ASR evidence is semantically invalid") from error
+
+
+def validate_asr_completion(store: JobStore, job_id: str) -> None:
+    state = store.load_job(job_id)
+    if state["stage"] != "source_ready":
+        raise StageTransitionError("ASR completion requires a source_ready job")
+    validate_primary_asr_evidence(store, job_id)
+
+
+def validate_inspection_evidence(store: JobStore, job_id: str) -> None:
+    state = store.load_job(job_id)
+    records = validate_primary_asr_evidence(store, job_id)
+    try:
+        report_json = store.validate_artifact(job_id, "inspection/report.json")
+        report_markdown = store.validate_artifact(job_id, "inspection/report.md")
+        duration = _finite_number(state["source"]["duration_seconds"], "source duration")
+        report = _inspection_report(records, duration)
+        expected_json = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+        expected_markdown = _inspection_markdown(report)
+        if report_json.read_bytes() != expected_json.encode("utf-8"):
+            raise ArtifactValidationError("inspection JSON is not the current deterministic ASR inspection")
+        if report_markdown.read_bytes() != expected_markdown.encode("utf-8"):
+            raise ArtifactValidationError("inspection Markdown is not the current deterministic ASR inspection")
+    except ArtifactValidationError:
+        raise
+    except (OSError, JobValidationError) as error:
+        raise ArtifactValidationError("inspection evidence is semantically invalid") from error
+
+
+def validate_inspection_completion(store: JobStore, job_id: str) -> None:
+    state = store.load_job(job_id)
+    if state["stage"] != "asr_ready":
+        raise StageTransitionError("inspection completion requires an asr_ready job")
+    validate_inspection_evidence(store, job_id)
+
+
+def _sha256_bytes(value: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(value).hexdigest()
+
+
+def _publication_intent(
+    kind: str,
+    source_sha256: str,
+    output_bytes: dict[str, bytes],
+    context: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "kind": kind,
+        "source_sha256": source_sha256,
+        "context": context,
+        "outputs": {
+            relative: {"sha256": _sha256_bytes(value), "byte_size": len(value)}
+            for relative, value in sorted(output_bytes.items())
+        },
+    }
+
+
+def _publication_intent_text(intent: dict[str, object]) -> str:
+    return json.dumps(intent, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
+def _load_publication_intent(
+    store: JobStore,
+    job_id: str,
+    relative_path: str,
+    kind: str,
+    source_sha256: str,
+    output_paths: dict[str, Path],
+    context: dict[str, object],
+) -> dict[str, dict[str, object]] | None:
+    path = store.validate_output_path(job_id, relative_path)
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ArtifactValidationError("publication recovery intent is unreadable") from error
+    if not isinstance(value, dict) or set(value) != {"schema_version", "kind", "source_sha256", "context", "outputs"}:
+        raise ArtifactValidationError("publication recovery intent is malformed")
+    if value.get("schema_version") != 1 or value.get("kind") != kind or value.get("source_sha256") != source_sha256:
+        raise ArtifactValidationError("publication recovery intent is not source-bound to this operation")
+    if value.get("context") != context or not isinstance(value.get("outputs"), dict):
+        raise ArtifactValidationError("publication recovery intent does not match this operation")
+    outputs = value["outputs"]
+    if set(outputs) != set(output_paths):
+        raise ArtifactValidationError("publication recovery intent has unexpected output paths")
+    records: dict[str, dict[str, object]] = {}
+    for relative, record in outputs.items():
+        if (not isinstance(record, dict) or set(record) != {"sha256", "byte_size"}
+                or not isinstance(record.get("sha256"), str) or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
+                or not isinstance(record.get("byte_size"), int) or isinstance(record["byte_size"], bool)
+                or record["byte_size"] < 0):
+            raise ArtifactValidationError("publication recovery intent has invalid output records")
+        records[relative] = {"sha256": record["sha256"], "byte_size": record["byte_size"]}
+    return records
+
+
+def _existing_outputs_match_intent(output_paths: dict[str, Path], records: dict[str, dict[str, object]]) -> bool:
+    complete = True
+    for relative, path in output_paths.items():
+        if not path.exists():
+            complete = False
+            continue
+        try:
+            value = path.read_bytes()
+        except OSError as error:
+            raise ArtifactValidationError("recoverable publication output is unreadable") from error
+        expected = records[relative]
+        if _sha256_bytes(value) != expected["sha256"] or len(value) != expected["byte_size"]:
+            raise ArtifactValidationError("recoverable publication output differs from its source-bound intent")
+    return complete
+
+
+def _publish_recoverable_outputs(
+    store: JobStore,
+    job_id: str,
+    intent_relative: str,
+    kind: str,
+    source_sha256: str,
+    output_paths: dict[str, Path],
+    output_bytes: dict[str, bytes],
+    context: dict[str, object],
+) -> None:
+    """Publish only deterministic output bytes bound by a durable recovery intent."""
+    intent = _publication_intent(kind, source_sha256, output_bytes, context)
+    records = _load_publication_intent(
+        store, job_id, intent_relative, kind, source_sha256, output_paths, context
+    )
+    if records is None:
+        if any(path.exists() for path in output_paths.values()):
+            raise ArtifactValidationError("publication output exists without a recoverable source-bound intent")
+        store.validate_output_path(job_id, intent_relative)
+        _atomic_text(store.job_root(job_id) / intent_relative, _publication_intent_text(intent))
+        records = intent["outputs"]  # type: ignore[assignment]
+    elif records != intent["outputs"]:
+        raise ArtifactValidationError("publication retry does not reproduce its source-bound intent")
+    _existing_outputs_match_intent(output_paths, records)
+    for relative, path in output_paths.items():
+        if path.exists():
+            continue
+        store.validate_output_path(job_id, relative)
+        _atomic_text(path, output_bytes[relative].decode("utf-8"))
+
+
+def _clear_publication_intent(store: JobStore, job_id: str, relative_path: str) -> None:
+    path = store.validate_output_path(job_id, relative_path)
+    if path.exists():
+        path.unlink()
+
+
+def _validate_full_candidate_payloads(
+    state: dict[str, Any], output_paths: dict[str, Path]
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    try:
+        metadata = _read_metadata(output_paths["asr/metadata.json"])
+        if metadata.get("source_sha256") != state["source_sha256"]:
+            raise ArtifactValidationError("recoverable full ASR metadata is not source-bound")
+        if metadata.get("configuration") != DEFAULT_ASR_CONFIGURATION:
+            raise ArtifactValidationError("recoverable full ASR metadata does not use the fixed local configuration")
+        _validate_runtime(metadata.get("runtime"), _REQUIRED_RUNTIME_KEYS, "ASR")
+        duration = _finite_number(state["source"]["duration_seconds"], "source duration")
+        records = _validate_sequence(_read_raw_segments(output_paths["asr/full.jsonl"]), duration)
+        return metadata, records
+    except ArtifactValidationError:
+        raise
+    except JobValidationError as error:
+        raise ArtifactValidationError("recoverable full ASR output is semantically invalid") from error
+
+
+def _validate_rerun_candidate_payloads(
+    state: dict[str, Any],
+    output_paths: dict[str, Path],
+    start: float,
+    end: float,
+) -> None:
+    metadata_path = next(path for relative, path in output_paths.items() if relative.endswith(".metadata.json"))
+    jsonl_path = next(path for relative, path in output_paths.items() if relative.endswith(".jsonl") and not relative.endswith(".metadata.json"))
+    try:
+        metadata = _read_metadata(metadata_path)
+        if (metadata.get("source_sha256") != state["source_sha256"]
+                or metadata.get("start_seconds") != start or metadata.get("end_seconds") != end
+                or metadata.get("configuration") != DEFAULT_ASR_CONFIGURATION):
+            raise ArtifactValidationError("recoverable rerun metadata is not bound to this source and span")
+        _validate_runtime(metadata.get("runtime"), _REQUIRED_RUNTIME_KEYS, "ASR")
+        _validate_runtime(metadata.get("media_runtime"), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
+        _validate_sequence(_read_raw_segments(jsonl_path), end - start)
+    except ArtifactValidationError:
+        raise
+    except JobValidationError as error:
+        raise ArtifactValidationError("recoverable rerun output is semantically invalid") from error
+
+
+def _validate_inspection_candidate_payloads(
+    store: JobStore,
+    job_id: str,
+    state: dict[str, Any],
+    output_paths: dict[str, Path],
+) -> None:
+    try:
+        records = validate_primary_asr_evidence(store, job_id)
+        duration = _finite_number(state["source"]["duration_seconds"], "source duration")
+        report = _inspection_report(records, duration)
+        expected_json = (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")
+        expected_markdown = _inspection_markdown(report).encode("utf-8")
+        if output_paths["inspection/report.json"].read_bytes() != expected_json:
+            raise ArtifactValidationError("recoverable inspection JSON is not deterministic current evidence")
+        if output_paths["inspection/report.md"].read_bytes() != expected_markdown:
+            raise ArtifactValidationError("recoverable inspection Markdown is not deterministic current evidence")
+    except ArtifactValidationError:
+        raise
+    except (OSError, JobValidationError) as error:
+        raise ArtifactValidationError("recoverable inspection output is semantically invalid") from error
+
+
 def _span_component(value: float) -> str:
     """A valid finite float has one lossless canonical hexadecimal representation."""
     if value == 0:
@@ -202,29 +456,57 @@ class ASRService:
         self.store, self.model_adapter, self.media_adapter = store, model_adapter, media_adapter
 
     def transcribe(self, job_id: str) -> dict[str, Any]:
+        output_relatives = ("asr/full.jsonl", "asr/metadata.json")
+        intent_relative = "asr/.full-publication.json"
         with self.store.transaction(job_id) as transaction:
             state = transaction.state
             if state["stage"] != "source_ready":
                 raise StageTransitionError("full ASR requires a source_ready job")
             source = self.store.validate_source(job_id)
             duration = _finite_number(state["source"]["duration_seconds"], "source duration")
-            root = self.store.job_root(job_id)
-            full_path, metadata_path = root / "asr" / "full.jsonl", root / "asr" / "metadata.json"
-            if full_path.exists() or metadata_path.exists():
-                raise ArtifactValidationError("full ASR evidence already exists and is immutable")
-            records = _validate_sequence(self.model_adapter.transcribe(source, dict(DEFAULT_ASR_CONFIGURATION)), duration)
-            self.store.validate_source(job_id)
-            runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
-            self.store.validate_source(job_id)
-            metadata: dict[str, object] = {"source_sha256": state["source_sha256"], "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": dict(runtime)}
-            full_jsonl = _jsonl(records)
-            metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
-            _atomic_text(full_path, full_jsonl)
-            _atomic_text(metadata_path, metadata_json)
-            transaction.register_artifact("asr/full.jsonl")
-            transaction.register_artifact("asr/metadata.json")
-            transaction.record_asr_metadata(metadata)
+            output_paths = {relative: self.store.validate_output_path(job_id, relative) for relative in output_relatives}
+            intent_records = _load_publication_intent(
+                self.store, job_id, intent_relative, "full_asr", state["source_sha256"], output_paths, {}
+            )
+            registered = {relative for relative in output_relatives if relative in state["artifacts"]}
+            candidate_is_published = registered == set(output_relatives) and isinstance(state.get("asr"), dict)
+            if candidate_is_published:
+                if intent_records is not None and not _existing_outputs_match_intent(output_paths, intent_records):
+                    raise ArtifactValidationError("published full ASR candidate is incomplete")
+            else:
+                if registered:
+                    raise ArtifactValidationError("partial registered full ASR evidence is not recoverable")
+                complete_intent = intent_records is not None and _existing_outputs_match_intent(output_paths, intent_records)
+                if complete_intent:
+                    metadata, _records = _validate_full_candidate_payloads(state, output_paths)
+                else:
+                    if intent_records is None and any(path.exists() for path in output_paths.values()):
+                        raise ArtifactValidationError("full ASR evidence exists without a recoverable source-bound intent")
+                    records = _validate_sequence(
+                        self.model_adapter.transcribe(source, dict(DEFAULT_ASR_CONFIGURATION)), duration
+                    )
+                    self.store.validate_source(job_id)
+                    runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
+                    self.store.validate_source(job_id)
+                    metadata = {
+                        "source_sha256": state["source_sha256"],
+                        "configuration": dict(DEFAULT_ASR_CONFIGURATION),
+                        "runtime": dict(runtime),
+                    }
+                    output_bytes = {
+                        "asr/full.jsonl": _jsonl(records).encode("utf-8"),
+                        "asr/metadata.json": _metadata_text(metadata).encode("utf-8"),
+                    }
+                    _publish_recoverable_outputs(
+                        self.store, job_id, intent_relative, "full_asr", state["source_sha256"], output_paths,
+                        output_bytes, {},
+                    )
+                for relative in output_relatives:
+                    transaction.register_artifact(relative)
+                transaction.record_asr_metadata(metadata)
+        with self.store.transaction(job_id) as transaction:
             transaction.complete_asr()
+        _clear_publication_intent(self.store, job_id, intent_relative)
         return self.store.load_job(job_id)
 
     def rerun_span(self, job_id: str, start: float, end: float) -> dict[str, Path]:
@@ -242,34 +524,67 @@ class ASRService:
             self._validate_primary_asr_evidence(job_id, state)
             stem = f"span-{_span_component(start_value)}-{_span_component(end_value)}"
             jsonl_path, metadata_path = root / "asr" / "reruns" / f"{stem}.jsonl", root / "asr" / "reruns" / f"{stem}.metadata.json"
-            if jsonl_path.exists() or metadata_path.exists():
+            output_relatives = (f"asr/reruns/{jsonl_path.name}", f"asr/reruns/{metadata_path.name}")
+            intent_relative = f"asr/reruns/.{stem}.publication.json"
+            output_paths = {relative: self.store.validate_output_path(job_id, relative) for relative in output_relatives}
+            context = {"start_seconds": start_value, "end_seconds": end_value}
+            intent_records = _load_publication_intent(
+                self.store, job_id, intent_relative, "rerun", state["source_sha256"], output_paths, context
+            )
+            registered = {relative for relative in output_relatives if relative in state["artifacts"]}
+            if registered == set(output_relatives):
                 raise ArtifactValidationError("deterministic rerun evidence already exists and is immutable")
-            temporary = root / "asr" / "reruns" / f".{stem}.media.mka"
-            try:
-                self.media_adapter.extract_span(source, temporary, start_value, end_value)
-                if not temporary.is_file():
-                    raise ArtifactValidationError("media adapter did not produce a requested span")
-                records = _validate_sequence(self.model_adapter.transcribe(temporary, dict(DEFAULT_ASR_CONFIGURATION)), end_value - start_value)
-            finally:
+            if registered:
+                raise ArtifactValidationError("partial registered rerun evidence is not recoverable")
+            complete_intent = intent_records is not None and _existing_outputs_match_intent(output_paths, intent_records)
+            if complete_intent:
+                _validate_rerun_candidate_payloads(state, output_paths, start_value, end_value)
+            else:
+                if intent_records is None and any(path.exists() for path in output_paths.values()):
+                    raise ArtifactValidationError("rerun evidence exists without a recoverable source-bound intent")
+                temporary_relative = f"asr/reruns/.{stem}.media.mka"
+                temporary = self.store.validate_output_path(job_id, temporary_relative)
+                if temporary.exists():
+                    raise ArtifactValidationError("deterministic rerun media staging already exists")
                 try:
-                    temporary.unlink()
-                except FileNotFoundError:
-                    pass
-            runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
-            media_runtime = _validate_runtime(self.media_adapter.runtime_metadata(), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
-            self.store.validate_source(job_id)
-            self._validate_primary_asr_evidence(job_id, state)
-            metadata = {"source_sha256": state["source_sha256"], "start_seconds": start_value, "end_seconds": end_value,
-                        "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": runtime, "media_runtime": media_runtime}
-            rerun_jsonl = _jsonl(records)
-            rerun_metadata_json = json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n"
-            _atomic_text(jsonl_path, rerun_jsonl)
-            _atomic_text(metadata_path, rerun_metadata_json)
-            transaction.register_artifact(f"asr/reruns/{jsonl_path.name}")
-            transaction.register_artifact(f"asr/reruns/{metadata_path.name}")
+                    self.media_adapter.extract_span(source, temporary, start_value, end_value)
+                    temporary = self.store.validate_output_path(job_id, temporary_relative)
+                    if not temporary.is_file():
+                        raise ArtifactValidationError("media adapter did not produce a requested span")
+                    records = _validate_sequence(
+                        self.model_adapter.transcribe(temporary, dict(DEFAULT_ASR_CONFIGURATION)), end_value - start_value
+                    )
+                finally:
+                    try:
+                        safe_temporary = self.store.validate_output_path(job_id, temporary_relative)
+                        if safe_temporary.exists():
+                            safe_temporary.unlink()
+                    except FileNotFoundError:
+                        pass
+                runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
+                media_runtime = _validate_runtime(self.media_adapter.runtime_metadata(), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
+                self.store.validate_source(job_id)
+                self._validate_primary_asr_evidence(job_id, state)
+                metadata = {
+                    "source_sha256": state["source_sha256"], "start_seconds": start_value, "end_seconds": end_value,
+                    "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": runtime, "media_runtime": media_runtime,
+                }
+                output_bytes = {
+                    output_relatives[0]: _jsonl(records).encode("utf-8"),
+                    output_relatives[1]: _metadata_text(metadata).encode("utf-8"),
+                }
+                _publish_recoverable_outputs(
+                    self.store, job_id, intent_relative, "rerun", state["source_sha256"], output_paths,
+                    output_bytes, context,
+                )
+            for relative in output_relatives:
+                transaction.register_artifact(relative)
+        _clear_publication_intent(self.store, job_id, intent_relative)
         return {"jsonl_path": jsonl_path, "metadata_path": metadata_path}
 
     def inspect(self, job_id: str) -> dict[str, Any]:
+        output_relatives = ("inspection/report.json", "inspection/report.md")
+        intent_relative = "inspection/.publication.json"
         with self.store.transaction(job_id) as transaction:
             state = transaction.state
             if state["stage"] != "asr_ready":
@@ -280,32 +595,45 @@ class ASRService:
             self.store.validate_artifact(job_id, "asr/metadata.json")
             records = _read_raw_segments(raw_path)
             report = _inspection_report(records, _finite_number(state["source"]["duration_seconds"], "source duration"))
-            root = self.store.job_root(job_id)
-            report_json, report_markdown = root / "inspection" / "report.json", root / "inspection" / "report.md"
-            if report_json.exists() or report_markdown.exists():
-                raise ArtifactValidationError("inspection evidence already exists and is immutable")
-            self.store.validate_source(job_id)
-            self._validate_primary_asr_evidence(job_id, state)
-            _atomic_text(report_json, json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
-            _atomic_text(report_markdown, _inspection_markdown(report))
-            transaction.register_artifact("inspection/report.json")
-            transaction.register_artifact("inspection/report.md")
+            output_paths = {relative: self.store.validate_output_path(job_id, relative) for relative in output_relatives}
+            intent_records = _load_publication_intent(
+                self.store, job_id, intent_relative, "inspection", state["source_sha256"], output_paths,
+                {"full_asr_sha256": state["artifacts"]["asr/full.jsonl"]["sha256"]},
+            )
+            registered = {relative for relative in output_relatives if relative in state["artifacts"]}
+            candidate_is_published = registered == set(output_relatives)
+            if candidate_is_published:
+                if intent_records is not None and not _existing_outputs_match_intent(output_paths, intent_records):
+                    raise ArtifactValidationError("published inspection candidate is incomplete")
+            else:
+                if registered:
+                    raise ArtifactValidationError("partial registered inspection evidence is not recoverable")
+                complete_intent = intent_records is not None and _existing_outputs_match_intent(output_paths, intent_records)
+                if complete_intent:
+                    _validate_inspection_candidate_payloads(self.store, job_id, state, output_paths)
+                else:
+                    if intent_records is None and any(path.exists() for path in output_paths.values()):
+                        raise ArtifactValidationError("inspection evidence exists without a recoverable source-bound intent")
+                    self.store.validate_source(job_id)
+                    self._validate_primary_asr_evidence(job_id, state)
+                    output_bytes = {
+                        "inspection/report.json": (json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8"),
+                        "inspection/report.md": _inspection_markdown(report).encode("utf-8"),
+                    }
+                    _publish_recoverable_outputs(
+                        self.store, job_id, intent_relative, "inspection", state["source_sha256"], output_paths,
+                        output_bytes, {"full_asr_sha256": state["artifacts"]["asr/full.jsonl"]["sha256"]},
+                    )
+                for relative in output_relatives:
+                    transaction.register_artifact(relative)
+        with self.store.transaction(job_id) as transaction:
             transaction.complete_inspection()
+        _clear_publication_intent(self.store, job_id, intent_relative)
         return self.store.load_job(job_id)
 
     def _validate_primary_asr_evidence(self, job_id: str, state: dict[str, Any]) -> None:
-        self.store.validate_artifact(job_id, "asr/full.jsonl")
-        metadata_path = self.store.validate_artifact(job_id, "asr/metadata.json")
-        asr = state.get("asr")
-        if not isinstance(asr, dict):
-            raise ArtifactValidationError("job has no bound full ASR provenance")
-        _validate_runtime(asr.get("runtime"), _REQUIRED_RUNTIME_KEYS, "ASR")
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ArtifactValidationError("full ASR metadata is unreadable") from error
-        if metadata != asr or metadata.get("source_sha256") != state["source_sha256"]:
-            raise ArtifactValidationError("full ASR metadata does not match bound provenance")
+        del state
+        validate_primary_asr_evidence(self.store, job_id)
 
 
 def _read_raw_segments(path: Path) -> list[dict[str, object]]:
