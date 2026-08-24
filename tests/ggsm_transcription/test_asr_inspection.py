@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import math
+import os
 import subprocess
 import tempfile
 import unittest
@@ -177,6 +178,32 @@ class ASRContractTests(unittest.TestCase):
         jsonl_relative = next(relative for relative in intent["outputs"] if relative.endswith(".jsonl"))
         metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
         return root, root / Path(jsonl_relative), root / Path(metadata_relative), intent_path
+
+    def _redirect_directory(self, path: Path, target: Path) -> None:
+        """Install a temporary directory redirect for the callback-ordering regression."""
+        try:
+            path.symlink_to(target, target_is_directory=True)
+            return
+        except OSError:
+            if os.name != "nt":
+                self.skipTest("directory redirects are unavailable")
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(path), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            self.skipTest("directory junction creation is unavailable")
+
+    @staticmethod
+    def _remove_directory_redirect(path: Path) -> None:
+        if not os.path.lexists(path):
+            return
+        if path.is_symlink():
+            path.unlink()
+        else:
+            os.rmdir(path)
 
     def test_full_run_uses_the_fixed_configuration_and_records_runtime_metadata(self) -> None:
         # Break caught: a quiet model/configuration change makes a future draft irreproducible.
@@ -526,6 +553,40 @@ class ASRContractTests(unittest.TestCase):
                 FfmpegMediaAdapter().runtime_metadata(),
                 {"execution_mode": "local", "ffmpeg": "ffmpeg-version", "ffprobe": "ffprobe-version"},
             )
+
+    def test_rerun_revalidates_a_temporary_target_after_media_runtime_callback(self) -> None:
+        # Break caught: runtime metadata could redirect the already-validated staging parent before an external writer opened it.
+        ready = self.service.transcribe(self.job["job_id"])
+        normal_media = FakeMediaAdapter()
+        normal = ASRService(self.store, FakeModelAdapter(), normal_media).rerun_span(ready["job_id"], 1.0, 2.0)
+        self.assertTrue(normal["jsonl_path"].is_file())
+        self.assertTrue(normal["metadata_path"].is_file())
+        self.assertEqual(len(normal_media.calls), 1)
+
+        root = self.store.job_root(ready["job_id"])
+        reruns, backup = root / "asr" / "reruns", root / "asr" / "reruns-before-runtime-callback"
+        outside = Path(self.tmp.name) / "outside-rerun-target"
+        outside.mkdir()
+
+        def restore_rerun_parent() -> None:
+            self._remove_directory_redirect(reruns)
+            if backup.exists():
+                backup.replace(reruns)
+
+        self.addCleanup(restore_rerun_parent)
+
+        class RedirectingMedia(FakeMediaAdapter):
+            def runtime_metadata(inner_self) -> dict[str, str]:
+                reruns.rename(backup)
+                self._redirect_directory(reruns, outside)
+                return super().runtime_metadata()
+
+        model, media = FakeModelAdapter(), RedirectingMedia()
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, model, media).rerun_span(ready["job_id"], 3.0, 4.0)
+        self.assertEqual(media.calls, [])
+        self.assertEqual(model.calls, [])
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_runtime_metadata_with_a_non_json_extra_is_rejected_before_any_full_asr_file(self) -> None:
         # Break caught: a later metadata serialization failure stranded raw full evidence at a source_ready job.

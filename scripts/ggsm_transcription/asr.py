@@ -858,6 +858,10 @@ class ASRService:
                 if temporary.exists():
                     raise ArtifactValidationError("deterministic rerun media staging already exists")
                 media_runtime = _validate_media_provenance(self.media_adapter.runtime_metadata())
+                source = self.store.validate_source(job_id)
+                temporary = self.store.validate_output_path(job_id, temporary_relative)
+                if temporary.exists():
+                    raise ArtifactValidationError("deterministic rerun media staging already exists")
                 try:
                     self.media_adapter.extract_span(source, temporary, start_value, end_value)
                     temporary = self.store.validate_output_path(job_id, temporary_relative)
