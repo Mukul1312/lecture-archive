@@ -343,7 +343,7 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = JobStore(Path(self.tmp.name) / "data" / "transcribe")
 
-    def test_unrestricted_mutation_is_rejected_and_compound_typed_mutation_is_one_revision(self) -> None:
+    def test_unrestricted_mutation_is_rejected_and_compound_artifact_registration_is_one_revision(self) -> None:
         # Break caught: a generic mutator could forge a stage or re-legitimize changed evidence.
         job = IntakeService(self.store, FakeSourceAdapter()).intake("https://archive.example/compound")
         with self.assertRaises(JobValidationError):
@@ -356,10 +356,9 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         with self.store.transaction(job["job_id"]) as transaction:
             transaction.register_artifact("inspection/report.json")
             transaction.register_artifact("inspection/report.md")
-            transaction.advance_stage("inspected")
         after = self.store.load_job(job["job_id"])
         self.assertEqual(after["revision"], before + 1)
-        self.assertEqual(after["stage"], "inspected")
+        self.assertEqual(after["stage"], "asr_ready")
 
     def test_ads_paths_are_rejected(self) -> None:
         # Break caught: NTFS alternate streams are not safe registered artifact files.

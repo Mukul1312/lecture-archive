@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 import unicodedata
 from pathlib import Path
 from unittest.mock import patch
 
+import scripts.ggsm_transcription.review as review_module
 from scripts.ggsm_transcription.asr import ASRService
 from scripts.ggsm_transcription.intake import IntakeService, SourceDownload
 from scripts.ggsm_transcription.review import ReviewDeliveryService
@@ -80,6 +83,30 @@ class ReviewDeliveryContractTests(unittest.TestCase):
             path.write_text(before + "## Editorial transcript\n\n" + body.strip() + "\n", encoding="utf-8", newline="\n")
             paths.append(path)
         return paths
+
+    def _reviewed(self):
+        job = self._inspected()
+        service = ReviewDeliveryService(self.store)
+        service.prepare_review(job["job_id"])
+        self._mark_reviewed(job["job_id"], ["[00:00:00] Opening.\n\n[00:05:00] Continuing.\n\n[00:10:00] Closing."])
+        service.record_review(job["job_id"])
+        return job, service
+
+    def _replace_with_directory_link(self, path: Path, target: Path) -> None:
+        path.rmdir()
+        try:
+            path.symlink_to(target, target_is_directory=True)
+            return
+        except OSError:
+            if os.name != "nt":
+                self.skipTest("directory symlink creation is unavailable")
+        completed = subprocess.run(
+            ["cmd.exe", "/c", "mklink", "/J", str(path), str(target)],
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            self.skipTest("directory junction creation is unavailable")
 
     def test_prepare_review_uses_asr_boundaries_and_covers_short_and_gapped_timelines(self) -> None:
         long = self._inspected(3700.0, [
@@ -185,6 +212,126 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         self.store.validate_artifact(job["job_id"], "reference/taptajivanam.md")
         self.store.validate_artifact(job["job_id"], "reference/provenance.json")
 
+    def test_prepare_review_recovers_each_interrupted_file_boundary_without_mislabeling_io(self) -> None:
+        original = review_module._atomic_text
+        for failure_index in range(1, 5):
+            with self.subTest(failure_index=failure_index):
+                job = self._inspected(3700.0, [
+                    {"id": 0, "start": 0.0, "end": 1790.0, "text": " First."},
+                    {"id": 1, "start": 1790.0, "end": 3585.0, "text": " Second."},
+                    {"id": 2, "start": 3585.0, "end": 3700.0, "text": " Third."},
+                ])
+                calls = 0
+
+                def interrupted(path: Path, text: str) -> None:
+                    nonlocal calls
+                    calls += 1
+                    if calls == failure_index:
+                        raise OSError("artifact write interrupted")
+                    original(path, text)
+
+                with patch.object(review_module, "_atomic_text", side_effect=interrupted):
+                    with self.assertRaisesRegex(OSError, "artifact write interrupted"):
+                        ReviewDeliveryService(self.store).prepare_review(job["job_id"])
+                manifest = ReviewDeliveryService(self.store).prepare_review(job["job_id"])
+                self.assertEqual(len(manifest["chunks"]), 3)
+
+    def test_prepare_review_never_overwrites_an_edited_or_unknown_partial_retry(self) -> None:
+        original = review_module._atomic_text
+        job = self._inspected(3700.0, [
+            {"id": 0, "start": 0.0, "end": 1790.0, "text": " First."},
+            {"id": 1, "start": 1790.0, "end": 3585.0, "text": " Second."},
+            {"id": 2, "start": 3585.0, "end": 3700.0, "text": " Third."},
+        ])
+        calls = 0
+
+        def interrupted(path: Path, text: str) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("stop after first chunk")
+            original(path, text)
+
+        with patch.object(review_module, "_atomic_text", side_effect=interrupted):
+            with self.assertRaises(OSError):
+                ReviewDeliveryService(self.store).prepare_review(job["job_id"])
+        first = self.store.job_root(job["job_id"]) / "review" / "chunk-001.md"
+        first.write_text(first.read_text(encoding="utf-8") + "human edit\n", encoding="utf-8")
+        edited = first.read_bytes()
+        with self.assertRaises(ArtifactValidationError):
+            ReviewDeliveryService(self.store).prepare_review(job["job_id"])
+        self.assertEqual(first.read_bytes(), edited)
+
+        unknown = self._inspected()
+        unknown_path = self.store.job_root(unknown["job_id"]) / "review" / "unknown.md"
+        unknown_path.write_text("unknown", encoding="utf-8")
+        with self.assertRaises(ArtifactValidationError):
+            ReviewDeliveryService(self.store).prepare_review(unknown["job_id"])
+        self.assertEqual(unknown_path.read_text(encoding="utf-8"), "unknown")
+
+    def test_reference_recovers_target_only_and_provenance_only_interruptions_but_rejects_different_retry(self) -> None:
+        original = review_module._atomic_text
+        url = "https://www.taptajivanam.com/recovery-boundary"
+        source = Path(self.tmp.name) / "boundary-reference.md"
+        source.write_text("Original reference.", encoding="utf-8")
+
+        for failure_index in (1, 2, 3):
+            with self.subTest(failure_index=failure_index):
+                job = self._inspected()
+                calls = 0
+
+                def interrupted(path: Path, text: str) -> None:
+                    nonlocal calls
+                    calls += 1
+                    if calls == failure_index:
+                        raise OSError("reference write interrupted")
+                    original(path, text)
+
+                with patch.object(review_module, "_atomic_text", side_effect=interrupted):
+                    with self.assertRaisesRegex(OSError, "reference write interrupted"):
+                        ReviewDeliveryService(self.store).register_reference(job["job_id"], url, source)
+                ReviewDeliveryService(self.store).register_reference(job["job_id"], url, source)
+                self.store.validate_artifact(job["job_id"], "reference/taptajivanam.md")
+                self.store.validate_artifact(job["job_id"], "reference/provenance.json")
+
+        provenance_only = self._inspected()
+
+        def omit_target(path: Path, text: str) -> None:
+            if path.name != "taptajivanam.md":
+                original(path, text)
+
+        with patch.object(review_module, "_atomic_text", side_effect=omit_target):
+            with self.assertRaises(ArtifactValidationError):
+                ReviewDeliveryService(self.store).register_reference(provenance_only["job_id"], url, source)
+        ReviewDeliveryService(self.store).register_reference(provenance_only["job_id"], url, source)
+        self.store.validate_artifact(provenance_only["job_id"], "reference/taptajivanam.md")
+
+        different = self._inspected()
+        calls = 0
+
+        def target_only(path: Path, text: str) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                raise OSError("leave target only")
+            original(path, text)
+
+        with patch.object(review_module, "_atomic_text", side_effect=target_only):
+            with self.assertRaises(OSError):
+                ReviewDeliveryService(self.store).register_reference(different["job_id"], url, source)
+        target = self.store.job_root(different["job_id"]) / "reference" / "taptajivanam.md"
+        original_target = target.read_bytes()
+        with self.assertRaises(ArtifactValidationError):
+            ReviewDeliveryService(self.store).register_reference(
+                different["job_id"], "https://www.taptajivanam.com/different-url", source
+            )
+        self.assertEqual(target.read_bytes(), original_target)
+        changed = Path(self.tmp.name) / "different-reference.md"
+        changed.write_text("Different reference.", encoding="utf-8")
+        with self.assertRaises(ArtifactValidationError):
+            ReviewDeliveryService(self.store).register_reference(different["job_id"], url, changed)
+        self.assertEqual(target.read_bytes(), original_target)
+
     def test_record_review_requires_audio_confirmation_for_recording_silence_not_an_asr_gap(self) -> None:
         job = self._inspected()
         service = ReviewDeliveryService(self.store)
@@ -254,6 +401,7 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         for body, message in (
             ("[00:00:00] Opening.\n\n[Uncertain, 00:01:00-00:01:05]\n\n[00:05:00] Closing.", "marker"),
             ("[00:00:00] Opening.\n[Uncertain, 00:01:00-00:01:05]\n\n[00:05:00] Closing.", "marker"),
+            ("[00:00:00] Prose says Recording silence, 00:01:00-00:01:05.\n\n[00:05:00] More.\n\n[00:05:20] Closing.", "marker"),
             ("[00:00:00] Opening.\n\n[00:05:01] Too late.", "five minutes"),
         ):
             with self.subTest(body=body):
@@ -262,6 +410,77 @@ class ReviewDeliveryContractTests(unittest.TestCase):
                 self._mark_reviewed(job["job_id"], [body])
                 with self.assertRaisesRegex(JobValidationError, message):
                     service.record_review(job["job_id"])
+
+    def test_review_timestamp_coverage_includes_terminal_tail_and_exact_five_minutes(self) -> None:
+        service = ReviewDeliveryService(self.store)
+        too_long = self._inspected()
+        service.prepare_review(too_long["job_id"])
+        self._mark_reviewed(too_long["job_id"], [
+            "[00:00:00] Opening.\n\n[00:05:00] Continuing.\n\n[00:05:19] Last timestamp."
+        ])
+        with self.assertRaisesRegex(JobValidationError, "five minutes"):
+            service.record_review(too_long["job_id"])
+
+        exact = self._inspected()
+        service.prepare_review(exact["job_id"])
+        self._mark_reviewed(exact["job_id"], [
+            "[00:00:00] Opening.\n\n[00:05:00] Continuing.\n\n[00:05:20] Exactly five minutes remain."
+        ])
+        self.assertEqual(service.record_review(exact["job_id"])["stage"], "reviewed")
+
+    def test_review_timestamp_coverage_is_global_across_chunk_boundaries(self) -> None:
+        job = self._inspected(3600.5, [
+            {"id": 0, "start": 0.0, "end": 1800.5, "text": " First half."},
+            {"id": 1, "start": 1800.5, "end": 3600.5, "text": " Second half."},
+        ])
+        service = ReviewDeliveryService(self.store)
+        manifest = service.prepare_review(job["job_id"])
+        self.assertEqual(len(manifest["chunks"]), 2)
+        self._mark_reviewed(job["job_id"], [
+            "\n\n".join(f"[{hour}] First." for hour in (
+                "00:00:00", "00:05:00", "00:10:00", "00:15:00", "00:20:00", "00:25:00"
+            )),
+            "\n\n".join(f"[{hour}] Second." for hour in (
+                "00:30:01", "00:35:01", "00:40:01", "00:45:01", "00:50:01", "00:55:01", "01:00:00"
+            )),
+        ])
+        with self.assertRaisesRegex(JobValidationError, "five minutes"):
+            service.record_review(job["job_id"])
+
+    def test_fractional_raw_boundaries_remain_exact_with_recordable_whole_second_markers(self) -> None:
+        job = self._inspected(3700.5, [
+            {"id": 0, "start": 0.0, "end": 1790.5, "text": " First."},
+            {"id": 1, "start": 1790.5, "end": 3585.5, "text": " Second."},
+            {"id": 2, "start": 3585.5, "end": 3700.5, "text": " Third."},
+        ])
+        service = ReviewDeliveryService(self.store)
+        manifest = service.prepare_review(job["job_id"])
+        self.assertEqual(
+            [(chunk["start_seconds"], chunk["end_seconds"]) for chunk in manifest["chunks"]],
+            [(0.0, 1790.5), (1790.5, 3585.5), (3585.5, 3700.5)],
+        )
+        self.assertEqual(manifest["clock_representation_tolerance_seconds"], 1.0)
+        self.assertIn("raw source and chunk coverage remains exact", manifest["clock_representation_policy"])
+        second_chunk = self.store.job_root(job["job_id"]) / "review" / "chunk-002.md"
+        self.assertIn("[00:29:51] Second.", second_chunk.read_text(encoding="utf-8"))
+        self._mark_reviewed(job["job_id"], [
+            "[Indistinct English speech, 00:00:00-00:29:50]",
+            "[Non-English interpretation omitted, 00:29:50-00:59:45]",
+            "[Indistinct English speech, 00:59:45-01:01:41]",
+        ])
+        self.assertEqual(service.record_review(job["job_id"])["stage"], "reviewed")
+
+        exact = self._inspected(3600.0, [
+            {"id": 0, "start": 0.0, "end": 1800.0, "text": " First."},
+            {"id": 1, "start": 1800.0, "end": 3600.0, "text": " Second."},
+        ])
+        service.prepare_review(exact["job_id"])
+        self._mark_reviewed(exact["job_id"], [
+            "[Indistinct English speech, 00:00:00-00:29:59]",
+            "[Indistinct English speech, 00:29:59-01:00:00]",
+        ])
+        with self.assertRaisesRegex(JobValidationError, "outside"):
+            service.record_review(exact["job_id"])
 
     def test_verify_fails_closed_on_changed_source_delivery_or_review_and_handoff_is_manual_only(self) -> None:
         service = ReviewDeliveryService(self.store)
@@ -295,6 +514,24 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         self.assertIn("ready for manual OneNote copy/editing", receipt["message"])
         self.assertFalse(receipt["copied_or_synced"])
 
+    def test_handoff_revalidates_every_current_evidence_layer_after_verification(self) -> None:
+        service = ReviewDeliveryService(self.store)
+        for relative in (
+            "asr/full.jsonl",
+            "inspection/report.json",
+            "review/manifest.json",
+            "review/chunk-001.md",
+        ):
+            with self.subTest(relative=relative):
+                job, _ = self._reviewed()
+                service.assemble(job["job_id"])
+                service.verify(job["job_id"])
+                path = self.store.job_root(job["job_id"]) / relative
+                path.write_bytes(path.read_bytes() + b"tampered")
+                with self.assertRaises(ArtifactValidationError):
+                    service.handoff(job["job_id"])
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "draft_ready")
+
     def test_commands_refuse_out_of_order_stages(self) -> None:
         job = self._inspected()
         service = ReviewDeliveryService(self.store)
@@ -305,20 +542,66 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         with self.assertRaises(StageTransitionError):
             service.handoff(job["job_id"])
 
-    def test_aggregate_refuses_forged_review_delivery_and_handoff_stages_without_evidence(self) -> None:
-        job = self._inspected()
+    def test_output_directory_reparse_is_rejected_before_any_external_write(self) -> None:
         service = ReviewDeliveryService(self.store)
-        with self.assertRaises(RepositoryHealthError):
-            self.store.advance_stage(job["job_id"], "reviewed")
-        service.prepare_review(job["job_id"])
-        self._mark_reviewed(job["job_id"], ["[00:00:00] Opening.\n\n[00:05:00] Continuing.\n\n[00:10:00] Closing."])
-        service.record_review(job["job_id"])
-        with self.assertRaises(RepositoryHealthError):
-            self.store.advance_stage(job["job_id"], "draft_ready")
-        service.assemble(job["job_id"])
-        service.verify(job["job_id"])
-        with self.assertRaises(RepositoryHealthError):
-            self.store.advance_stage(job["job_id"], "handed_off")
+        cases: list[tuple[str, dict[str, object], object]] = []
+
+        review_job = self._inspected()
+        cases.append(("review", review_job, lambda: service.prepare_review(review_job["job_id"])))
+
+        reference_job = self._inspected()
+        reference_input = Path(self.tmp.name) / "safe-reference.md"
+        reference_input.write_text("Reference.", encoding="utf-8")
+        cases.append(("reference", reference_job, lambda: service.register_reference(
+            reference_job["job_id"], "https://www.taptajivanam.com/safe", reference_input
+        )))
+
+        delivery_job, _ = self._reviewed()
+        cases.append(("delivery", delivery_job, lambda: service.assemble(delivery_job["job_id"])))
+
+        for name, job, operation in cases:
+            with self.subTest(name=name):
+                outside = Path(self.tmp.name) / f"outside-{name}"
+                outside.mkdir()
+                sentinel = outside / "sentinel.txt"
+                sentinel.write_text("unchanged", encoding="utf-8")
+                output = self.store.job_root(str(job["job_id"])) / name
+                self._replace_with_directory_link(output, outside)
+                with self.assertRaises((ArtifactValidationError, RepositoryHealthError)):
+                    operation()  # type: ignore[operator]
+                self.assertEqual({path.name for path in outside.iterdir()}, {"sentinel.txt"})
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+
+    def test_aggregate_refuses_forged_review_delivery_and_handoff_stages_without_evidence(self) -> None:
+        def register_junk(job_id: str, paths: list[str]) -> None:
+            root = self.store.job_root(job_id)
+            for relative in paths:
+                path = root / relative
+                path.write_text("junk", encoding="utf-8")
+                self.store.register_artifact(job_id, relative)
+
+        inspected = self._inspected()
+        register_junk(inspected["job_id"], ["review/manifest.json", "review/chunk-001.md"])
+        with self.assertRaises(StageTransitionError):
+            self.store.advance_stage(inspected["job_id"], "reviewed")
+
+        direct = self._inspected()
+        register_junk(direct["job_id"], ["review/manifest.json", "review/chunk-001.md"])
+        with self.assertRaises(StageTransitionError):
+            with self.store.transaction(direct["job_id"]) as transaction:
+                transaction.advance_stage("reviewed")
+
+        reviewed, service = self._reviewed()
+        register_junk(reviewed["job_id"], ["delivery/onenote-transcript.md", "delivery/verification.json"])
+        with self.assertRaises(StageTransitionError):
+            self.store.advance_stage(reviewed["job_id"], "draft_ready")
+
+        draft, service = self._reviewed()
+        service.assemble(draft["job_id"])
+        service.verify(draft["job_id"])
+        register_junk(draft["job_id"], ["delivery/handoff.json"])
+        with self.assertRaises(StageTransitionError):
+            self.store.advance_stage(draft["job_id"], "handed_off")
 
 
 if __name__ == "__main__":

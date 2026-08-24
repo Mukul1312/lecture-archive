@@ -11,7 +11,13 @@ from pathlib import Path
 
 from scripts.ggsm_transcription.asr import ASRService, DEFAULT_ASR_CONFIGURATION, FfmpegMediaAdapter, LocalFasterWhisperAdapter
 from scripts.ggsm_transcription.intake import IntakeService, SourceDownload
-from scripts.ggsm_transcription.store import ArtifactValidationError, JobStore, JobValidationError, RepositoryHealthError
+from scripts.ggsm_transcription.store import (
+    ArtifactValidationError,
+    JobStore,
+    JobValidationError,
+    RepositoryHealthError,
+    StageTransitionError,
+)
 
 
 class FakeSourceAdapter:
@@ -300,7 +306,7 @@ class InspectionContractTests(unittest.TestCase):
 
     def test_bare_asr_ready_to_inspected_transition_cannot_commit_without_both_reports(self) -> None:
         # Break caught: an inspected state could be forged without the inspection evidence the stage represents.
-        with self.assertRaises(RepositoryHealthError):
+        with self.assertRaises(StageTransitionError):
             self.store.advance_stage(self.job["job_id"], "inspected")
         self.assertEqual(self.store.load_job(self.job["job_id"])["stage"], "asr_ready")
 

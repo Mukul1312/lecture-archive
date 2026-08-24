@@ -172,7 +172,7 @@ class JobTransaction:
         self._state["artifacts"][relative.as_posix()] = record
         self._dirty = True
 
-    def advance_stage(self, target_stage: str) -> None:
+    def _advance_stage(self, target_stage: str) -> None:
         current = self._state["stage"]
         if current == "created" and target_stage == "source_ready":
             raise StageTransitionError("source_ready is entered only by source intake completion")
@@ -181,6 +181,9 @@ class JobTransaction:
         self._state["stage"] = target_stage
         self._state["stage_history"].append({"stage": target_stage, "at": _utcnow()})
         self._dirty = True
+
+    def advance_stage(self, _target_stage: str) -> None:
+        raise StageTransitionError("generic stage mutation is not supported; use a typed workflow operation")
 
     def record_source_alias(self, requested_url: str, resolved_url: str) -> None:
         self.store._validate_https_url(requested_url)
@@ -366,8 +369,8 @@ class JobStore:
             raise JobValidationError(f"job does not exist: {job_id}")
         with self._lock(f"job:{job_id}", root / ".lock"):
             transaction = JobTransaction(self, job_id)
+            yield transaction
             try:
-                yield transaction
                 transaction.commit()
             except OSError as error:
                 raise JobValidationError("atomic job manifest replacement failed") from error
@@ -376,9 +379,10 @@ class JobStore:
         raise JobValidationError("unrestricted job mutation is not supported; use transaction()")
 
     def advance_stage(self, job_id: str, target_stage: str) -> dict[str, Any]:
-        with self.transaction(job_id) as transaction:
-            transaction.advance_stage(target_stage)
-        return self.load_job(job_id)
+        validate_job_id(job_id)
+        raise StageTransitionError(
+            f"generic transition to {target_stage!r} is not supported; use a typed workflow operation"
+        )
 
     def register_artifact(self, job_id: str, relative_path: str) -> dict[str, Any]:
         with self.transaction(job_id) as transaction:
@@ -396,6 +400,18 @@ class JobStore:
         self._assert_safe_artifact_path(root, target)
         if not target.is_file() or _hash_file(target) != (record["sha256"], record["byte_size"]):
             raise ArtifactValidationError(f"artifact no longer matches recorded hash/size: {relative.as_posix()}")
+        return target
+
+    def validate_output_path(self, job_id: str, relative_path: str) -> Path:
+        """Resolve a job-local output only after rejecting reparse/unsafe parents."""
+        root = self.job_root(job_id)
+        relative = self._safe_relative_path(relative_path)
+        target = root.joinpath(*relative.parts)
+        self._assert_safe_artifact_path(root, target)
+        if not target.parent.is_dir() or _is_reparse(target.parent):
+            raise ArtifactValidationError(f"artifact output parent is unsafe: {relative.as_posix()}")
+        if target.exists() and (not target.is_file() or _is_reparse(target)):
+            raise ArtifactValidationError(f"artifact output target is unsafe: {relative.as_posix()}")
         return target
 
     def validate_source(self, job_id: str) -> Path:

@@ -20,6 +20,7 @@ from .store import ArtifactValidationError, JobStore, JobValidationError, StageT
 
 _TARGET_CHUNK_SECONDS = 30 * 60.0
 _BOUNDARY_TOLERANCE_SECONDS = 10 * 60.0
+_CLOCK_REPRESENTATION_TOLERANCE_SECONDS = 1.0
 _MARKER_NAMES = (
     "Non-English interpretation omitted",
     "Recording silence",
@@ -82,6 +83,11 @@ def _clock(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds_part:02d}"
 
 
+def _event_clock(seconds: float) -> str:
+    """Render an ASR start inside its raw span, rounding fractional starts up."""
+    return _clock(float(math.ceil(seconds)))
+
+
 def _parse_clock(value: str) -> float:
     try:
         hours, minutes, seconds = (int(part) for part in value.split(":"))
@@ -120,6 +126,11 @@ def _chunk_plan(records: list[dict[str, object]], duration: float, source_sha256
         "full_asr_sha256": full_asr_sha256,
         "source_duration_seconds": duration,
         "asr_gap_policy": "ASR-uncovered intervals are not inferred silence",
+        "clock_representation_tolerance_seconds": _CLOCK_REPRESENTATION_TOLERANCE_SECONDS,
+        "clock_representation_policy": (
+            "whole-second editorial clocks may extend only to floor(raw start) or ceil(raw end); "
+            "raw source and chunk coverage remains exact"
+        ),
         "chunks": chunks,
     }
 
@@ -133,7 +144,7 @@ def _chunk_markdown(chunk: dict[str, object], plan: dict[str, object],
         if start <= segment_start < end:
             text = str(record["text"]).strip()
             if text:
-                draft_lines.extend([f"[{_clock(segment_start)}] {text}", ""])
+                draft_lines.extend([f"[{_event_clock(segment_start)}] {text}", ""])
     if not draft_lines:
         draft_lines = ["<!-- ASR-uncovered draft span: listen before adding text or an audio-supported marker. -->", ""]
     lines = [
@@ -154,6 +165,8 @@ def _chunk_markdown(chunk: dict[str, object], plan: dict[str, object],
         "Listen to the complete assigned span. Edit the ASR text from the audio, then set",
         "`Review-State: reviewed`. ASR-uncovered intervals are not inferred silence.",
         "Use only the exact time-bounded editorial markers described by the workflow.",
+        "Whole-second clocks may overlap a fractional raw chunk edge by less than one second;",
+        "the manifest's raw floating-point coverage remains exact.",
         "For every Recording silence marker, add its exact range to",
         "`Audible-Silence-Confirmed` (semicolon-separated); this is an explicit listening attestation.",
         "",
@@ -223,9 +236,11 @@ def _validate_editorial_body(body: str, start: float, end: float,
                 silence_ranges.add(f"{marker.group(2)}-{marker.group(3)}")
             event = (marker_start, marker_end)
         else:
+            if any(name.lower() in paragraph.lower() for name in _MARKER_NAMES):
+                raise JobValidationError("unknown or malformed editorial marker")
             timestamp = _TIMESTAMP.match(paragraph)
             if timestamp is None:
-                if any(name.lower() in paragraph.lower() for name in _MARKER_NAMES) or paragraph.startswith("["):
+                if paragraph.startswith("["):
                     raise JobValidationError("unknown or malformed editorial marker")
                 raise JobValidationError("every editorial paragraph needs a natural timestamp")
             timestamp_close = paragraph.find("]")
@@ -233,19 +248,31 @@ def _validate_editorial_body(body: str, start: float, end: float,
                 raise JobValidationError("unknown or malformed editorial marker")
             point = _parse_clock(timestamp.group(1))
             event = (point, point)
-        if event[0] < start or event[1] > end:
+        if event[0] < math.floor(start) or event[1] > math.ceil(end):
             raise JobValidationError("editorial timestamp is outside its assigned review chunk")
         events.append(event)
     if confirmations != silence_ranges:
         raise JobValidationError("Recording silence requires an exact audible silence confirmation from listening")
     anchor = start
     for event_start, event_end in events:
-        if event_start < anchor:
+        if event_start < anchor - _CLOCK_REPRESENTATION_TOLERANCE_SECONDS:
             raise JobValidationError("editorial timestamps or markers are out of order")
         if event_start - anchor > 300:
             raise JobValidationError("editorial timestamps are more than five minutes apart")
         anchor = max(event_start, event_end)
     return events
+
+
+def _validate_event_stream(events: list[tuple[float, float]], duration: float) -> None:
+    anchor = 0.0
+    for event_start, event_end in events:
+        if event_start < anchor:
+            raise JobValidationError("editorial timestamps or markers are out of order")
+        if event_start - anchor > 300:
+            raise JobValidationError("editorial timestamps are more than five minutes apart")
+        anchor = max(event_start, event_end)
+    if math.ceil(duration) - anchor > 300:
+        raise JobValidationError("editorial terminal tail is more than five minutes")
 
 
 class ReviewDeliveryService:
@@ -279,13 +306,29 @@ class ReviewDeliveryService:
             _raw, records = self._validate_upstream(job_id, state)
             root = self.store.job_root(job_id)
             review_root = root / "review"
-            if any(review_root.iterdir()):
-                raise ArtifactValidationError("review preparation already exists; resume editing it or repair it explicitly")
             plan = self._expected_plan(state, records)
-            for chunk in plan["chunks"]:  # type: ignore[union-attr]
-                path = root / str(chunk["path"])
-                _atomic_text(path, _chunk_markdown(chunk, plan, records))
-            _atomic_text(review_root / "manifest.json", _json_text(plan))
+            expected_outputs: dict[Path, str] = {
+                root / str(chunk["path"]): _chunk_markdown(chunk, plan, records)
+                for chunk in plan["chunks"]  # type: ignore[union-attr]
+            }
+            expected_outputs[review_root / "manifest.json"] = _json_text(plan)
+            self.store.validate_output_path(job_id, "review/manifest.json")
+            actual = list(review_root.iterdir())
+            expected_names = {path.name for path in expected_outputs}
+            if any(path.name not in expected_names or not path.is_file() or path.is_symlink() for path in actual):
+                raise ArtifactValidationError("review preparation contains unknown or unsafe partial evidence")
+            for path, expected_text in expected_outputs.items():
+                relative = path.relative_to(root).as_posix()
+                self.store.validate_output_path(job_id, relative)
+                if path.exists():
+                    try:
+                        existing = path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeError) as error:
+                        raise ArtifactValidationError("partial review preparation is unreadable") from error
+                    if existing != expected_text:
+                        raise ArtifactValidationError("partial review preparation differs from the source-bound default")
+                    continue
+                _atomic_text(path, expected_text)
         return plan
 
     def _load_prepared(self, job_id: str, state: dict[str, Any], records: list[dict[str, object]]) -> tuple[dict[str, Any], list[tuple[dict[str, Any], Path, dict[str, str], str]]]:
@@ -301,7 +344,8 @@ class ReviewDeliveryService:
             actual_chunks = manifest.get("chunks")
             same_binding = all(manifest.get(key) == expected.get(key) for key in (
                 "schema_version", "source_sha256", "full_asr_sha256",
-                "source_duration_seconds", "asr_gap_policy",
+                "source_duration_seconds", "asr_gap_policy", "clock_representation_tolerance_seconds",
+                "clock_representation_policy",
             ))
             if not same_binding or not isinstance(actual_chunks, list) or len(actual_chunks) != len(expected_chunks):  # type: ignore[arg-type]
                 raise ArtifactValidationError("prepared review manifest is altered, unordered, or non-covering")
@@ -344,6 +388,7 @@ class ReviewDeliveryService:
                 if final_chunk.get("sha256") != digest or final_chunk.get("byte_size") != size:
                     raise ArtifactValidationError("recoverable final review manifest does not match its chunks")
             parsed.append((chunk, path, header, body))
+        _validate_event_stream(global_events, _finite(expected["source_duration_seconds"], "source duration"))
         return expected, parsed
 
     def record_review(self, job_id: str) -> dict[str, Any]:
@@ -359,11 +404,12 @@ class ReviewDeliveryService:
                 digest, size = _hash_file(path)
                 finalized["chunks"].append({**chunk, "reviewed": True, "sha256": digest, "byte_size": size})
             manifest_path = self.store.job_root(job_id) / "review" / "manifest.json"
+            self.store.validate_output_path(job_id, "review/manifest.json")
             _atomic_text(manifest_path, _json_text(finalized))
             for chunk, _path, _header, _body in parsed:
                 transaction.register_artifact(str(chunk["path"]))
             transaction.register_artifact("review/manifest.json")
-            transaction.advance_stage("reviewed")
+            transaction._advance_stage("reviewed")
         return self.store.load_job(job_id)
 
     def register_reference(self, job_id: str, reference_url: str, markdown_file: str | Path) -> dict[str, Any]:
@@ -383,7 +429,12 @@ class ReviewDeliveryService:
                 raise StageTransitionError("reference registration requires a source-ready or later job")
             self.store.validate_source(job_id)
             root = self.store.job_root(job_id)
-            target, provenance_path = root / "reference" / "taptajivanam.md", root / "reference" / "provenance.json"
+            target = root / "reference" / "taptajivanam.md"
+            provenance_path = root / "reference" / "provenance.json"
+            intent_path = root / "reference" / ".capture.json"
+            self.store.validate_output_path(job_id, "reference/taptajivanam.md")
+            self.store.validate_output_path(job_id, "reference/provenance.json")
+            self.store.validate_output_path(job_id, "reference/.capture.json")
             provenance = {
                 "url": reference_url,
                 "input_sha256": _hash_bytes(input_bytes),
@@ -392,20 +443,50 @@ class ReviewDeliveryService:
                 "captured_at": _utcnow(),
                 "authority": "secondary evidence only; audio remains authoritative",
             }
-            if target.exists() or provenance_path.exists():
-                if not target.is_file() or not provenance_path.is_file() or target.is_symlink() or provenance_path.is_symlink():
-                    raise ArtifactValidationError("existing reference evidence is incomplete or unsafe")
+            intent = {**provenance, "source_sha256": state["source_sha256"]}
+            if intent_path.exists():
+                existing_intent = _read_json(intent_path, "existing reference capture intent")
+                if ({key: existing_intent.get(key) for key in intent if key != "captured_at"}
+                        != {key: intent[key] for key in intent if key != "captured_at"}
+                        or not isinstance(existing_intent.get("captured_at"), str)
+                        or not existing_intent["captured_at"]):
+                    raise ArtifactValidationError("existing reference capture intent differs from this retry")
+                provenance["captured_at"] = existing_intent["captured_at"]
+            elif target.exists() and not provenance_path.exists():
+                raise ArtifactValidationError("target-only reference evidence lacks a recoverable capture intent")
+            elif provenance_path.exists():
+                existing_provenance = _read_json(provenance_path, "existing reference provenance")
+                if ({key: existing_provenance.get(key) for key in provenance if key != "captured_at"}
+                        != {key: provenance[key] for key in provenance if key != "captured_at"}
+                        or not isinstance(existing_provenance.get("captured_at"), str)
+                        or not existing_provenance["captured_at"]):
+                    raise ArtifactValidationError("existing reference provenance differs from this retry")
+                provenance["captured_at"] = existing_provenance["captured_at"]
+                intent["captured_at"] = existing_provenance["captured_at"]
+                _atomic_text(intent_path, _json_text(intent))
+            else:
+                _atomic_text(intent_path, _json_text(intent))
+            if target.exists():
+                if not target.is_file() or target.is_symlink() or target.read_bytes() != stored_bytes:
+                    raise ArtifactValidationError("existing reference Markdown is unsafe or differs from this capture")
+            if provenance_path.exists():
+                if not provenance_path.is_file() or provenance_path.is_symlink():
+                    raise ArtifactValidationError("existing reference provenance is unsafe")
                 existing = _read_json(provenance_path, "existing reference provenance")
-                if (target.read_bytes() != stored_bytes
-                        or {key: existing.get(key) for key in provenance if key != "captured_at"}
+                if ({key: existing.get(key) for key in provenance if key != "captured_at"}
                         != {key: provenance[key] for key in provenance if key != "captured_at"}
                         or not isinstance(existing.get("captured_at"), str) or not existing["captured_at"]):
                     raise ArtifactValidationError("existing reference evidence is not a recoverable identical capture")
-            else:
+            if not target.exists():
                 _atomic_text(target, content)
+            if not provenance_path.exists():
                 _atomic_text(provenance_path, _json_text(provenance))
             transaction.register_artifact("reference/taptajivanam.md")
             transaction.register_artifact("reference/provenance.json")
+            try:
+                intent_path.unlink()
+            except FileNotFoundError:
+                pass
         return self.store.load_job(job_id)
 
     def _validated_review(self, job_id: str, state: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -417,6 +498,7 @@ class ReviewDeliveryService:
         if not isinstance(chunks, list) or len(chunks) != len(expected["chunks"]):  # type: ignore[arg-type]
             raise ArtifactValidationError("final review coverage is incomplete")
         bodies: list[str] = []
+        global_events: list[tuple[float, float]] = []
         for expected_chunk, final_chunk in zip(expected["chunks"], chunks, strict=True):  # type: ignore[union-attr]
             if not isinstance(final_chunk, dict):
                 raise ArtifactValidationError("final review chunk record is malformed")
@@ -438,12 +520,16 @@ class ReviewDeliveryService:
             }
             if any(header[key] != value for key, value in expected_header.items()):
                 raise ArtifactValidationError("final review chunk binding changed")
-            _validate_editorial_body(body, float(expected_chunk["start_seconds"]), float(expected_chunk["end_seconds"]),
-                                      _parse_confirmations(header["Audible-Silence-Confirmed"]))
+            global_events.extend(_validate_editorial_body(
+                body, float(expected_chunk["start_seconds"]), float(expected_chunk["end_seconds"]),
+                _parse_confirmations(header["Audible-Silence-Confirmed"])
+            ))
             bodies.append(body)
-        for key in ("schema_version", "source_sha256", "full_asr_sha256", "source_duration_seconds", "asr_gap_policy"):
+        for key in ("schema_version", "source_sha256", "full_asr_sha256", "source_duration_seconds",
+                    "asr_gap_policy", "clock_representation_tolerance_seconds", "clock_representation_policy"):
             if manifest.get(key) != expected.get(key):
                 raise ArtifactValidationError("final review manifest binding changed")
+        _validate_event_stream(global_events, _finite(expected["source_duration_seconds"], "source duration"))
         return manifest, bodies
 
     @staticmethod
@@ -480,6 +566,7 @@ class ReviewDeliveryService:
             _manifest, bodies = self._validated_review(job_id, state)
             delivery = self._delivery_text(state, bodies)
             path = self.store.job_root(job_id) / "delivery" / "onenote-transcript.md"
+            self.store.validate_output_path(job_id, "delivery/onenote-transcript.md")
             if path.exists():
                 if path.read_bytes() != delivery.encode("utf-8"):
                     raise ArtifactValidationError("existing delivery differs from deterministic reviewed assembly")
@@ -488,24 +575,28 @@ class ReviewDeliveryService:
             transaction.register_artifact("delivery/onenote-transcript.md")
         return path
 
+    def _validate_delivery(self, job_id: str, state: dict[str, Any]) -> tuple[Path, bytes]:
+        _manifest, bodies = self._validated_review(job_id, state)
+        delivery_path = self.store.validate_artifact(job_id, "delivery/onenote-transcript.md")
+        try:
+            delivery_bytes = delivery_path.read_bytes()
+            delivery_text = delivery_bytes.decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ArtifactValidationError("delivery is not readable UTF-8") from error
+        if delivery_text != unicodedata.normalize("NFC", delivery_text):
+            raise ArtifactValidationError("delivery is not Unicode NFC")
+        expected = self._delivery_text(state, bodies).encode("utf-8")
+        if delivery_bytes != expected:
+            raise ArtifactValidationError("delivery does not match deterministic reviewed assembly")
+        return delivery_path, delivery_bytes
+
     def verify(self, job_id: str) -> dict[str, Any]:
         with self.store.transaction(job_id) as transaction:
             state = transaction.state
             if state["stage"] != "reviewed":
                 raise StageTransitionError("verify requires a reviewed job")
             self.store.validate_source(job_id)
-            _manifest, bodies = self._validated_review(job_id, state)
-            delivery_path = self.store.validate_artifact(job_id, "delivery/onenote-transcript.md")
-            try:
-                delivery_bytes = delivery_path.read_bytes()
-                delivery_text = delivery_bytes.decode("utf-8")
-            except (OSError, UnicodeError) as error:
-                raise ArtifactValidationError("delivery is not readable UTF-8") from error
-            if delivery_text != unicodedata.normalize("NFC", delivery_text):
-                raise ArtifactValidationError("delivery is not Unicode NFC")
-            expected = self._delivery_text(state, bodies).encode("utf-8")
-            if delivery_bytes != expected:
-                raise ArtifactValidationError("delivery does not match deterministic reviewed assembly")
+            _delivery_path, delivery_bytes = self._validate_delivery(job_id, state)
             verification = {
                 "success": True,
                 "verified_at": _utcnow(),
@@ -515,6 +606,7 @@ class ReviewDeliveryService:
                            "Listening draft label", "exact markers", "five-minute timestamps", "deterministic assembly"],
             }
             verification_path = self.store.job_root(job_id) / "delivery" / "verification.json"
+            self.store.validate_output_path(job_id, "delivery/verification.json")
             if verification_path.exists():
                 existing = _read_json(verification_path, "existing verification evidence")
                 if ({key: existing.get(key) for key in verification if key != "verified_at"}
@@ -524,7 +616,7 @@ class ReviewDeliveryService:
             else:
                 _atomic_text(verification_path, _json_text(verification))
             transaction.register_artifact("delivery/verification.json")
-            transaction.advance_stage("draft_ready")
+            transaction._advance_stage("draft_ready")
         return self.store.load_job(job_id)
 
     def handoff(self, job_id: str) -> dict[str, Any]:
@@ -533,12 +625,12 @@ class ReviewDeliveryService:
             if state["stage"] != "draft_ready":
                 raise StageTransitionError("handoff requires a draft_ready job")
             self.store.validate_source(job_id)
-            delivery = self.store.validate_artifact(job_id, "delivery/onenote-transcript.md")
+            delivery, delivery_bytes = self._validate_delivery(job_id, state)
             verification_path = self.store.validate_artifact(job_id, "delivery/verification.json")
             verification = _read_json(verification_path, "delivery verification")
             if verification.get("success") is not True or verification.get("source_sha256") != state["source_sha256"]:
                 raise ArtifactValidationError("successful source-bound verification is required for handoff")
-            if verification.get("delivery_sha256") != _hash_bytes(delivery.read_bytes()):
+            if verification.get("delivery_sha256") != _hash_bytes(delivery_bytes):
                 raise ArtifactValidationError("handoff delivery differs from verified delivery")
             receipt = {
                 "created_at": _utcnow(),
@@ -547,6 +639,7 @@ class ReviewDeliveryService:
                 "copied_or_synced": False,
             }
             path = self.store.job_root(job_id) / "delivery" / "handoff.json"
+            self.store.validate_output_path(job_id, "delivery/handoff.json")
             if path.exists():
                 existing = _read_json(path, "existing handoff receipt")
                 if ({key: existing.get(key) for key in receipt if key != "created_at"}
@@ -556,5 +649,5 @@ class ReviewDeliveryService:
             else:
                 _atomic_text(path, _json_text(receipt))
             transaction.register_artifact("delivery/handoff.json")
-            transaction.advance_stage("handed_off")
+            transaction._advance_stage("handed_off")
         return self.store.load_job(job_id)
