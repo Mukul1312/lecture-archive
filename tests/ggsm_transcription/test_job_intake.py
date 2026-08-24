@@ -233,12 +233,18 @@ class IntakeContractTests(unittest.TestCase):
         copied_path.write_bytes(adapter.payload)
         copied_manifest = self.store.job_root(copied_id) / "job.json"
         copied_state = self.store.load_job(copied_id)
-        copied_state.update({"source": dict(first["source"]), "tool_versions": dict(first["tool_versions"]), "source_url_aliases": []})
+        copied_state.update({
+            "source": dict(first["source"]),
+            "tool_versions": dict(first["tool_versions"]),
+            "source_url_aliases": [{"requested_url": "https://archive.example/copied", "resolved_url": "https://archive.example/copied.mp3"}],
+        })
         copied_state["artifacts"] = {"source/source.bin": {"sha256": first["source"]["sha256"], "byte_size": len(adapter.payload)}}
         copied_state["stage"] = "source_ready"
         copied_state["stage_history"].append({"stage": "source_ready", "at": copied_state["updated_at"]})
         copied_manifest.write_text(json.dumps(copied_state), encoding="utf-8")
-        with self.assertRaises(JobValidationError):
+        with self.assertRaisesRegex(JobValidationError, "more than one valid job matches the source hash"):
+            self._service(FakeSourceAdapter(adapter.payload)).intake("https://archive.example/first")
+        with self.assertRaisesRegex(JobValidationError, "more than one valid job matches the source hash"):
             self._service(FakeSourceAdapter(adapter.payload)).intake("https://archive.example/new")
 
     def test_hash_reuse_records_url_alias_and_later_resumes_without_download(self) -> None:
@@ -261,6 +267,34 @@ class IntakeContractTests(unittest.TestCase):
         result = self._service(FakeSourceAdapter(payload)).intake("https://archive.example/retry")
         self.assertEqual(result["job_id"], pending["job_id"])
         self.assertEqual(result["stage"], "source_ready")
+
+    def test_hash_reuse_at_progressed_stages_records_alias_without_probing(self) -> None:
+        # Break caught: an already-bound source must resume safely after ASR without fresh probe metadata.
+        for target_stage in ("asr_ready", "inspected"):
+            with self.subTest(target_stage=target_stage):
+                isolated = JobStore(Path(self.tmp.name) / target_stage / "data" / "transcribe")
+                first_adapter = FakeSourceAdapter()
+                first = IntakeService(isolated, first_adapter).intake("https://archive.example/original")
+                isolated.advance_stage(first["job_id"], "asr_ready")
+                if target_stage == "inspected":
+                    isolated.advance_stage(first["job_id"], "inspected")
+                class NoProbeAdapter(FakeSourceAdapter):
+                    def probe(self, source_path):
+                        raise AssertionError("probe must not run for a bound hash identity")
+                resumed = IntakeService(isolated, NoProbeAdapter(first_adapter.payload)).intake("https://archive.example/new-url")
+                self.assertEqual(resumed["stage"], target_stage)
+                self.assertIn({"requested_url": "https://archive.example/new-url", "resolved_url": "https://archive.example/recording.mp3"}, resumed["source_url_aliases"])
+                self.assertEqual(list(isolated.incoming_root.iterdir()), [])
+
+    def test_initial_manifest_failure_leaves_no_bad_jobs_entry(self) -> None:
+        # Break caught: a crash before first job.json used to poison all later identity scans.
+        digest = hashlib.sha256(b"failed create").hexdigest()
+        with patch.object(JobStore, "_write_manifest", side_effect=OSError("injected first write failure")):
+            with self.assertRaises(OSError):
+                self.store.create_job("failed", digest)
+        self.assertEqual([path for path in self.store.jobs_root.iterdir() if path.is_dir()], [])
+        recovered = self._service(FakeSourceAdapter(b"other lecture")).intake("https://archive.example/other")
+        self.assertEqual(recovered["stage"], "source_ready")
 
     def test_corrupt_job_directory_fails_closed_during_identity_scan(self) -> None:
         # Break caught: silently omitting corrupt evidence could create a duplicate source history.

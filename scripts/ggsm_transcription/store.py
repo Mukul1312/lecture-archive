@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import shutil
 import stat
 import tempfile
 import threading
@@ -238,12 +239,15 @@ class JobStore:
     def __init__(self, data_root: str | Path) -> None:
         self.data_root = Path(data_root)
         self.jobs_root, self.incoming_root = self.data_root / "jobs", self.data_root / ".incoming"
+        self.creation_root = self.data_root / ".creating"
         self.data_root.mkdir(parents=True, exist_ok=True)
         self._assert_safe_directory(self.data_root, "data root")
         self.jobs_root.mkdir(exist_ok=True)
         self.incoming_root.mkdir(exist_ok=True)
+        self.creation_root.mkdir(exist_ok=True)
         self._assert_safe_directory(self.jobs_root, "jobs root")
         self._assert_safe_directory(self.incoming_root, "incoming root")
+        self._assert_safe_directory(self.creation_root, "creation root")
         self._held_locks: set[str] = set()
         self._held_guard = threading.Lock()
 
@@ -263,17 +267,14 @@ class JobStore:
     def create_job(self, source_slug: str, source_sha256: str) -> dict[str, Any]:
         job_id = make_job_id(source_slug, source_sha256)
         root = self.job_root(job_id)
-        try:
-            root.mkdir()
-        except FileExistsError as error:
+        if root.exists():
             if root.is_dir():
                 try:
                     self.load_job(job_id)
                 except JobValidationError as health_error:
                     raise RepositoryHealthError(f"existing job directory is corrupt: {job_id}") from health_error
-            raise JobValidationError(f"job already exists: {job_id}") from error
-        for relative in _LAYOUT:
-            (root / relative).mkdir(parents=True, exist_ok=True)
+            raise JobValidationError(f"job already exists: {job_id}")
+        temporary = Path(tempfile.mkdtemp(prefix=f"{job_id}-", dir=self.creation_root))
         now = _utcnow()
         state: dict[str, Any] = {
             "schema_version": 1, "revision": 0, "job_id": job_id, "source_sha256": source_sha256,
@@ -281,8 +282,15 @@ class JobStore:
             "stage_history": [{"stage": "created", "at": now}], "source": None,
             "source_url_aliases": [], "tool_versions": {}, "artifacts": {},
         }
-        self._validate_manifest(state, job_id)
-        self._write_manifest(root, state)
+        try:
+            for relative in _LAYOUT:
+                (temporary / relative).mkdir(parents=True, exist_ok=True)
+            self._validate_manifest(state, job_id)
+            self._write_manifest(temporary, state)
+            os.replace(temporary, root)
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
         return state
 
     def load_job(self, job_id: str) -> dict[str, Any]:

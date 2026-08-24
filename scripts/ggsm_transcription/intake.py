@@ -114,6 +114,13 @@ class IntakeService:
                 if not staging.is_file() or staging.is_symlink():
                     raise ArtifactValidationError("downloader did not create a regular staging source")
                 digest, size = _sha256_and_size(staging)
+                matches = self._validated_hash_identity(digest)
+                if matches and matches[0]["source"] is not None:
+                    job_id = matches[0]["job_id"]
+                    self.store.validate_source(job_id)
+                    with self.store.transaction(job_id) as transaction:
+                        transaction.record_source_alias(requested_url, resolved)
+                    return self.store.load_job(job_id)
                 probe = self.source_adapter.probe(staging)
                 try:
                     source = {
@@ -125,7 +132,6 @@ class IntakeService:
                 except (KeyError, TypeError) as error:
                     raise JobValidationError("source adapter returned incomplete metadata") from error
                 self.store._validate_source_metadata(source, versions)
-                matches = self._validated_hash_identity(digest)
                 if matches:
                     job_id = matches[0]["job_id"]
                 else:
