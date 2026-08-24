@@ -1,0 +1,6 @@
+interface:
+  display_name: "GGSM Lecture Transcription"
+  short_description: "Create a local reviewed Listening draft"
+  default_prompt: "Use $transcribing-ggsm-lecture to prepare a local Listening draft from an English SSGGSM lecture URL."
+policy:
+  allow_implicit_invocation: false
