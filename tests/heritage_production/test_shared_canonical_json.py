@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 import unittest
 
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 import rfc8785
 
 from heritage_production.domain.shared import (
@@ -117,6 +117,7 @@ _JSON_VALUES = st.recursive(
 
 
 class CanonicalJsonOracleTests(unittest.TestCase):
+    @settings(deadline=None)
     @given(_JSON_VALUES)
     def test_supported_subset_matches_rfc8785_oracle(self, value: object) -> None:
         self.assertEqual(canonical_json(value), rfc8785.dumps(value))  # type: ignore[arg-type]

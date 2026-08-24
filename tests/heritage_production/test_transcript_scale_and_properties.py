@@ -52,7 +52,6 @@ def revisions_for(source_version: SourceVersionRef, count: int, id_base: int) ->
         end = (ordinal + 1) * source_version.duration_us // count
         revisions.append(
             SegmentRevision.create(
-                ordinal=ordinal,
                 segment_id=SegmentId(uid(id_base + ordinal)),
                 segment_revision_id=SegmentRevisionId(uid(id_base + count + ordinal)),
                 source_span=SourceSpan(source_version, start, end),
@@ -103,7 +102,7 @@ class GeneratedLineageTests(unittest.TestCase):
     @given(st.integers(min_value=1, max_value=25))
     def test_generated_unchanged_successors_preserve_exact_revision_refs(self, count: int) -> None:
         parent = initial_edition(count)
-        parent_manifest = ParentEditionManifest.from_edition(parent)
+        parent_manifest = ParentEditionManifest.from_edition(parent, ())
         successor = TranscriptEdition.seal_successor(
             transcript_edition_id=TranscriptEditionId(uid(622)),
             production_id=PRODUCTION,
@@ -112,6 +111,7 @@ class GeneratedLineageTests(unittest.TestCase):
             proposal_set_refs=(),
             parent_edition_ref=parent.ref,
             parent_manifest=parent_manifest,
+            accepted_findings=(),
             revisions=parent.revisions,
             gaps=(),
             change_manifest=EditionChangeManifest(

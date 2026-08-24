@@ -222,7 +222,6 @@ def _uncertainty_value(value: UncertaintyMark) -> dict[str, object]:
 
 @dataclass(frozen=True, slots=True, init=False)
 class SegmentRevision:
-    ordinal: int
     segment_id: SegmentId
     segment_revision_id: SegmentRevisionId
     source_span: SourceSpan
@@ -262,8 +261,18 @@ class SegmentRevision:
 
     @classmethod
     def _validated_values(cls, **values: object) -> dict[str, object]:
-        if type(values.get("ordinal")) is not int or values["ordinal"] < 0:
-            raise ValidationError("revision ordinal must be a nonnegative integer")
+        expected_fields = {
+            "segment_id",
+            "segment_revision_id",
+            "source_span",
+            "text",
+            "language",
+            "speaker",
+            "uncertainty_marks",
+            "lineage",
+        }
+        if set(values) != expected_fields:
+            raise ValidationError("segment-revision fields must match the exact public contract")
         for field_name, expected in (
             ("segment_id", SegmentId),
             ("segment_revision_id", SegmentRevisionId),
@@ -309,7 +318,6 @@ class SegmentRevision:
     @classmethod
     def verify_digest(cls, revision: SegmentRevision) -> None:
         checked = cls._validated_values(
-            ordinal=revision.ordinal,
             segment_id=revision.segment_id,
             segment_revision_id=revision.segment_revision_id,
             source_span=revision.source_span,
@@ -329,7 +337,6 @@ class SegmentRevision:
     @staticmethod
     def _semantic_payload(**values: object) -> dict[str, object]:
         return {
-            "ordinal": values["ordinal"],
             "segment_id": values["segment_id"].value,
             "segment_revision_id": values["segment_revision_id"].value,
             "source_span": _span_value(values["source_span"]),
@@ -385,10 +392,23 @@ class EditionChange:
         ):
             if type(values) is not tuple or not all(type(value) is expected for value in values):
                 raise ValidationError(f"{field_name} must be a tuple of {expected.__name__}")
+            if len(set(values)) != len(values):
+                raise ValidationError(f"{field_name} must contain unique exact references")
+        if (self.manual_actor_id is None) != (self.manual_reason is None):
+            raise ValidationError("manual change attribution requires both actor and reason")
         if self.manual_actor_id is not None and type(self.manual_actor_id) is not ActorId:
             raise ValidationError("manual_actor_id must be an ActorId")
         if self.manual_reason is not None:
             require_canonical_text(self.manual_reason, field="manual change reason", nonempty=True)
+        if self.kind in (
+            EditionChangeKind.INITIAL_PROPOSAL,
+            EditionChangeKind.INITIAL_MANUAL,
+        ) and not self.output_revisions:
+            raise ValidationError("every initial change must produce at least one revision")
+        if self.kind is EditionChangeKind.SPLIT and len(
+            {ref.segment_id for ref in self.output_revisions}
+        ) != len(self.output_revisions):
+            raise ValidationError("split outputs must have distinct segment identities")
 
     @classmethod
     def initial_proposal(
@@ -530,6 +550,18 @@ class FindingChangeRef:
             raise ValidationError("disposition_digest must be a ContentDigest")
 
 
+def _finding_change_ref_key(
+    finding: FindingChangeRef,
+) -> tuple[str, str, str, str, str]:
+    return (
+        finding.review_finding_id.value,
+        finding.finding_payload_digest.algorithm,
+        finding.finding_payload_digest.hex_digest,
+        finding.disposition_digest.algorithm,
+        finding.disposition_digest.hex_digest,
+    )
+
+
 class FindingOutcome(str, Enum):
     APPLIED = "applied"
     NO_EDITION_CHANGE = "no_edition_change"
@@ -594,6 +626,29 @@ class EditionChangeManifest:
             type(value) is FindingMapping for value in self.finding_mappings
         ):
             raise ValidationError("finding_mappings must be a tuple of FindingMapping")
+        finding_ids = tuple(
+            mapping.finding.review_finding_id for mapping in self.finding_mappings
+        )
+        if len(set(finding_ids)) != len(finding_ids):
+            raise ValidationError("finding mappings must have unique finding identities")
+        if self.finding_mappings != tuple(
+            sorted(
+                self.finding_mappings,
+                key=lambda mapping: _finding_change_ref_key(mapping.finding),
+            )
+        ):
+            raise ValidationError("finding mappings must be in canonical finding order")
+
+
+def _require_canonical_sources(
+    source_versions: tuple[SourceVersionRef, ...],
+    *,
+    field: str,
+) -> None:
+    if source_versions != tuple(
+        sorted(source_versions, key=lambda source: source.source_version_id.value)
+    ):
+        raise ValidationError(f"{field} must be in canonical SourceVersionId order")
 
 
 @dataclass(frozen=True, slots=True)
@@ -604,6 +659,7 @@ class ParentEditionManifest:
     transcript_scope: TranscriptScope
     proposal_set_refs: tuple[ProposalSetRef, ...]
     parent_edition_ref: EditionRef | None
+    ancestor_edition_refs: tuple[EditionRef, ...]
     revisions: tuple[SegmentRevision, ...]
     gaps: tuple[GapDeclaration, ...]
     change_manifest: EditionChangeManifest
@@ -613,32 +669,38 @@ class ParentEditionManifest:
             raise ValidationError("parent edition_ref must be an exact EditionRef")
         if type(self.production_id) is not ProductionId:
             raise ValidationError("parent production_id must be a ProductionId")
-        if type(self.source_versions) is not tuple or not self.source_versions or not all(
-            type(source) is SourceVersionRef for source in self.source_versions
-        ):
-            raise ValidationError("parent source_versions must be a nonempty tuple")
-        if type(self.transcript_scope) is not TranscriptScope:
-            raise ValidationError("parent transcript_scope must be a TranscriptScope")
-        if type(self.proposal_set_refs) is not tuple or not all(
-            type(ref) is ProposalSetRef for ref in self.proposal_set_refs
-        ):
-            raise ValidationError("parent proposal_set_refs must be a tuple")
         if self.parent_edition_ref is not None and type(self.parent_edition_ref) is not EditionRef:
             raise ValidationError("parent's parent_edition_ref must be an EditionRef")
-        if type(self.revisions) is not tuple or not self.revisions or not all(
-            type(revision) is SegmentRevision for revision in self.revisions
+        if type(self.ancestor_edition_refs) is not tuple or not all(
+            type(ref) is EditionRef for ref in self.ancestor_edition_refs
         ):
-            raise ValidationError("parent revisions must be a nonempty tuple")
-        if type(self.gaps) is not tuple or not all(
-            type(gap) is GapDeclaration for gap in self.gaps
+            raise ValidationError("ancestor_edition_refs must be a tuple of EditionRef")
+        ancestor_ids = [
+            ref.transcript_edition_id for ref in self.ancestor_edition_refs
+        ]
+        if len(set(ancestor_ids)) != len(ancestor_ids):
+            raise ValidationError("ancestor edition identities must be unique")
+        if self.edition_ref.transcript_edition_id in ancestor_ids:
+            raise ValidationError("parent manifest ancestry cannot contain itself")
+        if self.parent_edition_ref is None:
+            if self.ancestor_edition_refs:
+                raise ValidationError("an initial parent edition must have empty ancestry")
+        elif (
+            not self.ancestor_edition_refs
+            or self.ancestor_edition_refs[0] != self.parent_edition_ref
         ):
-            raise ValidationError("parent gaps must be a tuple of GapDeclaration")
-        if type(self.change_manifest) is not EditionChangeManifest:
-            raise ValidationError("parent change_manifest must be an EditionChangeManifest")
-        if len({revision.ref for revision in self.revisions}) != len(self.revisions):
-            raise ValidationError("parent revision references must be unique")
-        for revision in self.revisions:
-            SegmentRevision.verify_digest(revision)
+            raise ValidationError(
+                "ancestry must begin with the parent's exact immediate parent"
+            )
+        TranscriptEdition._validate_semantic_snapshot(
+            source_versions=self.source_versions,
+            transcript_scope=self.transcript_scope,
+            proposal_set_refs=self.proposal_set_refs,
+            revisions=self.revisions,
+            gaps=self.gaps,
+            change_manifest=self.change_manifest,
+            source_field="parent source_versions",
+        )
         expected = calculate_semantic_digest(
             "heritage-transcript-edition-v1",
             TranscriptEdition._semantic_payload(
@@ -656,7 +718,11 @@ class ParentEditionManifest:
             raise ValidationError("parent manifest content does not match its EditionRef digest")
 
     @classmethod
-    def from_edition(cls, edition: TranscriptEdition) -> ParentEditionManifest:
+    def from_edition(
+        cls,
+        edition: TranscriptEdition,
+        ancestor_edition_refs: tuple[EditionRef, ...],
+    ) -> ParentEditionManifest:
         if type(edition) is not TranscriptEdition:
             raise ValidationError("parent must be an exact TranscriptEdition")
         return cls(
@@ -666,6 +732,7 @@ class ParentEditionManifest:
             edition.transcript_scope,
             edition.proposal_set_refs,
             edition.parent_edition_ref,
+            ancestor_edition_refs,
             edition.revisions,
             edition.gaps,
             edition.change_manifest,
@@ -720,9 +787,8 @@ def _scope_value(value: TranscriptScope) -> dict[str, object]:
     }
 
 
-def _revision_value(value: SegmentRevision) -> dict[str, object]:
+def _revision_value(value: SegmentRevision, ordinal: int) -> dict[str, object]:
     payload = SegmentRevision._semantic_payload(
-        ordinal=value.ordinal,
         segment_id=value.segment_id,
         segment_revision_id=value.segment_revision_id,
         source_span=value.source_span,
@@ -732,7 +798,11 @@ def _revision_value(value: SegmentRevision) -> dict[str, object]:
         uncertainty_marks=value.uncertainty_marks,
         lineage=value.lineage,
     )
-    return {**payload, "revision_digest": _digest_value(value.semantic_digest)}
+    return {
+        "ordinal": ordinal,
+        **payload,
+        "revision_digest": _digest_value(value.semantic_digest),
+    }
 
 
 class TranscriptEdition(AggregateEventRecorder):
@@ -793,9 +863,14 @@ class TranscriptEdition(AggregateEventRecorder):
         event_id = values.pop("event_id", None)
         event_time = values.pop("event_occurred_at_us", None)
         parent_manifest = values.pop("parent_manifest", None)
+        accepted_findings = values.pop("accepted_findings", None)
         if type(parent_manifest) is not ParentEditionManifest:
             raise ValidationError("parent_manifest must be an exact ParentEditionManifest")
         checked = cls._validate_common(**values)
+        cls._validate_accepted_findings(
+            checked["change_manifest"],
+            accepted_findings,
+        )
         cls._validate_successor_manifest(checked, parent_manifest)
         digest = calculate_semantic_digest(
             "heritage-transcript-edition-v1", cls._semantic_payload(**checked)
@@ -819,6 +894,33 @@ class TranscriptEdition(AggregateEventRecorder):
             )
         )
         return edition
+
+    @staticmethod
+    def _validate_accepted_findings(
+        manifest: EditionChangeManifest,
+        accepted_findings: object,
+    ) -> None:
+        if type(accepted_findings) is not tuple or not all(
+            type(finding) is FindingChangeRef for finding in accepted_findings
+        ):
+            raise ValidationError(
+                "accepted_findings must be an immutable tuple of FindingChangeRef"
+            )
+        finding_ids = tuple(
+            finding.review_finding_id for finding in accepted_findings
+        )
+        if len(set(finding_ids)) != len(finding_ids):
+            raise ValidationError("accepted_findings must contain unique finding identities")
+        if accepted_findings != tuple(
+            sorted(accepted_findings, key=_finding_change_ref_key)
+        ):
+            raise ValidationError("accepted_findings must be in canonical identity order")
+        if accepted_findings != tuple(
+            mapping.finding for mapping in manifest.finding_mappings
+        ):
+            raise ValidationError(
+                "accepted_findings must exactly equal the manifest finding keys"
+            )
 
     @classmethod
     def reconstitute(
@@ -852,20 +954,48 @@ class TranscriptEdition(AggregateEventRecorder):
         for field_name, expected in (
             ("transcript_edition_id", TranscriptEditionId),
             ("production_id", ProductionId),
-            ("transcript_scope", TranscriptScope),
-            ("change_manifest", EditionChangeManifest),
             ("creation_actor_id", ActorId),
         ):
             if type(values.get(field_name)) is not expected:
                 raise ValidationError(f"{field_name} must be an exact {expected.__name__}")
-        sources = values.get("source_versions")
+        if type(values.get("created_at_us")) is not int or values["created_at_us"] <= 0:
+            raise ValidationError("created_at_us must be a positive integer")
+        if values.get("parent_edition_ref") is not None and type(values["parent_edition_ref"]) is not EditionRef:
+            raise ValidationError("parent_edition_ref must be an exact EditionRef")
+        cls._validate_semantic_snapshot(
+            source_versions=values.get("source_versions"),
+            transcript_scope=values.get("transcript_scope"),
+            proposal_set_refs=values.get("proposal_set_refs"),
+            revisions=values.get("revisions"),
+            gaps=values.get("gaps"),
+            change_manifest=values.get("change_manifest"),
+            source_field="source_versions",
+        )
+        return values
+
+    @classmethod
+    def _validate_semantic_snapshot(
+        cls,
+        *,
+        source_versions: object,
+        transcript_scope: object,
+        proposal_set_refs: object,
+        revisions: object,
+        gaps: object,
+        change_manifest: object,
+        source_field: str,
+    ) -> None:
+        sources = source_versions
         if type(sources) is not tuple or not sources or not all(
             type(source) is SourceVersionRef for source in sources
         ):
-            raise ValidationError("source_versions must be a nonempty tuple of SourceVersionRef")
-        if values["transcript_scope"].source_versions != sources:
+            raise ValidationError(f"{source_field} must be a nonempty tuple of SourceVersionRef")
+        _require_canonical_sources(sources, field=source_field)
+        if type(transcript_scope) is not TranscriptScope:
+            raise ValidationError("transcript_scope must be an exact TranscriptScope")
+        if transcript_scope.source_versions != sources:
             raise ValidationError("transcript scope must bind the edition's exact source versions")
-        proposals = values.get("proposal_set_refs")
+        proposals = proposal_set_refs
         if type(proposals) is not tuple or not all(
             type(ref) is ProposalSetRef for ref in proposals
         ):
@@ -882,21 +1012,15 @@ class TranscriptEdition(AggregateEventRecorder):
             )
         ):
             raise ValidationError("proposal_set_refs must be in canonical identity order")
-        revisions = values.get("revisions")
         if type(revisions) is not tuple or not revisions or not all(
             type(revision) is SegmentRevision for revision in revisions
         ):
             raise ValidationError("revisions must be a nonempty tuple of SegmentRevision")
-        gaps = values.get("gaps")
         if type(gaps) is not tuple or not all(type(gap) is GapDeclaration for gap in gaps):
             raise ValidationError("gaps must be a tuple of GapDeclaration")
-        if type(values.get("created_at_us")) is not int or values["created_at_us"] <= 0:
-            raise ValidationError("created_at_us must be a positive integer")
-        if values.get("parent_edition_ref") is not None and type(values["parent_edition_ref"]) is not EditionRef:
-            raise ValidationError("parent_edition_ref must be an exact EditionRef")
+        if type(change_manifest) is not EditionChangeManifest:
+            raise ValidationError("change_manifest must be an exact EditionChangeManifest")
 
-        if tuple(revision.ordinal for revision in revisions) != tuple(range(len(revisions))):
-            raise ValidationError("revision ordinals must be contiguous and zero based")
         if len({revision.segment_id for revision in revisions}) != len(revisions):
             raise ValidationError("segment identities must be unique within the edition")
         if len({revision.segment_revision_id for revision in revisions}) != len(revisions):
@@ -912,15 +1036,14 @@ class TranscriptEdition(AggregateEventRecorder):
         }
         used_proposal_sets.update(
             proposal.proposal_set_ref
-            for change in values["change_manifest"].changes
+            for change in change_manifest.changes
             for proposal in change.proposal_inputs
         )
         if set(proposals) != used_proposal_sets:
             raise ValidationError(
                 "proposal_set_refs must exactly match revision and manifest proposal bindings"
             )
-        cls._validate_coverage(values["transcript_scope"], revisions, gaps)
-        return values
+        cls._validate_coverage(transcript_scope, revisions, gaps)
 
     @staticmethod
     def _validate_coverage(
@@ -1009,8 +1132,15 @@ class TranscriptEdition(AggregateEventRecorder):
         parent_ref = values["parent_edition_ref"]
         if parent_ref is None or parent_ref != parent.edition_ref:
             raise ValidationError("successor must bind the exact supplied parent edition")
-        if values["transcript_edition_id"] == parent_ref.transcript_edition_id:
-            raise ValidationError("an edition cannot be its own parent")
+        historical_edition_ids = {
+            parent_ref.transcript_edition_id,
+            *(
+                ref.transcript_edition_id
+                for ref in parent.ancestor_edition_refs
+            ),
+        }
+        if values["transcript_edition_id"] in historical_edition_ids:
+            raise ValidationError("an edition identity cannot be reused from its ancestry")
         if values["production_id"] != parent.production_id:
             raise ValidationError("successor and parent must belong to the same Production")
         if not all(source in values["source_versions"] for source in parent.source_versions):
@@ -1019,7 +1149,16 @@ class TranscriptEdition(AggregateEventRecorder):
         manifest = values["change_manifest"]
         current_by_ref = {revision.ref: revision for revision in values["revisions"]}
         parent_by_ref = {revision.ref: revision for revision in parent.revisions}
+        current_positions = {
+            revision.ref: index for index, revision in enumerate(values["revisions"])
+        }
+        parent_positions = {
+            revision.ref: index for index, revision in enumerate(parent.revisions)
+        }
         parent_segment_ids = {revision.segment_id for revision in parent.revisions}
+        parent_revision_ids = {
+            revision.segment_revision_id for revision in parent.revisions
+        }
         seen_inputs: set[SegmentRevisionRef] = set()
         seen_outputs: set[SegmentRevisionRef] = set()
         finding_ids: set[ReviewFindingId] = set()
@@ -1047,6 +1186,13 @@ class TranscriptEdition(AggregateEventRecorder):
                 raise ValidationError("parent revision has ambiguous successor lineage")
             if any(ref in seen_outputs for ref in change.output_revisions):
                 raise ValidationError("successor revision is claimed by multiple changes")
+            if change.kind is not EditionChangeKind.UNCHANGED and any(
+                ref.segment_revision_id in parent_revision_ids
+                for ref in change.output_revisions
+            ):
+                raise ValidationError(
+                    "changed outputs must allocate revision identities new to the parent"
+                )
             seen_inputs.update(change.input_revisions)
             seen_outputs.update(change.output_revisions)
 
@@ -1080,6 +1226,26 @@ class TranscriptEdition(AggregateEventRecorder):
                 outputs = [current_by_ref[ref] for ref in change.output_revisions]
                 if any(output.segment_id in parent_segment_ids for output in outputs):
                     raise ValidationError("split outputs must allocate new segment identities")
+                if tuple(current_positions[ref] for ref in change.output_revisions) != tuple(
+                    sorted(current_positions[ref] for ref in change.output_revisions)
+                ):
+                    raise ValidationError("split outputs must be in canonical child order")
+                split_input = parent_by_ref[change.input_revisions[0]].source_span
+                cursor = split_input.start_us
+                for output in outputs:
+                    if (
+                        output.source_span.source_version != split_input.source_version
+                        or output.source_span.start_us != cursor
+                        or output.source_span.end_us > split_input.end_us
+                    ):
+                        raise ValidationError(
+                            "split outputs must exactly partition the input source span"
+                        )
+                    cursor = output.source_span.end_us
+                if cursor != split_input.end_us:
+                    raise ValidationError(
+                        "split outputs must exactly partition the input source span"
+                    )
                 for output in outputs:
                     TranscriptEdition._require_lineage(
                         output,
@@ -1093,6 +1259,30 @@ class TranscriptEdition(AggregateEventRecorder):
                 output = current_by_ref[change.output_revisions[0]]
                 if output.segment_id in parent_segment_ids:
                     raise ValidationError("merge output must allocate a new segment identity")
+                if tuple(parent_positions[ref] for ref in change.input_revisions) != tuple(
+                    sorted(parent_positions[ref] for ref in change.input_revisions)
+                ):
+                    raise ValidationError("merge inputs must be in exact parent order")
+                merge_inputs = [parent_by_ref[ref] for ref in change.input_revisions]
+                merged_source = merge_inputs[0].source_span.source_version
+                cursor = merge_inputs[0].source_span.start_us
+                for merge_input in merge_inputs:
+                    if (
+                        merge_input.source_span.source_version != merged_source
+                        or merge_input.source_span.start_us != cursor
+                    ):
+                        raise ValidationError(
+                            "merge inputs must be contiguous spans on one exact source"
+                        )
+                    cursor = merge_input.source_span.end_us
+                if (
+                    output.source_span.source_version != merged_source
+                    or output.source_span.start_us != merge_inputs[0].source_span.start_us
+                    or output.source_span.end_us != cursor
+                ):
+                    raise ValidationError(
+                        "merge output must equal the exact union of its input spans"
+                    )
                 TranscriptEdition._require_lineage(
                     output,
                     RevisionLineageKind.MERGED_FROM,
@@ -1152,7 +1342,10 @@ class TranscriptEdition(AggregateEventRecorder):
                 if values["parent_edition_ref"] is not None
                 else None
             ),
-            "revisions": [_revision_value(revision) for revision in values["revisions"]],
+            "revisions": [
+                _revision_value(revision, ordinal)
+                for ordinal, revision in enumerate(values["revisions"])
+            ],
             "gaps": [
                 {"source_span": _span_value(gap.source_span), "reason": gap.reason}
                 for gap in values["gaps"]

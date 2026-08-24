@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from heritage_production.domain.shared import (
@@ -11,7 +12,10 @@ from heritage_production.domain.shared import (
     ProposalSetId,
     SegmentId,
     SegmentRevisionId,
+    SourceRecordingId,
     SourceSpan,
+    SourceVersionId,
+    SourceVersionRef,
     TranscriptEditionId,
     TranscriptScope,
     TranscriptText,
@@ -20,10 +24,12 @@ from heritage_production.domain.shared import (
 from heritage_production.domain.transcription import (
     CharacterSpan,
     EditionChange,
+    EditionChangeKind,
     EditionChangeManifest,
     ProposalItemRef,
     ProposalSetRef,
     GapDeclaration,
+    ParentEditionManifest,
     RevisionLineage,
     SegmentRevision,
     TranscriptEdition,
@@ -44,7 +50,6 @@ def initial_revision() -> SegmentRevision:
         ProposalItemId(uid(10)),
     )
     return SegmentRevision.create(
-        ordinal=0,
         segment_id=SegmentId(uid(100)),
         segment_revision_id=SegmentRevisionId(uid(101)),
         source_span=SourceSpan(SOURCE, 0, 10_000),
@@ -113,7 +118,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
     def test_named_gap_and_adjacent_segments_cover_scope_exactly(self) -> None:
         proposal_ref = initial_revision().lineage.proposal_inputs[0]
         first = SegmentRevision.create(
-            ordinal=0,
             segment_id=SegmentId(uid(120)),
             segment_revision_id=SegmentRevisionId(uid(121)),
             source_span=SourceSpan(SOURCE, 0, 4_000),
@@ -124,7 +128,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             lineage=RevisionLineage.proposal_derived((proposal_ref,)),
         )
         second = SegmentRevision.create(
-            ordinal=1,
             segment_id=SegmentId(uid(122)),
             segment_revision_id=SegmentRevisionId(uid(123)),
             source_span=SourceSpan(SOURCE, 6_000, 10_000),
@@ -161,7 +164,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
         proposal_ref = initial_revision().lineage.proposal_inputs[0]
         full_span = SourceSpan(SOURCE, 0, 10_000)
         valid = SegmentRevision.create(
-            ordinal=0,
             segment_id=SegmentId(uid(130)),
             segment_revision_id=SegmentRevisionId(uid(131)),
             source_span=full_span,
@@ -194,7 +196,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             with self.subTest(marks=marks):
                 with self.assertRaises(ValidationError):
                     SegmentRevision.create(
-                        ordinal=0,
                         segment_id=SegmentId(uid(130)),
                         segment_revision_id=SegmentRevisionId(uid(131)),
                         source_span=full_span,
@@ -215,7 +216,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             "vowel unclear",
         )
         valid = SegmentRevision.create(
-            ordinal=0,
             segment_id=SegmentId(uid(140)),
             segment_revision_id=SegmentRevisionId(uid(141)),
             source_span=full_span,
@@ -249,7 +249,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             with self.subTest(mark=mark):
                 with self.assertRaises(ValidationError):
                     SegmentRevision.create(
-                        ordinal=0,
                         segment_id=SegmentId(uid(142)),
                         segment_revision_id=SegmentRevisionId(uid(143)),
                         source_span=narrowed_span if mark is invalid_marks[0] else full_span,
@@ -260,21 +259,9 @@ class InitialTranscriptEditionTests(unittest.TestCase):
                         lineage=RevisionLineage.proposal_derived((proposal_ref,)),
                     )
 
-    def test_rejects_ordinal_identity_overlap_source_gap_and_coverage_errors(self) -> None:
+    def test_rejects_identity_overlap_source_gap_and_coverage_errors(self) -> None:
         baseline = initial_revision()
-        wrong_ordinal = SegmentRevision.create(
-            ordinal=1,
-            segment_id=baseline.segment_id,
-            segment_revision_id=baseline.segment_revision_id,
-            source_span=baseline.source_span,
-            text=baseline.text,
-            language=baseline.language,
-            speaker=baseline.speaker,
-            uncertainty_marks=baseline.uncertainty_marks,
-            lineage=baseline.lineage,
-        )
         duplicate_segment = SegmentRevision.create(
-            ordinal=1,
             segment_id=baseline.segment_id,
             segment_revision_id=SegmentRevisionId(uid(151)),
             source_span=SourceSpan(SOURCE, 5_000, 10_000),
@@ -285,7 +272,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             lineage=baseline.lineage,
         )
         for overrides in (
-            {"revisions": (wrong_ordinal,)},
             {"revisions": (baseline, duplicate_segment)},
             {
                 "transcript_scope": TranscriptScope(
@@ -303,22 +289,20 @@ class InitialTranscriptEditionTests(unittest.TestCase):
     def test_initial_manifest_is_complete_exact_and_manual_edits_are_attributed(self) -> None:
         revision = initial_revision()
         missing = EditionChangeManifest((), ())
-        duplicate = EditionChangeManifest(
-            (
-                EditionChange.initial_proposal(
-                    proposal_inputs=revision.lineage.proposal_inputs,
-                    output_revisions=(revision.ref, revision.ref),
+        with self.assertRaises(ValidationError):
+            seal_initial(change_manifest=missing)
+        with self.assertRaises(ValidationError):
+            EditionChangeManifest(
+                (
+                    EditionChange.initial_proposal(
+                        proposal_inputs=revision.lineage.proposal_inputs,
+                        output_revisions=(revision.ref, revision.ref),
+                    ),
                 ),
-            ),
-            (),
-        )
-        for manifest in (missing, duplicate):
-            with self.subTest(manifest=manifest):
-                with self.assertRaises(ValidationError):
-                    seal_initial(change_manifest=manifest)
+                (),
+            )
 
         manual_revision = SegmentRevision.create(
-            ordinal=0,
             segment_id=SegmentId(uid(160)),
             segment_revision_id=SegmentRevisionId(uid(161)),
             source_span=SourceSpan(SOURCE, 0, 10_000),
@@ -349,6 +333,99 @@ class InitialTranscriptEditionTests(unittest.TestCase):
                 output_revisions=(manual_revision.ref,), actor_id=ActorId(uid(162)), reason=""
             )
 
+    def test_initial_change_cannot_claim_provenance_without_an_output(self) -> None:
+        proposal_ref = initial_revision().lineage.proposal_inputs[0]
+        manual_revision = SegmentRevision.create(
+            segment_id=SegmentId(uid(163)),
+            segment_revision_id=SegmentRevisionId(uid(164)),
+            source_span=SourceSpan(SOURCE, 0, 10_000),
+            text=TranscriptText("Manual content only"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.manual_initial(),
+        )
+        with self.assertRaises(ValidationError):
+            false_provenance = EditionChangeManifest(
+                (
+                    EditionChange.initial_proposal(
+                        proposal_inputs=(proposal_ref,),
+                        output_revisions=(),
+                    ),
+                    EditionChange.initial_manual(
+                        output_revisions=(manual_revision.ref,),
+                        actor_id=ActorId(uid(165)),
+                        reason="Actual source of the only revision",
+                    ),
+                ),
+                (),
+            )
+            seal_initial(revisions=(manual_revision,), change_manifest=false_provenance)
+
+    def test_change_values_reject_duplicate_members_and_split_segment_identities(self) -> None:
+        revision = initial_revision()
+        proposal_ref = revision.lineage.proposal_inputs[0]
+        split_first = SegmentRevision.create(
+            segment_id=SegmentId(uid(166)),
+            segment_revision_id=SegmentRevisionId(uid(167)),
+            source_span=SourceSpan(SOURCE, 0, 5_000),
+            text=TranscriptText("split first"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.manual_new(),
+        )
+        split_same_segment = SegmentRevision.create(
+            segment_id=split_first.segment_id,
+            segment_revision_id=SegmentRevisionId(uid(168)),
+            source_span=SourceSpan(SOURCE, 5_000, 10_000),
+            text=TranscriptText("split second"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.manual_new(),
+        )
+        invalid_change_factories = (
+            lambda: EditionChange.merge(
+                (revision.ref, revision.ref),
+                split_first.ref,
+            ),
+            lambda: EditionChange.split(
+                revision.ref,
+                (split_first.ref, split_first.ref),
+            ),
+            lambda: EditionChange.initial_proposal(
+                proposal_inputs=(proposal_ref, proposal_ref),
+                output_revisions=(revision.ref,),
+            ),
+            lambda: EditionChange.split(
+                revision.ref,
+                (split_first.ref, split_same_segment.ref),
+            ),
+        )
+
+        for create_invalid_change in invalid_change_factories:
+            with self.subTest(factory=create_invalid_change):
+                with self.assertRaises(ValidationError):
+                    create_invalid_change()
+
+    def test_change_value_requires_manual_actor_and_reason_together(self) -> None:
+        revision_ref = initial_revision().ref
+        partial_attributions = (
+            {"manual_actor_id": ActorId(uid(169)), "manual_reason": None},
+            {"manual_actor_id": None, "manual_reason": "Actor missing"},
+        )
+
+        for attribution in partial_attributions:
+            with self.subTest(attribution=attribution):
+                with self.assertRaises(ValidationError):
+                    EditionChange(
+                        EditionChangeKind.CORRECTION,
+                        (revision_ref,),
+                        (revision_ref,),
+                        **attribution,
+                    )
+
     def test_edition_digest_excludes_root_id_and_creation_time_and_includes_content(self) -> None:
         baseline = seal_initial()
         same_content = seal_initial(
@@ -358,7 +435,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
             event_occurred_at_us=999,
         )
         changed_revision = SegmentRevision.create(
-            ordinal=0,
             segment_id=SegmentId(uid(100)),
             segment_revision_id=SegmentRevisionId(uid(101)),
             source_span=SourceSpan(SOURCE, 0, 10_000),
@@ -382,6 +458,148 @@ class InitialTranscriptEditionTests(unittest.TestCase):
         self.assertEqual(baseline.semantic_digest, same_content.semantic_digest)
         self.assertNotEqual(baseline.semantic_digest, changed.semantic_digest)
 
+    def test_revision_identity_is_position_independent_while_edition_order_is_protected(self) -> None:
+        proposal_ref = initial_revision().lineage.proposal_inputs[0]
+        first = SegmentRevision.create(
+            segment_id=SegmentId(uid(172)),
+            segment_revision_id=SegmentRevisionId(uid(173)),
+            source_span=SourceSpan(SOURCE, 0, 5_000),
+            text=TranscriptText("first"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.proposal_derived((proposal_ref,)),
+        )
+        second = SegmentRevision.create(
+            segment_id=SegmentId(uid(174)),
+            segment_revision_id=SegmentRevisionId(uid(175)),
+            source_span=SourceSpan(SOURCE, 5_000, 10_000),
+            text=TranscriptText("second"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.proposal_derived((proposal_ref,)),
+        )
+        forward_manifest = EditionChangeManifest(
+            (
+                EditionChange.initial_proposal(
+                    proposal_inputs=(proposal_ref,),
+                    output_revisions=(first.ref, second.ref),
+                ),
+            ),
+            (),
+        )
+        reverse_manifest = EditionChangeManifest(
+            (
+                EditionChange.initial_proposal(
+                    proposal_inputs=(proposal_ref,),
+                    output_revisions=(second.ref, first.ref),
+                ),
+            ),
+            (),
+        )
+
+        forward = seal_initial(revisions=(first, second), change_manifest=forward_manifest)
+        reverse = seal_initial(revisions=(second, first), change_manifest=reverse_manifest)
+
+        self.assertEqual(reverse.revisions[1].ref, first.ref)
+        self.assertEqual(reverse.revisions[0].ref, second.ref)
+        self.assertNotEqual(forward.semantic_digest, reverse.semantic_digest)
+
+    def test_multi_source_membership_requires_canonical_identity_order(self) -> None:
+        second_source = SourceVersionRef(
+            SourceVersionId(uid(176)),
+            SourceRecordingId(uid(177)),
+            ContentDigest("sha256", "6" * 64),
+            10_000,
+            "microseconds",
+        )
+        first_revision = SegmentRevision.create(
+            segment_id=SegmentId(uid(178)),
+            segment_revision_id=SegmentRevisionId(uid(179)),
+            source_span=SourceSpan(SOURCE, 0, 10_000),
+            text=TranscriptText("first source"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.manual_initial(),
+        )
+        second_revision = SegmentRevision.create(
+            segment_id=SegmentId(uid(180)),
+            segment_revision_id=SegmentRevisionId(uid(181)),
+            source_span=SourceSpan(second_source, 0, 10_000),
+            text=TranscriptText("second source appears first in transcript order"),
+            language="en",
+            speaker=None,
+            uncertainty_marks=(),
+            lineage=RevisionLineage.manual_initial(),
+        )
+        revisions = (second_revision, first_revision)
+        manifest = EditionChangeManifest(
+            (
+                EditionChange.initial_manual(
+                    output_revisions=tuple(revision.ref for revision in revisions),
+                    actor_id=ActorId(uid(182)),
+                    reason="Manual multi-source transcript",
+                ),
+            ),
+            (),
+        )
+        canonical_sources = (SOURCE, second_source)
+        canonical_scope = TranscriptScope(
+            canonical_sources,
+            (
+                SourceSpan(SOURCE, 0, 10_000),
+                SourceSpan(second_source, 0, 10_000),
+            ),
+            (),
+        )
+
+        first = seal_initial(
+            source_versions=canonical_sources,
+            transcript_scope=canonical_scope,
+            proposal_set_refs=(),
+            revisions=revisions,
+            change_manifest=manifest,
+        )
+        same_semantics = seal_initial(
+            transcript_edition_id=TranscriptEditionId(uid(183)),
+            source_versions=canonical_sources,
+            transcript_scope=canonical_scope,
+            proposal_set_refs=(),
+            revisions=revisions,
+            change_manifest=manifest,
+            created_at_us=900,
+            event_id=DomainEventId(uid(184)),
+            event_occurred_at_us=901,
+        )
+
+        self.assertEqual(first.semantic_digest, same_semantics.semantic_digest)
+        self.assertEqual(first.revisions[0].source_span.source_version, second_source)
+        reversed_sources = (second_source, SOURCE)
+        reversed_scope = TranscriptScope(
+            reversed_sources,
+            (
+                SourceSpan(second_source, 0, 10_000),
+                SourceSpan(SOURCE, 0, 10_000),
+            ),
+            (),
+        )
+        with self.assertRaises(ValidationError):
+            seal_initial(
+                source_versions=reversed_sources,
+                transcript_scope=reversed_scope,
+                proposal_set_refs=(),
+                revisions=revisions,
+                change_manifest=manifest,
+            )
+        with self.assertRaises(ValidationError):
+            replace(
+                ParentEditionManifest.from_edition(first, ()),
+                source_versions=reversed_sources,
+                transcript_scope=reversed_scope,
+            )
+
     def test_reconstitution_verifies_edition_and_revision_digests_without_events(self) -> None:
         created = seal_initial()
         values = initial_values()
@@ -403,7 +621,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
     def test_segment_revision_reconstitution_verifies_its_semantic_digest(self) -> None:
         created = initial_revision()
         values = dict(
-            ordinal=created.ordinal,
             segment_id=created.segment_id,
             segment_revision_id=created.segment_revision_id,
             source_span=created.source_span,
@@ -429,7 +646,6 @@ class InitialTranscriptEditionTests(unittest.TestCase):
         revision = initial_revision()
         with self.assertRaises(ValidationError):
             SegmentRevision.create(
-                ordinal=revision.ordinal,
                 segment_id=revision.segment_id,
                 segment_revision_id=revision.segment_revision_id,
                 source_span=revision.source_span,

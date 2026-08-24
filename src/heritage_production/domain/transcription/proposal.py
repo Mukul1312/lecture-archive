@@ -73,10 +73,36 @@ class ConfidenceEvidence:
 
 @dataclass(frozen=True, slots=True)
 class RawRowLocator:
-    value: str
+    stable_locator: str
+    observed_absolute_path: str | None = None
 
     def __post_init__(self) -> None:
-        require_canonical_text(self.value, field="raw row locator", nonempty=True)
+        require_canonical_text(
+            self.stable_locator,
+            field="stable raw row locator",
+            nonempty=True,
+        )
+        if self.observed_absolute_path is not None:
+            require_canonical_text(
+                self.observed_absolute_path,
+                field="observed absolute raw path",
+                nonempty=True,
+            )
+            path = self.observed_absolute_path
+            windows_drive = (
+                len(path) >= 3
+                and path[0].isalpha()
+                and path[1] == ":"
+                and path[2] in ("/", "\\")
+            )
+            if not (
+                path.startswith("/")
+                or path.startswith("\\\\")
+                or windows_drive
+            ):
+                raise ValidationError(
+                    "observed raw path must be lexically absolute"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +212,7 @@ def _item_value(value: ProposalItem) -> dict[str, object]:
             {"name": evidence.name, "value": evidence.value}
             for evidence in value.confidence_evidence
         ],
-        "raw_row_locator": value.raw_row_locator.value,
+        "raw_row_locator": value.raw_row_locator.stable_locator,
     }
 
 

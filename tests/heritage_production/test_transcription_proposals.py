@@ -194,6 +194,38 @@ class ASRProposalSetCreationTests(unittest.TestCase):
         self.assertEqual(baseline.semantic_digest, identity_only.semantic_digest)
         self.assertNotEqual(baseline.semantic_digest, different_bytes.semantic_digest)
 
+    def test_raw_row_locator_separates_stable_member_from_observed_absolute_path(self) -> None:
+        baseline_locator = RawRowLocator(
+            "segments.jsonl#row=1",
+            r"C:\imports\first\segments.jsonl",
+        )
+        relocated_locator = RawRowLocator(
+            "segments.jsonl#row=1",
+            "/mnt/archive/second/segments.jsonl",
+        )
+        changed_row_locator = RawRowLocator(
+            "segments.jsonl#row=2",
+            r"C:\imports\first\segments.jsonl",
+        )
+        baseline = complete_proposal_set(
+            items=(replace(proposal_item(), raw_row_locator=baseline_locator),)
+        )
+        relocated = complete_proposal_set(
+            items=(replace(proposal_item(), raw_row_locator=relocated_locator),)
+        )
+        changed_row = complete_proposal_set(
+            items=(replace(proposal_item(), raw_row_locator=changed_row_locator),)
+        )
+
+        self.assertEqual(baseline.semantic_digest, relocated.semantic_digest)
+        self.assertNotEqual(baseline.semantic_digest, changed_row.semantic_digest)
+        self.assertEqual(
+            baseline.items[0].raw_row_locator.observed_absolute_path,
+            r"C:\imports\first\segments.jsonl",
+        )
+        with self.assertRaises(ValidationError):
+            RawRowLocator("segments.jsonl#row=1", "relative/segments.jsonl")
+
     def test_reconstitution_verifies_digest_emits_nothing_and_keeps_values_frozen(self) -> None:
         created = complete_proposal_set()
         values = proposal_values()
