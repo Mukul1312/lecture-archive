@@ -26,8 +26,7 @@ class SourceVersionRef:
         if type(self.artifact_digest) is not ContentDigest:
             raise ValidationError("artifact_digest must be a ContentDigest")
         if (
-            isinstance(self.duration_us, bool)
-            or not isinstance(self.duration_us, int)
+            type(self.duration_us) is not int
             or self.duration_us <= 0
         ):
             raise ValidationError("duration_us must be a positive integer")
@@ -48,10 +47,8 @@ class SourceSpan:
         if type(self.source_version) is not SourceVersionRef:
             raise ValidationError("source_version must be an exact SourceVersionRef")
         if (
-            isinstance(self.start_us, bool)
-            or not isinstance(self.start_us, int)
-            or isinstance(self.end_us, bool)
-            or not isinstance(self.end_us, int)
+            type(self.start_us) is not int
+            or type(self.end_us) is not int
         ):
             raise ValidationError("source span boundaries must be integers")
         if self.start_us < 0 or self.end_us <= self.start_us:
@@ -72,29 +69,34 @@ class TranscriptScope:
             ("required_spans", self.required_spans, SourceSpan),
             ("excluded_gap_spans", self.excluded_gap_spans, SourceSpan),
         ):
-            if not isinstance(values, tuple) or not all(
+            if type(values) is not tuple or not all(
                 type(value) is expected_type for value in values
             ):
                 raise ValidationError(f"{field_name} must be a tuple of {expected_type.__name__}")
 
-        if len(set(self.source_versions)) != len(self.source_versions):
-            raise ValidationError("declared source versions must be unique")
-        source_order = {source: index for index, source in enumerate(self.source_versions)}
-        self._validate_spans(self.required_spans, source_order, "required_spans")
-        self._validate_spans(self.excluded_gap_spans, source_order, "excluded_gap_spans")
+        declared_sources: dict[SourceVersionId, tuple[int, SourceVersionRef]] = {}
+        for index, source_version in enumerate(self.source_versions):
+            if source_version.source_version_id in declared_sources:
+                raise ValidationError("declared source-version identities must be unique")
+            declared_sources[source_version.source_version_id] = (index, source_version)
+        self._validate_spans(self.required_spans, declared_sources, "required_spans")
+        self._validate_spans(self.excluded_gap_spans, declared_sources, "excluded_gap_spans")
 
     @staticmethod
     def _validate_spans(
         spans: tuple[SourceSpan, ...],
-        source_order: dict[SourceVersionRef, int],
+        declared_sources: dict[SourceVersionId, tuple[int, SourceVersionRef]],
         field_name: str,
     ) -> None:
         previous_key: tuple[int, int, int] | None = None
         previous_span: SourceSpan | None = None
         for span in spans:
-            if span.source_version not in source_order:
-                raise ValidationError(f"{field_name} contains an undeclared source version")
-            key = (source_order[span.source_version], span.start_us, span.end_us)
+            declaration = declared_sources.get(span.source_version.source_version_id)
+            if declaration is None or declaration[1] != span.source_version:
+                raise ValidationError(
+                    f"{field_name} contains an undeclared or conflicting source version"
+                )
+            key = (declaration[0], span.start_us, span.end_us)
             if previous_key is not None and key < previous_key:
                 raise ValidationError(f"{field_name} must be in canonical source/time order")
             if (

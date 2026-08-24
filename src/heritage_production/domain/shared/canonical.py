@@ -38,7 +38,7 @@ def _object_from_pairs(pairs: list[tuple[str, JsonValue]]) -> dict[str, JsonValu
 
 
 def parse_strict_json(raw: bytes) -> JsonValue:
-    if not isinstance(raw, bytes):
+    if type(raw) is not bytes:
         raise ValidationError("strict JSON input must be bytes")
     if raw.startswith(b"\xef\xbb\xbf"):
         raise ValidationError("UTF-8 BOM is not permitted")

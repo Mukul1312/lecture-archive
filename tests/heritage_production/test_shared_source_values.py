@@ -126,3 +126,33 @@ class TranscriptScopeTests(unittest.TestCase):
             TranscriptScope([version], (), ())  # type: ignore[arg-type]
         with self.assertRaises(ValidationError):
             TranscriptScope((version, version), (), ())
+
+    def test_scope_rejects_duplicate_source_identity_with_conflicting_metadata(self) -> None:
+        declared = source_version(SOURCE_VERSION_ID_1, duration_us=10)
+        conflicting = SourceVersionRef(
+            SOURCE_VERSION_ID_1,
+            SOURCE_RECORDING_ID,
+            ContentDigest("sha256", "2" * 64),
+            12,
+            "different-time-base",
+        )
+
+        with self.assertRaises(ValidationError):
+            TranscriptScope((declared, conflicting), (), ())
+
+    def test_scope_rejects_span_ref_that_conflicts_with_the_declared_identity(self) -> None:
+        declared = source_version(SOURCE_VERSION_ID_1, duration_us=10)
+        conflicting = SourceVersionRef(
+            SOURCE_VERSION_ID_1,
+            SOURCE_RECORDING_ID,
+            ContentDigest("sha256", "2" * 64),
+            12,
+            "different-time-base",
+        )
+
+        with self.assertRaises(ValidationError):
+            TranscriptScope(
+                (declared,),
+                (SourceSpan(conflicting, 0, 1),),
+                (),
+            )

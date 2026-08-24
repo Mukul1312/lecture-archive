@@ -8,7 +8,7 @@ from .errors import ValidationError
 
 
 def require_canonical_text(value: object, *, field: str, nonempty: bool = False) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise ValidationError(f"{field} must be a string")
     if nonempty and not value:
         raise ValidationError(f"{field} must not be empty")

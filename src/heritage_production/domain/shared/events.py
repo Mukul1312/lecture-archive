@@ -24,11 +24,10 @@ class DomainEvent:
         event_type: str,
         payload: JsonValue,
     ) -> None:
-        if not isinstance(event_id, DomainEventId):
+        if type(event_id) is not DomainEventId:
             raise ValidationError("event_id must be a DomainEventId")
         if (
-            isinstance(occurred_at_us, bool)
-            or not isinstance(occurred_at_us, int)
+            type(occurred_at_us) is not int
             or occurred_at_us <= 0
         ):
             raise ValidationError("occurred_at_us must be a positive integer")
@@ -57,7 +56,7 @@ class AggregateEventRecorder:
         self._pending_events: list[DomainEvent] = []
 
     def _record_event(self, event: DomainEvent) -> None:
-        if not isinstance(event, DomainEvent):
+        if type(event) is not DomainEvent:
             raise ValidationError("only DomainEvent values can be recorded")
         self._pending_events.append(event)
 

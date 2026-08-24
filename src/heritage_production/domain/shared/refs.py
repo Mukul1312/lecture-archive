@@ -66,8 +66,7 @@ class RubricRef:
     def __post_init__(self) -> None:
         _require_type(self.rubric_id, RubricId, "rubric_id")
         if (
-            isinstance(self.schema_version, bool)
-            or not isinstance(self.schema_version, int)
+            type(self.schema_version) is not int
             or self.schema_version <= 0
         ):
             raise ValidationError("schema_version must be a positive integer")

@@ -18,7 +18,7 @@ class _OpaqueId:
     value: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, str) or _UUID4.fullmatch(self.value) is None:
+        if type(self.value) is not str or _UUID4.fullmatch(self.value) is None:
             raise ValidationError(
                 f"{type(self).__name__} must be exact lowercase RFC 4122 UUIDv4 text"
             )

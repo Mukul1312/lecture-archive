@@ -24,10 +24,8 @@ class TranscriptText:
 
     def slice(self, start: int, end: int) -> TranscriptText:
         if (
-            isinstance(start, bool)
-            or not isinstance(start, int)
-            or isinstance(end, bool)
-            or not isinstance(end, int)
+            type(start) is not int
+            or type(end) is not int
         ):
             raise ValidationError("text slice coordinates must be integers")
         if start < 0 or end < start or end > len(self.value):

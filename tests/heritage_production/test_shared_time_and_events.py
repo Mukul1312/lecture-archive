@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from decimal import Decimal
+from decimal import Decimal, localcontext
 import unittest
 
 from heritage_production.domain.shared import (
@@ -18,6 +18,40 @@ EVENT_ID_2 = DomainEventId("123e4567-e89b-42d3-a456-426614174002")
 
 
 class DecimalTimeTests(unittest.TestCase):
+    def test_conversion_is_independent_of_low_ambient_precision(self) -> None:
+        with localcontext() as context:
+            context.prec = 3
+            result = decimal_seconds_to_microseconds(Decimal("1.234567"))
+
+        self.assertEqual(result.microseconds, 1_234_567)
+        self.assertFalse(result.rounded)
+
+    def test_large_coefficients_and_exponents_convert_without_context_rounding(self) -> None:
+        cases = (
+            (
+                "123456789012345678901234567890.1234567",
+                123456789012345678901234567890123457,
+                True,
+            ),
+            ("1E+30", 10**36, False),
+            ("1E-30", 0, True),
+        )
+        for token, expected, rounded in cases:
+            with self.subTest(token=token):
+                result = decimal_seconds_to_microseconds(token)
+                self.assertEqual(result.microseconds, expected)
+                self.assertEqual(result.rounded, rounded)
+
+    def test_conversion_does_not_signal_when_all_decimal_traps_are_enabled(self) -> None:
+        with localcontext() as context:
+            context.prec = 2
+            for signal in context.traps:
+                context.traps[signal] = True
+            result = decimal_seconds_to_microseconds(Decimal("1.2345675"))
+
+        self.assertEqual(result.microseconds, 1_234_568)
+        self.assertTrue(result.rounded)
+
     def test_exact_conversion_retains_original_evidence(self) -> None:
         decimal_result = decimal_seconds_to_microseconds(Decimal("1.234567"))
         self.assertEqual(decimal_result.microseconds, 1_234_567)
