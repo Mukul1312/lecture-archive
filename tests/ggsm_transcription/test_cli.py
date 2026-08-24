@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+from http.client import BadStatusLine, IncompleteRead
 from io import BytesIO, StringIO
 import json
 from pathlib import Path
@@ -66,6 +67,24 @@ class FakeHttpResponse(BytesIO):
     def __init__(self, payload: bytes, resolved_url: str) -> None:
         super().__init__(payload)
         self._resolved_url = resolved_url
+
+    def geturl(self) -> str:
+        return self._resolved_url
+
+
+class FailingHttpResponse:
+    def __init__(self, error: Exception, resolved_url: str) -> None:
+        self._error = error
+        self._resolved_url = resolved_url
+
+    def __enter__(self) -> "FailingHttpResponse":
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        return None
+
+    def read(self, _size: int = -1) -> bytes:
+        raise self._error
 
     def geturl(self) -> str:
         return self._resolved_url
@@ -334,6 +353,44 @@ class CliExternalFailureContractTests(unittest.TestCase):
         adapter = HttpsFfprobeSourceAdapter(http_open=offline)
 
         with self.assertRaisesRegex(JobValidationError, "HTTPS source download failed"):
+            adapter.download("https://archive.example/lecture.mp3", Path(self.tmp.name) / "source.part")
+
+    def test_cli_normalizes_http_protocol_read_failures_without_artifacts(self) -> None:
+        failures = [
+            ("incomplete", IncompleteRead(b"partial", 9)),
+            ("bad-status", BadStatusLine("malformed status line")),
+        ]
+        for label, failure in failures:
+            with self.subTest(failure=label):
+                store = JobStore(Path(self.tmp.name) / label / "data" / "transcribe")
+                adapter = HttpsFfprobeSourceAdapter(
+                    http_open=lambda _request, error=failure: FailingHttpResponse(
+                        error,
+                        "https://archive.example/final/lecture.mp3",
+                    ),
+                )
+
+                code, stdout, stderr = self._run(
+                    ["intake", "--url", "https://archive.example/lecture.mp3"],
+                    lambda _data_root: cli.WorkflowCommands(store, source_adapter_factory=lambda: adapter),
+                )
+
+                self.assertEqual(code, 1)
+                self.assertEqual(stdout, "")
+                self.assertIn("HTTPS source download failed", stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(store.list_jobs(), [])
+                self.assertEqual(list(store.incoming_root.iterdir()), [])
+
+    def test_https_adapter_does_not_hide_a_reader_type_error(self) -> None:
+        adapter = HttpsFfprobeSourceAdapter(
+            http_open=lambda _request: FailingHttpResponse(
+                TypeError("unexpected response adapter contract"),
+                "https://archive.example/final/lecture.mp3",
+            ),
+        )
+
+        with self.assertRaisesRegex(TypeError, "unexpected response adapter contract"):
             adapter.download("https://archive.example/lecture.mp3", Path(self.tmp.name) / "source.part")
 
     def test_cli_normalizes_the_production_ffprobe_nonzero_boundary_without_creating_a_job(self) -> None:

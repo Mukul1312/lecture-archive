@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from http.client import HTTPException
 import hashlib
 import json
 from pathlib import Path
@@ -41,7 +42,7 @@ class HttpsFfprobeSourceAdapter:
                 shutil.copyfileobj(response, target)
                 resolved = response.geturl()
                 filename = Path(urlsplit(resolved).path).name or "source.bin"
-        except OSError as error:
+        except (OSError, HTTPException) as error:
             raise JobValidationError("HTTPS source download failed") from error
         return SourceDownload(resolved, filename, {"downloader": "urllib.request"})
 
