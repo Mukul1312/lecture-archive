@@ -56,7 +56,7 @@ skills-lock.json
 
 # Generated transcription jobs and source-download staging
 data/transcribe/jobs/
-data/transcribe/incoming/
+data/transcribe/.incoming/
 
 # local scratch (16k decodes, temp)
 _work/
