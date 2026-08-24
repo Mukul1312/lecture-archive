@@ -65,17 +65,13 @@ def fresh_evidence(production: Production, candidate, content, policy) -> Approv
         assessed_at_us=ASSESSED_AT,
     )
     return ApprovalEvidence(
+        snapshot=snapshot,
         assessment=assessment,
         assessment_ref=EligibilityAssessmentRef(
             assessment.eligibility_assessment_id,
             assessment.semantic_digest,
             artifact(300, "7"),
         ),
-        candidate=candidate,
-        content=content,
-        policy=policy,
-        gate_set=production.active_gate_set,
-        accepted_sign_offs=(),
     )
 
 

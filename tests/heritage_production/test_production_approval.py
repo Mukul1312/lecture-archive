@@ -25,6 +25,7 @@ from heritage_production.domain.shared import (
     InvariantError,
     OperationId,
     ProductionId,
+    ReleaseCandidateId,
     StaleReferenceError,
     TranscriptEditionId,
     ValidationError,
@@ -103,17 +104,13 @@ def approvable(
         assessed_at_us=ASSESSED_AT,
     )
     evidence = ApprovalEvidence(
+        snapshot=snapshot,
         assessment=assessment,
         assessment_ref=EligibilityAssessmentRef(
             assessment.eligibility_assessment_id,
             assessment.semantic_digest,
             artifact(300, "7"),
         ),
-        candidate=candidate,
-        content=content,
-        policy=policy,
-        gate_set=production.active_gate_set,
-        accepted_sign_offs=(),
     )
     return production, evidence, content
 
@@ -137,17 +134,13 @@ class ApprovalEvidenceTests(unittest.TestCase):
 
         with self.assertRaises(StaleReferenceError):
             ApprovalEvidence(
+                snapshot=evidence.snapshot,
                 assessment=evidence.assessment,
                 assessment_ref=EligibilityAssessmentRef(
                     evidence.assessment.eligibility_assessment_id,
                     digest("f"),
                     artifact(300, "7"),
                 ),
-                candidate=evidence.candidate,
-                content=evidence.content,
-                policy=evidence.policy,
-                gate_set=evidence.gate_set,
-                accepted_sign_offs=(),
             )
 
     def test_approval_requires_a_stored_assessment_artifact(self) -> None:
@@ -155,34 +148,36 @@ class ApprovalEvidenceTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             ApprovalEvidence(
+                snapshot=evidence.snapshot,
                 assessment=evidence.assessment,
                 assessment_ref=EligibilityAssessmentRef(
                     evidence.assessment.eligibility_assessment_id,
                     evidence.assessment.semantic_digest,
                     None,
                 ),
-                candidate=evidence.candidate,
-                content=evidence.content,
-                policy=evidence.policy,
-                gate_set=evidence.gate_set,
-                accepted_sign_offs=(),
             )
 
-    def test_assessment_must_evaluate_this_exact_candidate(self) -> None:
-        _, evidence, content = approvable()
+    def test_assessment_must_evaluate_this_exact_snapshot(self) -> None:
+        production, evidence, content = approvable()
         other_candidate = seal_candidate(
-            content, candidate_id=evidence.candidate.release_candidate_id.__class__(uid(54))
+            content, candidate_id=ReleaseCandidateId(uid(54))
+        )
+        other_snapshot = EligibilityInputSnapshot.seal(
+            production_id=production.production_id,
+            candidate=other_candidate,
+            content=content,
+            edition_evidence=edition_evidence(edition=content.edition_ref),
+            policy=evidence.policy,
+            gate_set=evidence.gate_set,
+            sign_offs=(),
+            integrity_results=(),
         )
 
         with self.assertRaises(StaleReferenceError):
             ApprovalEvidence(
+                snapshot=other_snapshot,
                 assessment=evidence.assessment,
                 assessment_ref=evidence.assessment_ref,
-                candidate=other_candidate,
-                content=content,
-                policy=evidence.policy,
-                gate_set=evidence.gate_set,
-                accepted_sign_offs=(),
             )
 
     def test_accepted_sign_offs_must_match_the_candidate_exactly(self) -> None:
@@ -195,15 +190,17 @@ class ApprovalEvidenceTests(unittest.TestCase):
 
         sign_off = ExternalSignOffTests().content_sign_off(content)
 
+        # The snapshot itself refuses a sign-off set the candidate never named.
         with self.assertRaises(StaleReferenceError):
-            ApprovalEvidence(
-                assessment=evidence.assessment,
-                assessment_ref=evidence.assessment_ref,
+            EligibilityInputSnapshot.seal(
+                production_id=production.production_id,
                 candidate=evidence.candidate,
                 content=content,
+                edition_evidence=edition_evidence(edition=content.edition_ref),
                 policy=evidence.policy,
                 gate_set=evidence.gate_set,
-                accepted_sign_offs=(sign_off,),
+                sign_offs=(sign_off,),
+                integrity_results=(),
             )
 
 
@@ -284,62 +281,22 @@ class ApprovalTests(unittest.TestCase):
         self.assertEqual(production.pull_events(), ())
 
     def test_an_ineligible_assessment_can_never_approve(self) -> None:
-        production, evidence, content = approvable()
-        snapshot = EligibilityInputSnapshot.seal(
-            production_id=production.production_id,
-            candidate=evidence.candidate,
-            content=content,
-            edition_evidence=edition_evidence(edition=content.edition_ref),
-            policy=evidence.policy,
-            gate_set=evidence.gate_set,
-            sign_offs=(),
-            integrity_results=(),
-        )
-        assessment = ReleaseEligibilityEvaluator(EVALUATOR).evaluate(
-            snapshot=snapshot,
-            eligibility_assessment_id=ASSESSMENT_ID,
-            assessed_at_us=ASSESSED_AT,
-        )
-        # Forge an ineligible result by flipping one gate to FAIL.
-        from heritage_production.domain.release import (
-            EligibilityAssessment,
-            GateOutcome,
-            GateResult,
+        # A genuinely failing policy: the required integrity check has no result.
+        from tests.heritage_production.test_task5_bypass_regressions import (
+            blocking_policy,
+            production_with,
+            real_assessment,
+            stored_ref,
         )
 
-        original = assessment.gate_results[0]
-        failed = GateResult(
-            original.gate_code,
-            original.gate_type,
-            GateOutcome.FAIL,
-            "forced-failure",
-            original.expected,
-            "forced failure for this test",
-            (),
-        )
-        ineligible = EligibilityAssessment.seal(
-            eligibility_assessment_id=assessment.eligibility_assessment_id,
-            assessed_at_us=assessment.assessed_at_us,
-            candidate_ref=assessment.candidate_ref,
-            policy_ref=assessment.policy_ref,
-            evaluator_ref=assessment.evaluator_ref,
-            input_digest=assessment.input_digest,
-            gate_results=(failed,),
-        )
-        self.assertFalse(ineligible.eligible)
+        production, snapshot = production_with(blocking_policy())
+        assessment = real_assessment(snapshot)
+        self.assertFalse(assessment.eligible)
 
         blocked = ApprovalEvidence(
-            assessment=ineligible,
-            assessment_ref=EligibilityAssessmentRef(
-                ineligible.eligibility_assessment_id,
-                ineligible.semantic_digest,
-                artifact(300, "7"),
-            ),
-            candidate=evidence.candidate,
-            content=content,
-            policy=evidence.policy,
-            gate_set=evidence.gate_set,
-            accepted_sign_offs=(),
+            snapshot=snapshot,
+            assessment=assessment,
+            assessment_ref=stored_ref(assessment),
         )
 
         with self.assertRaises(InvariantError):
@@ -350,10 +307,7 @@ class ApprovalTests(unittest.TestCase):
 
     def test_a_superseded_candidate_can_never_be_approved(self) -> None:
         production, evidence, content = approvable()
-        superseding = seal_candidate(
-            content,
-            candidate_id=evidence.candidate.release_candidate_id.__class__(uid(55)),
-        )
+        superseding = seal_candidate(content, candidate_id=ReleaseCandidateId(uid(55)))
         # Reselect a different edition, which clears the active candidate.
         production.select_candidate_edition(
             selection=selection_for(
@@ -439,17 +393,13 @@ class ApprovalTests(unittest.TestCase):
             assessed_at_us=ASSESSED_AT,
         )
         evidence = ApprovalEvidence(
+            snapshot=snapshot,
             assessment=assessment,
             assessment_ref=EligibilityAssessmentRef(
                 assessment.eligibility_assessment_id,
                 assessment.semantic_digest,
                 artifact(300, "7"),
             ),
-            candidate=candidate,
-            content=content,
-            policy=policy,
-            gate_set=production.active_gate_set,
-            accepted_sign_offs=(),
         )
 
         with self.assertRaises(InvariantError):
@@ -466,7 +416,7 @@ class ApprovalTests(unittest.TestCase):
             steward_actor_id=production.steward_actor_id,
             created_at_us=production.created_at_us,
             sources=production.sources,
-            selected_edition_ref=production.selected_edition_ref,
+            edition_selection=production.edition_selection,
             selected_policy_ref=production.selected_policy_ref,
             gate_sets=production.gate_sets,
             active_gate_set_ref=production.active_gate_set_ref,
@@ -490,7 +440,7 @@ class ApprovalTests(unittest.TestCase):
                 steward_actor_id=ActorId(uid(997)),
                 created_at_us=production.created_at_us,
                 sources=production.sources,
-                selected_edition_ref=production.selected_edition_ref,
+                edition_selection=production.edition_selection,
                 selected_policy_ref=production.selected_policy_ref,
                 gate_sets=production.gate_sets,
                 active_gate_set_ref=production.active_gate_set_ref,

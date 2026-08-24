@@ -12,9 +12,11 @@ from dataclasses import dataclass
 
 from heritage_production.domain.review import ClosedReviewEvidence
 from heritage_production.domain.shared import (
+    ArtifactId,
     ArtifactRef,
     ContentDigest,
     EditionRef,
+    ExternalGateSetId,
     ExternalGateSetRef,
     JsonValue,
     ManifestMemberRole,
@@ -24,7 +26,9 @@ from heritage_production.domain.shared import (
     ReleaseCandidateRef,
     ReleaseContentManifestId,
     ReleaseContentManifestRef,
+    ReleasePolicyVersionId,
     ReviewEvidenceRef,
+    TranscriptEditionId,
     ValidationError,
     semantic_digest,
 )
@@ -72,6 +76,24 @@ class ReleaseMember:
     def __post_init__(self) -> None:
         _require_exact(self.member_role, ManifestMemberRole, "member_role")
         _require_exact(self.artifact, ArtifactRef, "artifact")
+
+    def validated(self) -> "ReleaseMember":
+        """Reconstruct this member and its exact artifact."""
+        try:
+            return ReleaseMember(
+                ManifestMemberRole(self.member_role.value),
+                ArtifactRef(
+                    ArtifactId(self.artifact.artifact_id.value),
+                    ContentDigest(
+                        self.artifact.content_digest.algorithm,
+                        self.artifact.content_digest.hex_digest,
+                    ),
+                    self.artifact.byte_size,
+                    self.artifact.media_type,
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("release member is incomplete") from error
 
     def payload(self) -> dict[str, JsonValue]:
         return {
@@ -164,27 +186,36 @@ class ReleaseContentBinding:
             self.integrity_input_digests, field="integrity_input_digests"
         )
 
-        if self.review_evidence.evidence_ref != self.review_evidence_ref:
+        # The closed evidence recomputes its whole graph from its own stored
+        # target manifest and assignments, so a child forged behind a retained
+        # evidence_ref cannot survive this reconstruction.
+        checked_evidence = self.review_evidence.validated()
+        if checked_evidence != self.review_evidence:
+            raise ValidationError("closed review evidence failed reconstruction")
+        if checked_evidence.evidence_ref != self.review_evidence_ref:
             raise ValidationError(
                 "release content review-evidence ref is not its exact evidence snapshot"
             )
-        if self.review_evidence.edition_ref != self.edition_ref:
+        if checked_evidence.edition_ref != self.edition_ref:
             raise ValidationError(
                 "closed review evidence does not bind the selected edition"
             )
-        if self.review_evidence.target_manifest_ref.review_round_id != (
+        if checked_evidence.target_manifest_ref.review_round_id != (
             self.review_evidence_ref.review_round_id
         ):
             raise ValidationError("closed review evidence names a foreign review round")
-        # A closed round carries its Production only through finalized submissions.
-        # A zero-submission round makes no Production claim of its own, so the
-        # Production aggregate remains the authority for that binding.
-        if any(
-            summary.production_id != self.production_id
-            for summary in self.review_evidence.submission_summaries
-        ):
+        # The evidence names its own Production, so this holds for a round closed
+        # with zero submissions exactly as it does for a reviewed one.
+        if checked_evidence.production_id != self.production_id:
             raise ValidationError(
                 "closed review evidence was produced for a different Production"
+            )
+        if any(
+            summary.production_id != self.production_id
+            for summary in checked_evidence.submission_summaries
+        ):
+            raise ValidationError(
+                "a finalized submission names a different Production"
             )
 
         expected_digest = semantic_digest(
@@ -281,16 +312,71 @@ class ReleaseContentBinding:
         )
 
     def validated(self) -> ReleaseContentBinding:
+        """Reconstruct this binding and every reachable child value."""
+        manifest = self.content_manifest_ref
+        try:
+            manifest_ref = ReleaseContentManifestRef(
+                ReleaseContentManifestId(manifest.release_content_manifest_id.value),
+                ContentDigest(
+                    manifest.semantic_digest.algorithm,
+                    manifest.semantic_digest.hex_digest,
+                ),
+                ArtifactRef(
+                    ArtifactId(manifest.artifact.artifact_id.value),
+                    ContentDigest(
+                        manifest.artifact.content_digest.algorithm,
+                        manifest.artifact.content_digest.hex_digest,
+                    ),
+                    manifest.artifact.byte_size,
+                    manifest.artifact.media_type,
+                ),
+            )
+            edition_ref = EditionRef(
+                TranscriptEditionId(self.edition_ref.transcript_edition_id.value),
+                ContentDigest(
+                    self.edition_ref.content_digest.algorithm,
+                    self.edition_ref.content_digest.hex_digest,
+                ),
+            )
+            policy_ref = PolicyRef(
+                ReleasePolicyVersionId(
+                    self.policy_ref.release_policy_version_id.value
+                ),
+                ContentDigest(
+                    self.policy_ref.policy_digest.algorithm,
+                    self.policy_ref.policy_digest.hex_digest,
+                ),
+            )
+            gate_set_ref = ExternalGateSetRef(
+                ExternalGateSetId(
+                    self.external_gate_set_ref.external_gate_set_id.value
+                ),
+                ContentDigest(
+                    self.external_gate_set_ref.content_digest.algorithm,
+                    self.external_gate_set_ref.content_digest.hex_digest,
+                ),
+            )
+            digest_groups = tuple(
+                tuple(
+                    ContentDigest(item.algorithm, item.hex_digest) for item in group
+                )
+                for group in (
+                    self.provenance_input_digests,
+                    self.integrity_input_digests,
+                )
+            )
+        except AttributeError as error:
+            raise ValidationError("release content binding is incomplete") from error
         return type(self).reconstitute(
-            content_manifest_ref=self.content_manifest_ref,
-            production_id=self.production_id,
-            edition_ref=self.edition_ref,
+            content_manifest_ref=manifest_ref,
+            production_id=ProductionId(self.production_id.value),
+            edition_ref=edition_ref,
             review_evidence=self.review_evidence,
-            policy_ref=self.policy_ref,
-            external_gate_set_ref=self.external_gate_set_ref,
-            members=self.members,
-            provenance_input_digests=self.provenance_input_digests,
-            integrity_input_digests=self.integrity_input_digests,
+            policy_ref=policy_ref,
+            external_gate_set_ref=gate_set_ref,
+            members=tuple(value.validated() for value in self.members),
+            provenance_input_digests=digest_groups[0],
+            integrity_input_digests=digest_groups[1],
         )
 
     @property
@@ -418,13 +504,40 @@ class ReleaseCandidateSnapshot:
         )
 
     def validated(self) -> ReleaseCandidateSnapshot:
+        """Reconstruct this snapshot and every reachable child value."""
+        manifest = self.content_manifest_ref
+        try:
+            manifest_ref = ReleaseContentManifestRef(
+                ReleaseContentManifestId(manifest.release_content_manifest_id.value),
+                ContentDigest(
+                    manifest.semantic_digest.algorithm,
+                    manifest.semantic_digest.hex_digest,
+                ),
+                ArtifactRef(
+                    ArtifactId(manifest.artifact.artifact_id.value),
+                    ContentDigest(
+                        manifest.artifact.content_digest.algorithm,
+                        manifest.artifact.content_digest.hex_digest,
+                    ),
+                    manifest.artifact.byte_size,
+                    manifest.artifact.media_type,
+                ),
+            )
+            digests = tuple(
+                ContentDigest(value.algorithm, value.hex_digest)
+                for value in self.included_sign_off_digests
+            )
+        except AttributeError as error:
+            raise ValidationError("release candidate snapshot is incomplete") from error
         return type(self).reconstitute(
-            release_candidate_id=self.release_candidate_id,
-            production_id=self.production_id,
-            content_manifest_ref=self.content_manifest_ref,
-            included_sign_off_digests=self.included_sign_off_digests,
+            release_candidate_id=ReleaseCandidateId(self.release_candidate_id.value),
+            production_id=ProductionId(self.production_id.value),
+            content_manifest_ref=manifest_ref,
+            included_sign_off_digests=digests,
             assembled_at_us=self.assembled_at_us,
-            semantic_digest=self.semantic_digest,
+            semantic_digest=ContentDigest(
+                self.semantic_digest.algorithm, self.semantic_digest.hex_digest
+            ),
         )
 
     def bind(self, content: ReleaseContentBinding) -> ReleaseContentBinding:

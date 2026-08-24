@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from heritage_production.domain.production.gates import ExternalGateRequirement, ExternalGateSet
-from heritage_production.domain.production.signoffs import ExternalSignOff
 from heritage_production.domain.review import (
     ClosedReviewEvidence,
     FindingDecision,
@@ -19,6 +17,7 @@ from heritage_production.domain.review import (
     ReviewSignOff,
 )
 from heritage_production.domain.shared import (
+    ActorCredentialRef,
     ActorId,
     AssuranceLevel,
     ContentDigest,
@@ -35,6 +34,7 @@ from heritage_production.domain.shared import (
     SignOffDecision,
     SignOffTargetKind,
     StaleReferenceError,
+    TranscriptEditionId,
     ValidationError,
     assurance_satisfies,
     semantic_digest,
@@ -49,6 +49,8 @@ from .assessment import (
     GateType,
 )
 from .content import ReleaseCandidateSnapshot, ReleaseContentBinding
+from .gates import ExternalGateRequirement, ExternalGateSet, credential_key, revalidate_credential
+from .signoffs import ExternalSignOff
 from .policy import (
     BASIS_POINTS_MAX,
     IntegrityCheckCode,
@@ -93,6 +95,14 @@ class UncertaintyObservation:
             if type(value) is not int or value < 0:
                 raise ValidationError(f"{field_name} must be a nonnegative integer")
 
+    def validated(self) -> UncertaintyObservation:
+        return UncertaintyObservation(
+            self.kind,
+            self.mark_count,
+            self.source_duration_us,
+            self.character_count,
+        )
+
     def value_for(self, metric: UncertaintyLimitMetric) -> int:
         if metric is UncertaintyLimitMetric.MARK_COUNT:
             return self.mark_count
@@ -132,6 +142,14 @@ class TranscriptScopeAssessment:
                 "covered and uncovered spans must account for every required span"
             )
 
+    def validated(self) -> TranscriptScopeAssessment:
+        return TranscriptScopeAssessment(
+            self.required_span_count,
+            self.covered_span_count,
+            self.declared_gap_count,
+            self.uncovered_span_count,
+        )
+
     def payload(self) -> dict[str, JsonValue]:
         return {
             "required_span_count": self.required_span_count,
@@ -169,6 +187,25 @@ class SelectedEditionEvidence:
         if len(set(kinds)) != len(kinds):
             raise ValidationError("uncertainty observations must be unique by kind")
 
+    def validated(self) -> SelectedEditionEvidence:
+        """Reconstruct this evidence and every reachable child value."""
+        try:
+            edition_ref = EditionRef(
+                TranscriptEditionId(self.edition_ref.transcript_edition_id.value),
+                ContentDigest(
+                    self.edition_ref.content_digest.algorithm,
+                    self.edition_ref.content_digest.hex_digest,
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("selected-edition evidence is incomplete") from error
+        return SelectedEditionEvidence(
+            ProductionId(self.production_id.value),
+            edition_ref,
+            self.scope_assessment.validated(),
+            tuple(value.validated() for value in self.uncertainty_observations),
+        )
+
     def payload(self) -> dict[str, JsonValue]:
         return {
             "production_id": self.production_id.value,
@@ -195,6 +232,11 @@ class IntegrityCheckResult:
             raise ValidationError("passed must be a boolean")
         require_canonical_text(self.detail, field="detail", nonempty=True)
 
+    def validated(self) -> IntegrityCheckResult:
+        return IntegrityCheckResult(
+            IntegrityCheckCode(self.check_code.value), self.passed, self.detail
+        )
+
     def payload(self) -> dict[str, JsonValue]:
         return {
             "check_code": self.check_code.value,
@@ -214,7 +256,7 @@ class ResolvedSignOffRequirement:
     required_member_role: ManifestMemberRole | None
     minimum_assurance: AssuranceLevel
     required_count: int
-    pinned_actor_id: ActorId | None
+    pinned_credential: ActorCredentialRef | None
 
     def __post_init__(self) -> None:
         _require_exact(self.gate_code, GateCode, "gate_code")
@@ -226,19 +268,25 @@ class ResolvedSignOffRequirement:
             _require_exact(
                 self.required_member_role, ManifestMemberRole, "required_member_role"
             )
-        if self.pinned_actor_id is not None:
-            _require_exact(self.pinned_actor_id, ActorId, "pinned_actor_id")
+        if self.pinned_credential is not None:
+            _require_exact(
+                self.pinned_credential, ActorCredentialRef, "pinned_credential"
+            )
         if type(self.required_count) is not int or self.required_count <= 0:
             raise ValidationError("required_count must be a positive integer")
 
     @property
-    def semantic_key(self) -> tuple[str, str, str, str, str]:
+    def semantic_key(self) -> tuple[str, ...]:
         return (
             self.scope.value,
             self.role.value,
             self.target_kind.value,
             self.required_member_role.value if self.required_member_role else "",
-            self.pinned_actor_id.value if self.pinned_actor_id else "",
+            *(
+                credential_key(self.pinned_credential)
+                if self.pinned_credential is not None
+                else ("", "", "", "")
+            ),
         )
 
 
@@ -279,7 +327,7 @@ def resolve_sign_off_requirements(
             required_member_role=existing.required_member_role,
             minimum_assurance=stronger_assurance,
             required_count=max(existing.required_count, requirement.required_count),
-            pinned_actor_id=existing.pinned_actor_id,
+            pinned_credential=existing.pinned_credential,
         )
     return tuple(
         merged[key] for key in sorted(merged, key=lambda value: tuple(value))
@@ -366,13 +414,24 @@ class EligibilityInputSnapshot:
                 "integrity_results must be a tuple of IntegrityCheckResult"
             )
 
-        # Every reachable immutable child revalidates before it is trusted.
-        self.candidate.validated()
-        self.content.validated()
-        self.policy.validated()
-        self.gate_set.validated()
+        # Every reachable immutable child is reconstructed before it is trusted,
+        # so a value forged behind a retained digest cannot survive.
+        if self.candidate.validated() != self.candidate:
+            raise ValidationError("candidate snapshot failed reconstruction")
+        if self.content.validated() != self.content:
+            raise ValidationError("release content failed reconstruction")
+        if self.policy.validated() != self.policy:
+            raise ValidationError("release policy failed reconstruction")
+        if self.gate_set.validated() != self.gate_set:
+            raise ValidationError("gate set failed reconstruction")
+        if self.edition_evidence.validated() != self.edition_evidence:
+            raise ValidationError("selected-edition evidence failed reconstruction")
         for sign_off in self.sign_offs:
-            sign_off.validated()
+            if sign_off.validated() != sign_off:
+                raise ValidationError("an external sign-off failed reconstruction")
+        for result in self.integrity_results:
+            if result.validated() != result:
+                raise ValidationError("an integrity result failed reconstruction")
 
         check_codes = tuple(value.check_code.value for value in self.integrity_results)
         if check_codes != tuple(sorted(check_codes)):
@@ -501,8 +560,11 @@ class EligibilityInputSnapshot:
         )
 
     def validated(self) -> EligibilityInputSnapshot:
+        """Reconstruct the complete input graph through every child constructor."""
+        # Composite children are deep-validated by __post_init__, so they are
+        # passed through here rather than rebuilt a second time.
         return type(self).reconstitute(
-            production_id=self.production_id,
+            production_id=ProductionId(self.production_id.value),
             candidate=self.candidate,
             content=self.content,
             edition_evidence=self.edition_evidence,
@@ -510,7 +572,9 @@ class EligibilityInputSnapshot:
             gate_set=self.gate_set,
             sign_offs=self.sign_offs,
             integrity_results=self.integrity_results,
-            input_digest=self.input_digest,
+            input_digest=ContentDigest(
+                self.input_digest.algorithm, self.input_digest.hex_digest
+            ),
         )
 
     @property
@@ -539,7 +603,7 @@ def _requirement_from_policy(value: SignOffRequirement) -> ResolvedSignOffRequir
         required_member_role=value.required_member_role,
         minimum_assurance=value.minimum_assurance,
         required_count=value.required_count,
-        pinned_actor_id=None,
+        pinned_credential=None,
     )
 
 
@@ -552,7 +616,7 @@ def _requirement_from_gate(value: ExternalGateRequirement) -> ResolvedSignOffReq
         required_member_role=value.target_rule.required_member_role,
         minimum_assurance=value.minimum_assurance,
         required_count=1,
-        pinned_actor_id=value.actor_id,
+        pinned_credential=value.credential,
     )
 
 
@@ -837,8 +901,8 @@ class ReleaseEligibilityEvaluator:
                 value.assurance.assurance, requirement.minimum_assurance
             )
             and (
-                requirement.pinned_actor_id is None
-                or value.credential.actor_id == requirement.pinned_actor_id
+                requirement.pinned_credential is None
+                or value.credential == requirement.pinned_credential
             )
         )
 
@@ -874,8 +938,8 @@ class ReleaseEligibilityEvaluator:
             ):
                 continue
             if (
-                requirement.pinned_actor_id is not None
-                and value.credential.actor_id != requirement.pinned_actor_id
+                requirement.pinned_credential is not None
+                and value.credential != requirement.pinned_credential
             ):
                 continue
             matched.append(value)

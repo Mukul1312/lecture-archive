@@ -1,4 +1,4 @@
-"""Immutable external release sign-offs owned by Production.
+"""Immutable external release sign-offs recorded by Production.
 
 The non-circular chain mirrors Review: `heritage-signoff-intent-v1` hashes the
 proof-free intent, `heritage-signoff-context-v1` binds that intent to the actor,
@@ -15,11 +15,14 @@ from heritage_production.domain.shared import (
     ActorAssuranceKind,
     ActorCredentialRef,
     ActorId,
+    ArtifactId,
+    ArtifactRef,
     ContentDigest,
     GateCode,
     JsonValue,
     ManifestMemberRole,
     ProductionId,
+    ReleaseContentManifestId,
     ReleaseContentManifestRef,
     RoleCode,
     SignOffDecision,
@@ -28,7 +31,7 @@ from heritage_production.domain.shared import (
     semantic_digest,
 )
 
-from .gates import credential_value, digest_value
+from .gates import credential_value, digest_value, revalidate_credential
 
 
 EXTERNAL_SIGN_OFF_OPERATION = "external_sign_off"
@@ -84,6 +87,45 @@ class ExternalSignOffTarget:
                 digest_value(self.member_digest) if self.member_digest is not None else None
             ),
         }
+
+    def validated(self) -> ExternalSignOffTarget:
+        """Reconstruct this target and every reachable child value."""
+        manifest = self.content_manifest_ref
+        try:
+            rebuilt = ReleaseContentManifestRef(
+                ReleaseContentManifestId(manifest.release_content_manifest_id.value),
+                ContentDigest(
+                    manifest.semantic_digest.algorithm,
+                    manifest.semantic_digest.hex_digest,
+                ),
+                ArtifactRef(
+                    ArtifactId(manifest.artifact.artifact_id.value),
+                    ContentDigest(
+                        manifest.artifact.content_digest.algorithm,
+                        manifest.artifact.content_digest.hex_digest,
+                    ),
+                    manifest.artifact.byte_size,
+                    manifest.artifact.media_type,
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("sign-off target manifest is incomplete") from error
+        return ExternalSignOffTarget(
+            self.target_kind,
+            rebuilt,
+            (
+                ManifestMemberRole(self.member_role.value)
+                if self.member_role is not None
+                else None
+            ),
+            (
+                ContentDigest(
+                    self.member_digest.algorithm, self.member_digest.hex_digest
+                )
+                if self.member_digest is not None
+                else None
+            ),
+        )
 
     @property
     def target_identity(self) -> str:
@@ -370,16 +412,21 @@ class ExternalSignOff:
         )
 
     def validated(self) -> ExternalSignOff:
+        """Reconstruct this sign-off and every reachable child value."""
         return type(self).reconstitute(
-            production_id=self.production_id,
-            gate_code=self.gate_code,
-            credential=self.credential,
-            assurance=self.assurance,
-            role=self.role,
-            target=self.target,
+            production_id=ProductionId(self.production_id.value),
+            gate_code=GateCode(self.gate_code.value),
+            credential=revalidate_credential(
+                self.credential, field="sign-off credential"
+            ),
+            assurance=self.assurance.validated(),
+            role=RoleCode(self.role.value),
+            target=self.target.validated(),
             decision=self.decision,
             signed_at_us=self.signed_at_us,
-            sign_off_digest=self.sign_off_digest,
+            sign_off_digest=ContentDigest(
+                self.sign_off_digest.algorithm, self.sign_off_digest.hex_digest
+            ),
         )
 
     @property

@@ -12,7 +12,9 @@ from heritage_production.domain.release.content import (
     ReleaseCandidateSnapshot,
     ReleaseContentBinding,
 )
+from heritage_production.domain.release.gates import ExternalGateSet
 from heritage_production.domain.release.policy import ReleasePolicyVersion
+from heritage_production.domain.release.signoffs import ExternalSignOff
 from heritage_production.domain.shared import (
     ActorId,
     AggregateEventRecorder,
@@ -33,8 +35,6 @@ from heritage_production.domain.shared import (
 from heritage_production.domain.shared.text import require_canonical_text
 
 from .approval import ApprovalEvidence, ReleaseApproval
-from .gates import ExternalGateSet
-from .signoffs import ExternalSignOff
 from .sources import AttachedSource, EditionSelection
 
 
@@ -58,7 +58,7 @@ class Production(AggregateEventRecorder):
         "steward_actor_id",
         "created_at_us",
         "sources",
-        "selected_edition_ref",
+        "edition_selection",
         "selected_policy_ref",
         "gate_sets",
         "active_gate_set_ref",
@@ -116,7 +116,7 @@ class Production(AggregateEventRecorder):
             steward_actor_id=steward_actor_id,
             created_at_us=created_at_us,
             sources=(),
-            selected_edition_ref=None,
+            edition_selection=None,
             selected_policy_ref=None,
             gate_sets=(),
             active_gate_set_ref=None,
@@ -147,7 +147,7 @@ class Production(AggregateEventRecorder):
         steward_actor_id: ActorId,
         created_at_us: int,
         sources: tuple[AttachedSource, ...],
-        selected_edition_ref: EditionRef | None,
+        edition_selection: EditionSelection | None,
         selected_policy_ref: PolicyRef | None,
         gate_sets: tuple[ExternalGateSet, ...],
         active_gate_set_ref: ExternalGateSetRef | None,
@@ -177,7 +177,7 @@ class Production(AggregateEventRecorder):
                     f"{field_name} must be an immutable tuple of {expected.__name__}"
                 )
         for field_name, value, expected in (
-            ("selected_edition_ref", selected_edition_ref, EditionRef),
+            ("edition_selection", edition_selection, EditionSelection),
             ("selected_policy_ref", selected_policy_ref, PolicyRef),
             ("active_gate_set_ref", active_gate_set_ref, ExternalGateSetRef),
             ("active_candidate_ref", active_candidate_ref, ReleaseCandidateRef),
@@ -186,19 +186,45 @@ class Production(AggregateEventRecorder):
             if value is not None:
                 _require_exact(value, expected, field_name)
 
-        # Every reachable immutable child revalidates its own digests.
+        # Every reachable immutable child is reconstructed through its own
+        # constructor, so a value forged behind a retained digest is rejected.
+        for source in sources:
+            if source.validated() != source:
+                raise ValidationError("a stored source failed reconstruction")
         for gate_set in gate_sets:
-            gate_set.validated()
+            if gate_set.validated() != gate_set:
+                raise ValidationError("a stored gate set failed reconstruction")
             if gate_set.production_id != production_id:
                 raise ValidationError("a stored gate set names a different Production")
         for sign_off in external_sign_offs:
-            sign_off.validated()
+            if sign_off.validated() != sign_off:
+                raise ValidationError("a stored sign-off failed reconstruction")
             if sign_off.production_id != production_id:
                 raise ValidationError("a stored sign-off names a different Production")
         for candidate in candidates:
-            candidate.validated()
+            if candidate.validated() != candidate:
+                raise ValidationError("a stored candidate failed reconstruction")
             if candidate.production_id != production_id:
                 raise ValidationError("a stored candidate names a different Production")
+
+        attached_versions = {value.source_version_ref for value in sources}
+        selected_edition_ref = (
+            edition_selection.edition_ref if edition_selection is not None else None
+        )
+        if edition_selection is not None:
+            if edition_selection.validated() != edition_selection:
+                raise ValidationError("the stored edition selection failed reconstruction")
+            if edition_selection.production_id != production_id:
+                raise ValidationError(
+                    "the stored edition selection names a different Production"
+                )
+            if not all(
+                value in attached_versions
+                for value in edition_selection.source_version_refs
+            ):
+                raise ValidationError(
+                    "the stored edition selection uses an unattached source version"
+                )
 
         for label, keys in (
             ("source", tuple(value.identity for value in sources)),
@@ -229,7 +255,6 @@ class Production(AggregateEventRecorder):
         if active_gate_set_ref is None and gate_sets:
             raise ValidationError("stored gate sets require an active selection")
 
-        attached_versions = {value.source_version_ref for value in sources}
         for candidate in candidates:
             if candidate.included_sign_off_digests and not all(
                 digest in {value.sign_off_digest for value in external_sign_offs}
@@ -240,7 +265,8 @@ class Production(AggregateEventRecorder):
                 )
 
         if approval is not None:
-            approval.validated()
+            if approval.validated() != approval:
+                raise ValidationError("the stored approval failed reconstruction")
             if active_candidate_ref is None or approval.release_candidate_ref != (
                 active_candidate_ref
             ):
@@ -256,10 +282,15 @@ class Production(AggregateEventRecorder):
             ):
                 raise ValidationError("approval does not bind the active gate set")
 
-        if selected_edition_ref is None and active_candidate_ref is not None:
-            raise ValidationError("an active candidate requires a selected edition")
-        if attached_versions and selected_edition_ref is None and active_candidate_ref:
-            raise ValidationError("an active candidate requires a selected edition")
+        if active_candidate_ref is not None:
+            if edition_selection is None:
+                raise ValidationError("an active candidate requires a selected edition")
+            if selected_policy_ref is None:
+                raise ValidationError("an active candidate requires a selected policy")
+            if active_gate_set_ref is None:
+                raise ValidationError(
+                    "an active candidate requires an explicit active gate set"
+                )
 
         production = cls._build(
             production_id=production_id,
@@ -267,7 +298,7 @@ class Production(AggregateEventRecorder):
             steward_actor_id=steward_actor_id,
             created_at_us=created_at_us,
             sources=sources,
-            selected_edition_ref=selected_edition_ref,
+            edition_selection=edition_selection,
             selected_policy_ref=selected_policy_ref,
             gate_sets=gate_sets,
             active_gate_set_ref=active_gate_set_ref,
@@ -360,7 +391,7 @@ class Production(AggregateEventRecorder):
                     "this edition ID is already selected with a different digest"
                 )
 
-        self._write("selected_edition_ref", selection.edition_ref)
+        self._write("edition_selection", selection.validated())
         self._write("active_candidate_ref", None)
         self._record_event(
             DomainEvent(
@@ -661,6 +692,12 @@ class Production(AggregateEventRecorder):
             raise ValidationError("approved_at_us must be a positive integer")
         _require_event_inputs(event_id, event_occurred_at_us)
 
+        # Re-run the complete evidence check, including the pinned evaluator.
+        evidence = evidence.validated()
+        if evidence.snapshot.production_id != self.production_id:
+            raise StaleReferenceError(
+                "approval evidence was assembled for a different Production"
+            )
         if steward_actor_id != self.steward_actor_id:
             raise ValidationError("only this Production's steward can approve a release")
         if self.active_candidate_ref is None:
@@ -736,6 +773,13 @@ class Production(AggregateEventRecorder):
     # ------------------------------------------------------------------
     # Read-only projections
     # ------------------------------------------------------------------
+
+    @property
+    def selected_edition_ref(self) -> EditionRef | None:
+        """The exact selected edition, derived from its verified selection."""
+        if self.edition_selection is None:
+            return None
+        return self.edition_selection.edition_ref
 
     @property
     def active_gate_set(self) -> ExternalGateSet | None:

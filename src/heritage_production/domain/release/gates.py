@@ -1,8 +1,13 @@
-"""Production-owned external gate requirements and sealed gate sets.
+"""External gate requirements and sealed gate sets.
 
-This module depends only on the shared kernel so both the Production aggregate
-and the pure Release eligibility evaluator can consume it without creating a
-Production/Release import cycle.
+Release defines gate and eligibility concepts; Production owns the data and is
+the only aggregate that appends a gate set or records a sign-off against one.
+Keeping the definitions here makes the dependency spine strictly one-way
+(production -> release), so no Production/Release cycle can form.
+
+A requirement pins an exact `ActorCredentialRef`, never merely an `ActorId`: a
+second credential belonging to the same actor must never discharge a gate that
+pinned a specific verification key.
 """
 
 from __future__ import annotations
@@ -12,6 +17,8 @@ from dataclasses import dataclass
 from heritage_production.domain.shared import (
     ActorCredentialRef,
     ActorId,
+    ArtifactId,
+    ArtifactRef,
     AssuranceLevel,
     ContentDigest,
     ExternalGateSetId,
@@ -19,6 +26,7 @@ from heritage_production.domain.shared import (
     GateCode,
     GateScope,
     JsonValue,
+    ManifestMemberRole,
     ProductionId,
     RoleCode,
     SignOffTargetRule,
@@ -53,6 +61,55 @@ def credential_value(value: ActorCredentialRef) -> dict[str, JsonValue]:
             else None
         ),
     }
+
+
+def credential_key(value: ActorCredentialRef) -> tuple[str, str, str, str]:
+    """The exact identity of one pinned credential, not merely its actor."""
+    return (
+        value.actor_id.value,
+        value.verification_method.value,
+        value.assurance.value,
+        (
+            value.credential_fingerprint.hex_digest
+            if value.credential_fingerprint is not None
+            else ""
+        ),
+    )
+
+
+def revalidate_credential(value: object, *, field: str) -> ActorCredentialRef:
+    """Reconstruct a credential through its own constructor."""
+    if type(value) is not ActorCredentialRef:
+        raise ValidationError(f"{field} must be an exact ActorCredentialRef")
+    try:
+        return ActorCredentialRef(
+            ActorId(value.actor_id.value),
+            value.verification_method,
+            value.assurance,
+            (
+                ContentDigest(
+                    value.credential_fingerprint.algorithm,
+                    value.credential_fingerprint.hex_digest,
+                )
+                if value.credential_fingerprint is not None
+                else None
+            ),
+            (
+                ArtifactRef(
+                    ArtifactId(value.public_key_artifact.artifact_id.value),
+                    ContentDigest(
+                        value.public_key_artifact.content_digest.algorithm,
+                        value.public_key_artifact.content_digest.hex_digest,
+                    ),
+                    value.public_key_artifact.byte_size,
+                    value.public_key_artifact.media_type,
+                )
+                if value.public_key_artifact is not None
+                else None
+            ),
+        )
+    except AttributeError as error:
+        raise ValidationError(f"{field} is incomplete") from error
 
 
 def target_rule_value(value: SignOffTargetRule) -> dict[str, JsonValue]:
@@ -100,11 +157,11 @@ class ExternalGateRequirement:
         return self.credential.actor_id
 
     @property
-    def semantic_key(self) -> tuple[str, str, str, str, str]:
+    def semantic_key(self) -> tuple[str, ...]:
         return (
             self.scope.value,
             self.role.value,
-            self.actor_id.value,
+            *credential_key(self.credential),
             self.target_rule.target_kind.value,
             (
                 self.target_rule.required_member_role.value
@@ -122,7 +179,8 @@ class ExternalGateRequirement:
             return False
         if sign_off.decision is not SignOffDecision.APPROVED:
             return False
-        if sign_off.role != self.role or sign_off.credential.actor_id != self.actor_id:
+        # The pinned credential must match exactly; an actor may hold several.
+        if sign_off.role != self.role or sign_off.credential != self.credential:
             return False
         if sign_off.target.target_kind is not self.target_rule.target_kind:
             return False
@@ -132,6 +190,24 @@ class ExternalGateRequirement:
         ):
             return False
         return assurance_satisfies(sign_off.assurance.assurance, self.minimum_assurance)
+
+    def validated(self) -> ExternalGateRequirement:
+        """Reconstruct this requirement and every reachable child value."""
+        return ExternalGateRequirement(
+            GateCode(self.gate_code.value),
+            self.scope,
+            RoleCode(self.role.value),
+            revalidate_credential(self.credential, field="gate credential"),
+            self.minimum_assurance,
+            SignOffTargetRule(
+                self.target_rule.target_kind,
+                (
+                    ManifestMemberRole(self.target_rule.required_member_role.value)
+                    if self.target_rule.required_member_role is not None
+                    else None
+                ),
+            ),
+        )
 
     def payload(self) -> dict[str, JsonValue]:
         return {
@@ -246,13 +322,16 @@ class ExternalGateSet:
         )
 
     def validated(self) -> ExternalGateSet:
+        """Reconstruct this gate set and every reachable requirement."""
         return type(self).reconstitute(
-            external_gate_set_id=self.external_gate_set_id,
-            production_id=self.production_id,
-            requirements=self.requirements,
-            configured_by=self.configured_by,
+            external_gate_set_id=ExternalGateSetId(self.external_gate_set_id.value),
+            production_id=ProductionId(self.production_id.value),
+            requirements=tuple(value.validated() for value in self.requirements),
+            configured_by=ActorId(self.configured_by.value),
             configured_at_us=self.configured_at_us,
-            content_digest=self.content_digest,
+            content_digest=ContentDigest(
+                self.content_digest.algorithm, self.content_digest.hex_digest
+            ),
         )
 
     def requirements_for(self, scope: GateScope) -> tuple[ExternalGateRequirement, ...]:

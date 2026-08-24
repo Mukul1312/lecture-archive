@@ -1,9 +1,13 @@
 """Cross-module import direction for the Production and Release domains.
 
-Production stores Release-owned candidate/assessment values, while the pure
-evaluator reads Production-owned gates and sign-offs. The two packages must
-therefore import each other's submodules only, never each other's package API,
-and must import cleanly in either order.
+Release *defines* the gate, candidate, and eligibility concepts; Production
+*stores* them and is the only aggregate that mutates them. The dependency spine
+is therefore strictly one-way:
+
+    presentation -> production -> release -> (review, transcription) -> shared
+
+Release must not import Production at all -- not its package API and not its
+submodules -- so no semantic cycle can exist between the two modules.
 """
 
 from __future__ import annotations
@@ -60,26 +64,76 @@ class DomainImportBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
-    def test_cross_package_imports_name_submodules_never_the_package_api(self) -> None:
+    def test_release_never_imports_production_in_any_form(self) -> None:
+        """The spine is one-way: nothing under release may reach into production."""
         violations: list[str] = []
-        pairs = (
-            ("production", "heritage_production.domain.release"),
-            ("release", "heritage_production.domain.production"),
-        )
 
-        for package, foreign_package in pairs:
-            for source_file in (PACKAGE_ROOT / "domain" / package).rglob("*.py"):
-                for name in imported_module_names(source_file):
-                    if name == foreign_package:
-                        violations.append(
-                            f"{source_file.relative_to(PROJECT_ROOT)} -> {name}"
-                        )
+        for source_file in (PACKAGE_ROOT / "domain" / "release").rglob("*.py"):
+            for name in imported_module_names(source_file):
+                if name.startswith("heritage_production.domain.production"):
+                    violations.append(
+                        f"{source_file.relative_to(PROJECT_ROOT)} -> {name}"
+                    )
 
         self.assertEqual(
             violations,
             [],
-            "importing the foreign package API would create an import cycle",
+            "a release -> production import would reintroduce the module cycle",
         )
+
+    def test_production_imports_release_submodules_never_its_package_api(self) -> None:
+        violations: list[str] = []
+
+        for source_file in (PACKAGE_ROOT / "domain" / "production").rglob("*.py"):
+            for name in imported_module_names(source_file):
+                if name == "heritage_production.domain.release":
+                    violations.append(
+                        f"{source_file.relative_to(PROJECT_ROOT)} -> {name}"
+                    )
+
+        self.assertEqual(
+            violations,
+            [],
+            "production must name exact release submodules, not the package facade",
+        )
+
+    def test_no_import_cycle_exists_among_the_domain_modules(self) -> None:
+        """Walk the real intra-domain import graph and prove it is acyclic."""
+        graph: dict[str, set[str]] = {}
+        for source_file in (PACKAGE_ROOT / "domain").rglob("*.py"):
+            relative = source_file.relative_to(PACKAGE_ROOT).with_suffix("")
+            parts = relative.parts
+            module = "heritage_production.domain." + ".".join(
+                parts[1:-1] if parts[-1] == "__init__" else parts[1:]
+            )
+            module = module.rstrip(".")
+            targets = {
+                name
+                for name in imported_module_names(source_file)
+                if name.startswith("heritage_production.domain")
+            }
+            graph.setdefault(module, set()).update(targets - {module})
+
+        visiting: set[str] = set()
+        done: set[str] = set()
+        cycles: list[str] = []
+
+        def walk(node: str, trail: tuple[str, ...]) -> None:
+            if node in done:
+                return
+            if node in visiting:
+                cycles.append(" -> ".join((*trail, node)))
+                return
+            visiting.add(node)
+            for target in sorted(graph.get(node, ())):
+                walk(target, (*trail, node))
+            visiting.discard(node)
+            done.add(node)
+
+        for node in sorted(graph):
+            walk(node, ())
+
+        self.assertEqual(cycles, [])
 
     def test_both_domain_packages_import_cleanly_in_either_order(self) -> None:
         for first, second in (

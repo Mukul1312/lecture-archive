@@ -6,13 +6,16 @@ from dataclasses import dataclass
 
 from heritage_production.domain.shared import (
     ActorId,
+    ArtifactId,
     ArtifactRef,
+    ContentDigest,
     EditionRef,
     ProductionId,
     SourceRecordingId,
     SourceRecordingRef,
     SourceVersionId,
     SourceVersionRef,
+    TranscriptEditionId,
     ValidationError,
 )
 
@@ -53,6 +56,45 @@ class AttachedSource:
             raise ValidationError(
                 "attached artifact digest does not match its source version"
             )
+
+    def validated(self) -> "AttachedSource":
+        """Reconstruct this attachment and every reachable child value."""
+        version = self.source_version_ref
+        try:
+            rebuilt_version = SourceVersionRef(
+                SourceVersionId(version.source_version_id.value),
+                SourceRecordingId(version.source_recording_id.value),
+                ContentDigest(
+                    version.artifact_digest.algorithm,
+                    version.artifact_digest.hex_digest,
+                ),
+                version.duration_us,
+                version.time_base_evidence,
+            )
+            rebuilt_artifact = ArtifactRef(
+                ArtifactId(self.artifact.artifact_id.value),
+                ContentDigest(
+                    self.artifact.content_digest.algorithm,
+                    self.artifact.content_digest.hex_digest,
+                ),
+                self.artifact.byte_size,
+                self.artifact.media_type,
+            )
+            rebuilt_recording = SourceRecordingRef(
+                SourceRecordingId(
+                    self.source_recording_ref.source_recording_id.value
+                ),
+                self.source_recording_ref.descriptive_metadata,
+            )
+        except AttributeError as error:
+            raise ValidationError("attached source is incomplete") from error
+        return AttachedSource(
+            rebuilt_recording,
+            rebuilt_version,
+            rebuilt_artifact,
+            ActorId(self.attached_by.value),
+            self.attached_at_us,
+        )
 
     @property
     def source_recording_id(self) -> SourceRecordingId:
@@ -96,3 +138,34 @@ class EditionSelection:
             raise ValidationError("source version refs must be in canonical order")
         if len(set(keys)) != len(keys):
             raise ValidationError("source version refs must be unique")
+
+    def validated(self) -> "EditionSelection":
+        """Reconstruct this selection and every reachable child value."""
+        try:
+            return EditionSelection(
+                ProductionId(self.production_id.value),
+                EditionRef(
+                    TranscriptEditionId(
+                        self.edition_ref.transcript_edition_id.value
+                    ),
+                    ContentDigest(
+                        self.edition_ref.content_digest.algorithm,
+                        self.edition_ref.content_digest.hex_digest,
+                    ),
+                ),
+                tuple(
+                    SourceVersionRef(
+                        SourceVersionId(value.source_version_id.value),
+                        SourceRecordingId(value.source_recording_id.value),
+                        ContentDigest(
+                            value.artifact_digest.algorithm,
+                            value.artifact_digest.hex_digest,
+                        ),
+                        value.duration_us,
+                        value.time_base_evidence,
+                    )
+                    for value in self.source_version_refs
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("edition selection is incomplete") from error

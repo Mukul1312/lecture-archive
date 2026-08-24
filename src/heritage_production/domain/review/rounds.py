@@ -447,9 +447,20 @@ class ReviewCoverage:
 
 @dataclass(frozen=True, slots=True, init=False)
 class ClosedReviewEvidence:
+    """A frozen, self-identifying projection of one closed review round.
+
+    The evidence carries its own Production, target manifest, and reviewer
+    assignments so a downstream consumer can revalidate the complete graph with
+    `validated()` instead of trusting a retained `evidence_ref`. A round closed
+    with zero submissions still names its exact Production.
+    """
+
     evidence_ref: ReviewEvidenceRef
+    production_id: ProductionId
     edition_ref: EditionRef
     target_manifest_ref: ReviewTargetManifestRef
+    target_manifest: ReviewTargetManifest
+    reviewer_assignments: tuple[ReviewerAssignment, ...]
     coverage: ReviewCoverage
     submission_summaries: tuple[ReviewSubmissionSummary, ...]
     findings: tuple[object, ...]
@@ -495,8 +506,11 @@ class ClosedReviewEvidence:
         )
         return cls._build(
             ReviewEvidenceRef(target_manifest.review_round_id, evidence_digest),
+            target_manifest.production_id,
             target_manifest.edition_ref,
             target_manifest.ref,
+            target_manifest,
+            reviewer_assignments,
             coverage,
             submission_summaries,
             findings,
@@ -543,12 +557,34 @@ class ClosedReviewEvidence:
             raise ValidationError("review evidence ref does not match its semantic projection")
         return cls._build(
             evidence_ref,
+            target_manifest.production_id,
             edition_ref,
             target_manifest_ref,
+            target_manifest,
+            reviewer_assignments,
             coverage,
             submission_summaries,
             findings,
             sign_offs,
+        )
+
+    def validated(self) -> ClosedReviewEvidence:
+        """Recompute this evidence from its own stored graph.
+
+        Any child forged behind a retained `evidence_ref` -- stripped findings,
+        replaced coverage, a substituted submission -- fails the recomputed
+        `heritage-review-evidence-v1` digest here.
+        """
+        return type(self).reconstitute(
+            target_manifest=self.target_manifest,
+            reviewer_assignments=self.reviewer_assignments,
+            evidence_ref=self.evidence_ref,
+            edition_ref=self.edition_ref,
+            target_manifest_ref=self.target_manifest_ref,
+            coverage=self.coverage,
+            submission_summaries=self.submission_summaries,
+            findings=self.findings,
+            sign_offs=self.sign_offs,
         )
 
 

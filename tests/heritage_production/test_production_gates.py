@@ -16,6 +16,7 @@ from heritage_production.domain.production import (
 from heritage_production.domain.shared import (
     ActorAssuranceEvidence,
     ActorAssuranceKind,
+    ActorCredentialRef,
     AssuranceLevel,
     ContentDigest,
     ExternalGateSetId,
@@ -115,8 +116,9 @@ def verified_sign_off(
     decision: SignOffDecision = SignOffDecision.APPROVED,
     signed_at_us: int = 1_700_000_000_000_001,
     owner: ProductionId | None = None,
+    credential: ActorCredentialRef | None = None,
 ) -> ExternalSignOff:
-    credential = verified_credential(40, FINGERPRINT)
+    credential = credential or verified_credential(40, FINGERPRINT)
     bound_target = target or release_target()
     owning_production = owner or production_id()
     intent = external_signoff_intent_digest(
@@ -137,7 +139,11 @@ def verified_sign_off(
     assurance = ActorAssuranceEvidence.verified_signature(
         credential=credential,
         signed_context_digest=context,
-        proof=SignatureProof("ed25519", FINGERPRINT, artifact(60, "e", "application/octet-stream")),
+        proof=SignatureProof(
+            "ed25519",
+            credential.credential_fingerprint,
+            artifact(60, "e", "application/octet-stream"),
+        ),
     )
     return ExternalSignOff.seal(
         production_id=owning_production,

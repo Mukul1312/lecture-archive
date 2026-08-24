@@ -220,18 +220,15 @@ class ReleaseContentBindingTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             seal_content(owner=ProductionId(uid(555)))
 
-    def test_zero_submission_review_defers_production_binding_to_the_aggregate(
-        self,
-    ) -> None:
-        # A round closed with no finalized submission carries no Production claim,
-        # so this binding cannot detect a foreign owner on its own.
-        content = seal_content(
-            evidence=closed_review(with_submission=False),
-            owner=ProductionId(uid(555)),
-        )
+    def test_zero_submission_review_still_binds_its_exact_production(self) -> None:
+        # Closed evidence names its own Production, so a round closed with no
+        # finalized submission is checked exactly like a reviewed one.
+        evidence = closed_review(with_submission=False)
+        self.assertEqual(evidence.submission_summaries, ())
+        self.assertEqual(evidence.production_id, production_id())
 
-        self.assertEqual(content.production_id, ProductionId(uid(555)))
-        self.assertEqual(content.review_evidence.submission_summaries, ())
+        with self.assertRaises(ValidationError):
+            seal_content(evidence=evidence, owner=ProductionId(uid(555)))
 
     def test_members_must_be_canonical_and_unique_by_role(self) -> None:
         with self.assertRaises(ValidationError):

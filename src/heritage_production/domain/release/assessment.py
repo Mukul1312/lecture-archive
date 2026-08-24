@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from heritage_production.domain.shared import (
+    ArtifactId,
     ArtifactRef,
     ContentDigest,
     EligibilityAssessmentId,
@@ -16,7 +17,9 @@ from heritage_production.domain.shared import (
     JsonValue,
     PolicyEvaluatorRef,
     PolicyRef,
+    ReleaseCandidateId,
     ReleaseCandidateRef,
+    ReleasePolicyVersionId,
     ValidationError,
     semantic_digest,
 )
@@ -93,6 +96,25 @@ class GateResult:
         if keys != tuple(sorted(keys)) or len(set(keys)) != len(keys):
             raise ValidationError("gate evidence digests must be canonical and unique")
 
+    def validated(self) -> "GateResult":
+        """Reconstruct this result and every reachable child value."""
+        try:
+            digests = tuple(
+                ContentDigest(value.algorithm, value.hex_digest)
+                for value in self.evidence_digests
+            )
+        except AttributeError as error:
+            raise ValidationError("gate evidence digest is incomplete") from error
+        return GateResult(
+            GateCode(self.gate_code.value),
+            self.gate_type,
+            self.outcome,
+            self.reason_code,
+            self.expected,
+            self.actual,
+            digests,
+        )
+
     @property
     def passed(self) -> bool:
         return self.outcome is GateOutcome.PASS
@@ -128,6 +150,32 @@ class EligibilityAssessmentRef:
         _require_exact(self.semantic_digest, ContentDigest, "semantic_digest")
         if self.artifact is not None:
             _require_exact(self.artifact, ArtifactRef, "artifact")
+
+    def validated(self) -> "EligibilityAssessmentRef":
+        """Reconstruct this reference and its complete stored artifact."""
+        try:
+            artifact = (
+                ArtifactRef(
+                    ArtifactId(self.artifact.artifact_id.value),
+                    ContentDigest(
+                        self.artifact.content_digest.algorithm,
+                        self.artifact.content_digest.hex_digest,
+                    ),
+                    self.artifact.byte_size,
+                    self.artifact.media_type,
+                )
+                if self.artifact is not None
+                else None
+            )
+        except AttributeError as error:
+            raise ValidationError("assessment artifact is incomplete") from error
+        return EligibilityAssessmentRef(
+            EligibilityAssessmentId(self.eligibility_assessment_id.value),
+            ContentDigest(
+                self.semantic_digest.algorithm, self.semantic_digest.hex_digest
+            ),
+            artifact,
+        )
 
 
 def _assessment_payload(
@@ -255,16 +303,51 @@ class EligibilityAssessment:
         )
 
     def validated(self) -> EligibilityAssessment:
+        """Reconstruct this assessment and every reachable gate result."""
+        try:
+            candidate_ref = ReleaseCandidateRef(
+                ReleaseCandidateId(self.candidate_ref.release_candidate_id.value),
+                ContentDigest(
+                    self.candidate_ref.semantic_digest.algorithm,
+                    self.candidate_ref.semantic_digest.hex_digest,
+                ),
+            )
+            policy_ref = PolicyRef(
+                ReleasePolicyVersionId(
+                    self.policy_ref.release_policy_version_id.value
+                ),
+                ContentDigest(
+                    self.policy_ref.policy_digest.algorithm,
+                    self.policy_ref.policy_digest.hex_digest,
+                ),
+            )
+            evaluator_ref = PolicyEvaluatorRef(
+                self.evaluator_ref.evaluator_name,
+                self.evaluator_ref.semantic_version,
+                self.evaluator_ref.supported_policy_schema,
+                ContentDigest(
+                    self.evaluator_ref.implementation_build_digest.algorithm,
+                    self.evaluator_ref.implementation_build_digest.hex_digest,
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("eligibility assessment is incomplete") from error
         return type(self).reconstitute(
-            eligibility_assessment_id=self.eligibility_assessment_id,
+            eligibility_assessment_id=EligibilityAssessmentId(
+                self.eligibility_assessment_id.value
+            ),
             assessed_at_us=self.assessed_at_us,
-            candidate_ref=self.candidate_ref,
-            policy_ref=self.policy_ref,
-            evaluator_ref=self.evaluator_ref,
-            input_digest=self.input_digest,
-            gate_results=self.gate_results,
+            candidate_ref=candidate_ref,
+            policy_ref=policy_ref,
+            evaluator_ref=evaluator_ref,
+            input_digest=ContentDigest(
+                self.input_digest.algorithm, self.input_digest.hex_digest
+            ),
+            gate_results=tuple(value.validated() for value in self.gate_results),
             eligible=self.eligible,
-            semantic_digest=self.semantic_digest,
+            semantic_digest=ContentDigest(
+                self.semantic_digest.algorithm, self.semantic_digest.hex_digest
+            ),
         )
 
     @property

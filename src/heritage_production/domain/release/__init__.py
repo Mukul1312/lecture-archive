@@ -18,6 +18,14 @@ from .assessment import (
     GateResult,
     GateType,
 )
+from .gates import ExternalGateRequirement, ExternalGateSet
+from .signoffs import (
+    EXTERNAL_SIGN_OFF_OPERATION,
+    ExternalSignOff,
+    ExternalSignOffTarget,
+    external_signoff_context_digest,
+    external_signoff_intent_digest,
+)
 from .content import (
     ReleaseCandidateSnapshot,
     ReleaseContentBinding,
@@ -36,6 +44,13 @@ from .eligibility import (
 
 __all__ = [
     "BASIS_POINTS_MAX",
+    "EXTERNAL_SIGN_OFF_OPERATION",
+    "ExternalGateRequirement",
+    "ExternalGateSet",
+    "ExternalSignOff",
+    "ExternalSignOffTarget",
+    "external_signoff_context_digest",
+    "external_signoff_intent_digest",
     "BlockingFindingRule",
     "EligibilityAssessment",
     "EligibilityAssessmentRef",

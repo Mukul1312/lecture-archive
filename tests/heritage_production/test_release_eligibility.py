@@ -1035,7 +1035,7 @@ class RequirementResolutionTests(unittest.TestCase):
             required_member_role=None,
             minimum_assurance=AssuranceLevel.STEWARD_ATTESTED,
             required_count=1,
-            pinned_actor_id=None,
+            pinned_credential=None,
         )
         stronger = ResolvedSignOffRequirement(
             gate_code=GateCode("shared-key"),
@@ -1045,7 +1045,7 @@ class RequirementResolutionTests(unittest.TestCase):
             required_member_role=None,
             minimum_assurance=AssuranceLevel.VERIFIED_SIGNATURE,
             required_count=3,
-            pinned_actor_id=None,
+            pinned_credential=None,
         )
 
         for ordering in ((weaker, stronger), (stronger, weaker)):
@@ -1067,7 +1067,7 @@ class RequirementResolutionTests(unittest.TestCase):
             required_member_role=None,
             minimum_assurance=AssuranceLevel.STEWARD_ATTESTED,
             required_count=1,
-            pinned_actor_id=None,
+            pinned_credential=None,
         )
         second = ResolvedSignOffRequirement(
             gate_code=GateCode("b"),
@@ -1077,7 +1077,7 @@ class RequirementResolutionTests(unittest.TestCase):
             required_member_role=None,
             minimum_assurance=AssuranceLevel.STEWARD_ATTESTED,
             required_count=1,
-            pinned_actor_id=actor(40),
+            pinned_credential=verified_credential(40, digest("c")),
         )
 
         self.assertEqual(len(resolve_sign_off_requirements((first, second))), 2)

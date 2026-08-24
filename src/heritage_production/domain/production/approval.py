@@ -1,12 +1,13 @@
 """Fresh approval evidence and the terminal immutable release approval.
 
-The application reloads every exact root and immediately re-runs the pure
-evaluator before calling `Production.approve_candidate`. `ApprovalEvidence`
-carries that fresh result as one already-cross-checked value so a stale
-assessment cannot be mistaken for a current one.
+`ApprovalEvidence` carries the exact `EligibilityInputSnapshot` the assessment
+was produced from, and re-runs the pinned evaluator over that snapshot during
+construction. A fabricated, incomplete, stale, or mutated assessment therefore
+cannot reach `Production.approve_candidate`: only a result the evaluator itself
+re-derives from the supplied graph is accepted.
 
-Release submodules are imported directly rather than through the Release
-package so Production and Release never form an import cycle.
+Release defines candidate, gate, and eligibility concepts; Production stores
+them. The dependency is one-way (production -> release), so no cycle forms.
 """
 
 from __future__ import annotations
@@ -21,26 +22,37 @@ from heritage_production.domain.release.content import (
     ReleaseCandidateSnapshot,
     ReleaseContentBinding,
 )
+from heritage_production.domain.release.eligibility import (
+    EligibilityInputSnapshot,
+    ReleaseEligibilityEvaluator,
+)
+from heritage_production.domain.release.gates import ExternalGateSet, digest_value
 from heritage_production.domain.release.policy import ReleasePolicyVersion
+from heritage_production.domain.release.signoffs import ExternalSignOff
 from heritage_production.domain.shared import (
     ActorId,
+    ArtifactId,
+    ArtifactRef,
     ContentDigest,
     EditionRef,
+    ExternalGateSetId,
     ExternalGateSetRef,
     JsonValue,
     OperationId,
     PolicyEvaluatorRef,
     PolicyRef,
+    ReleaseCandidateId,
     ReleaseCandidateRef,
+    ReleaseContentManifestId,
     ReleaseContentManifestRef,
+    ReleasePolicyVersionId,
     ReviewEvidenceRef,
+    ReviewRoundId,
     StaleReferenceError,
+    TranscriptEditionId,
     ValidationError,
     semantic_digest,
 )
-
-from .gates import ExternalGateSet, digest_value
-from .signoffs import ExternalSignOff
 
 
 def _require_exact(value: object, expected: type[object], field: str) -> None:
@@ -50,85 +62,92 @@ def _require_exact(value: object, expected: type[object], field: str) -> None:
 
 @dataclass(frozen=True, slots=True)
 class ApprovalEvidence:
-    """One immutable, internally consistent approval input graph."""
+    """One immutable approval input graph, re-derived from the evaluator."""
 
+    snapshot: EligibilityInputSnapshot
     assessment: EligibilityAssessment
     assessment_ref: EligibilityAssessmentRef
-    candidate: ReleaseCandidateSnapshot
-    content: ReleaseContentBinding
-    policy: ReleasePolicyVersion
-    gate_set: ExternalGateSet
-    accepted_sign_offs: tuple[ExternalSignOff, ...]
 
     def __post_init__(self) -> None:
         for field_name, value, expected in (
+            ("snapshot", self.snapshot, EligibilityInputSnapshot),
             ("assessment", self.assessment, EligibilityAssessment),
             ("assessment_ref", self.assessment_ref, EligibilityAssessmentRef),
-            ("candidate", self.candidate, ReleaseCandidateSnapshot),
-            ("content", self.content, ReleaseContentBinding),
-            ("policy", self.policy, ReleasePolicyVersion),
-            ("gate_set", self.gate_set, ExternalGateSet),
         ):
             _require_exact(value, expected, field_name)
-        if type(self.accepted_sign_offs) is not tuple or not all(
-            type(value) is ExternalSignOff for value in self.accepted_sign_offs
-        ):
-            raise ValidationError(
-                "accepted_sign_offs must be an immutable tuple of ExternalSignOff"
-            )
 
-        # Every reachable immutable child revalidates before it is trusted.
+        # Reconstruct every reachable child before anything is trusted.
+        checked_snapshot = self.snapshot.validated()
+        if checked_snapshot != self.snapshot:
+            raise ValidationError("eligibility input snapshot failed reconstruction")
         checked_assessment = self.assessment.validated()
-        self.candidate.validated()
-        self.content.validated()
-        self.policy.validated()
-        self.gate_set.validated()
-        for sign_off in self.accepted_sign_offs:
-            sign_off.validated()
+        if checked_assessment != self.assessment:
+            raise ValidationError("eligibility assessment failed reconstruction")
+        checked_ref = self.assessment_ref.validated()
+        if checked_ref != self.assessment_ref:
+            raise ValidationError("assessment reference failed reconstruction")
 
+        if checked_ref.artifact is None:
+            raise ValidationError(
+                "approval requires a stored eligibility-assessment artifact"
+            )
         if (
-            self.assessment_ref.eligibility_assessment_id
+            checked_ref.eligibility_assessment_id
             != checked_assessment.eligibility_assessment_id
-            or self.assessment_ref.semantic_digest != checked_assessment.semantic_digest
+            or checked_ref.semantic_digest != checked_assessment.semantic_digest
         ):
             raise StaleReferenceError(
                 "assessment reference does not name this exact assessment"
             )
-        if self.assessment_ref.artifact is None:
-            raise ValidationError(
-                "approval requires a stored eligibility-assessment artifact"
+
+        # Re-derive the assessment from its own snapshot using the pinned
+        # evaluator. Equality covers the input digest, the complete ordered gate
+        # results, and the derived eligible flag, so a fabricated, incomplete,
+        # or mutated assessment cannot pass.
+        recomputed = ReleaseEligibilityEvaluator(
+            checked_snapshot.policy.evaluator_ref
+        ).evaluate(
+            snapshot=checked_snapshot,
+            eligibility_assessment_id=checked_assessment.eligibility_assessment_id,
+            assessed_at_us=checked_assessment.assessed_at_us,
+        )
+        if recomputed != checked_assessment:
+            raise StaleReferenceError(
+                "the supplied assessment is not what the pinned evaluator derives "
+                "from this exact input snapshot"
             )
 
-        self.candidate.bind(self.content)
-        if checked_assessment.candidate_ref != self.candidate.ref:
-            raise StaleReferenceError("assessment does not evaluate this exact candidate")
-        if checked_assessment.policy_ref != self.policy.ref:
-            raise StaleReferenceError("assessment does not evaluate this exact policy")
-        if checked_assessment.evaluator_ref != self.policy.evaluator_ref:
-            raise StaleReferenceError(
-                "assessment evaluator does not match the policy's pinned evaluator"
-            )
-        if self.content.policy_ref != self.policy.ref:
-            raise StaleReferenceError("release content does not bind this exact policy")
-        if self.content.external_gate_set_ref != self.gate_set.ref:
-            raise StaleReferenceError("release content does not bind this exact gate set")
-        if self.gate_set.production_id != self.candidate.production_id:
-            raise StaleReferenceError("gate set names a different Production")
-        if any(
-            value.production_id != self.candidate.production_id
-            for value in self.accepted_sign_offs
-        ):
-            raise StaleReferenceError("an accepted sign-off names a different Production")
+        object.__setattr__(self, "snapshot", checked_snapshot)
+        object.__setattr__(self, "assessment", checked_assessment)
+        object.__setattr__(self, "assessment_ref", checked_ref)
 
-        digests = tuple(value.sign_off_digest for value in self.accepted_sign_offs)
-        if tuple(sorted(value.hex_digest for value in digests)) != tuple(
-            value.hex_digest for value in digests
-        ):
-            raise ValidationError("accepted sign-offs must be in canonical digest order")
-        if digests != self.candidate.included_sign_off_digests:
-            raise StaleReferenceError(
-                "accepted sign-offs do not exactly match the candidate snapshot"
-            )
+    def validated(self) -> ApprovalEvidence:
+        """Re-run the complete construction check, including the evaluator."""
+        return type(self)(
+            snapshot=self.snapshot,
+            assessment=self.assessment,
+            assessment_ref=self.assessment_ref,
+        )
+
+    @property
+    def candidate(self) -> ReleaseCandidateSnapshot:
+        return self.snapshot.candidate
+
+    @property
+    def content(self) -> ReleaseContentBinding:
+        return self.snapshot.content
+
+    @property
+    def policy(self) -> ReleasePolicyVersion:
+        return self.snapshot.policy
+
+    @property
+    def gate_set(self) -> ExternalGateSet:
+        return self.snapshot.gate_set
+
+    @property
+    def accepted_sign_offs(self) -> tuple[ExternalSignOff, ...]:
+        return self.snapshot.sign_offs
 
     @property
     def eligible(self) -> bool:
@@ -137,6 +156,15 @@ class ApprovalEvidence:
     @property
     def accepted_sign_off_digests(self) -> tuple[ContentDigest, ...]:
         return tuple(value.sign_off_digest for value in self.accepted_sign_offs)
+
+
+def _artifact_value(value: ArtifactRef) -> dict[str, JsonValue]:
+    return {
+        "artifact_id": value.artifact_id.value,
+        "content_digest": digest_value(value.content_digest),
+        "byte_size": value.byte_size,
+        "media_type": value.media_type,
+    }
 
 
 def _approval_payload(
@@ -153,6 +181,10 @@ def _approval_payload(
     steward_actor_id: ActorId,
     approved_at_us: int,
 ) -> dict[str, JsonValue]:
+    if assessment_ref.artifact is None:
+        raise ValidationError(
+            "approval evidence requires a stored eligibility-assessment artifact"
+        )
     return {
         "release_candidate_ref": {
             "release_candidate_id": release_candidate_ref.release_candidate_id.value,
@@ -187,12 +219,14 @@ def _approval_payload(
                 content_manifest_ref.release_content_manifest_id.value
             ),
             "semantic_digest": digest_value(content_manifest_ref.semantic_digest),
+            "artifact": _artifact_value(content_manifest_ref.artifact),
         },
         "eligibility_assessment_ref": {
             "eligibility_assessment_id": (
                 assessment_ref.eligibility_assessment_id.value
             ),
             "semantic_digest": digest_value(assessment_ref.semantic_digest),
+            "artifact": _artifact_value(assessment_ref.artifact),
         },
         "gate_results_digest": digest_value(gate_results_digest),
         "accepted_sign_off_digests": [
@@ -262,6 +296,10 @@ class ReleaseApproval:
         if keys != tuple(sorted(keys)) or len(set(keys)) != len(keys):
             raise ValidationError(
                 "accepted sign-off digests must be canonical and unique"
+            )
+        if self.assessment_ref.artifact is None:
+            raise ValidationError(
+                "a stored approval must bind its eligibility-assessment artifact"
             )
 
         expected_digest = semantic_digest(
@@ -353,19 +391,96 @@ class ReleaseApproval:
         )
 
     def validated(self) -> ReleaseApproval:
+        """Reconstruct this approval and every reachable reference."""
+        try:
+            rebuilt = {
+                "release_candidate_ref": ReleaseCandidateRef(
+                    ReleaseCandidateId(
+                        self.release_candidate_ref.release_candidate_id.value
+                    ),
+                    ContentDigest(
+                        self.release_candidate_ref.semantic_digest.algorithm,
+                        self.release_candidate_ref.semantic_digest.hex_digest,
+                    ),
+                ),
+                "edition_ref": EditionRef(
+                    TranscriptEditionId(self.edition_ref.transcript_edition_id.value),
+                    ContentDigest(
+                        self.edition_ref.content_digest.algorithm,
+                        self.edition_ref.content_digest.hex_digest,
+                    ),
+                ),
+                "review_evidence_ref": ReviewEvidenceRef(
+                    ReviewRoundId(self.review_evidence_ref.review_round_id.value),
+                    ContentDigest(
+                        self.review_evidence_ref.evidence_digest.algorithm,
+                        self.review_evidence_ref.evidence_digest.hex_digest,
+                    ),
+                ),
+                "policy_ref": PolicyRef(
+                    ReleasePolicyVersionId(
+                        self.policy_ref.release_policy_version_id.value
+                    ),
+                    ContentDigest(
+                        self.policy_ref.policy_digest.algorithm,
+                        self.policy_ref.policy_digest.hex_digest,
+                    ),
+                ),
+                "external_gate_set_ref": ExternalGateSetRef(
+                    ExternalGateSetId(
+                        self.external_gate_set_ref.external_gate_set_id.value
+                    ),
+                    ContentDigest(
+                        self.external_gate_set_ref.content_digest.algorithm,
+                        self.external_gate_set_ref.content_digest.hex_digest,
+                    ),
+                ),
+                "evaluator_ref": PolicyEvaluatorRef(
+                    self.evaluator_ref.evaluator_name,
+                    self.evaluator_ref.semantic_version,
+                    self.evaluator_ref.supported_policy_schema,
+                    ContentDigest(
+                        self.evaluator_ref.implementation_build_digest.algorithm,
+                        self.evaluator_ref.implementation_build_digest.hex_digest,
+                    ),
+                ),
+                "content_manifest_ref": ReleaseContentManifestRef(
+                    ReleaseContentManifestId(
+                        self.content_manifest_ref.release_content_manifest_id.value
+                    ),
+                    ContentDigest(
+                        self.content_manifest_ref.semantic_digest.algorithm,
+                        self.content_manifest_ref.semantic_digest.hex_digest,
+                    ),
+                    ArtifactRef(
+                        ArtifactId(
+                            self.content_manifest_ref.artifact.artifact_id.value
+                        ),
+                        ContentDigest(
+                            self.content_manifest_ref.artifact.content_digest.algorithm,
+                            self.content_manifest_ref.artifact.content_digest.hex_digest,
+                        ),
+                        self.content_manifest_ref.artifact.byte_size,
+                        self.content_manifest_ref.artifact.media_type,
+                    ),
+                ),
+                "assessment_ref": self.assessment_ref.validated(),
+                "gate_results_digest": ContentDigest(
+                    self.gate_results_digest.algorithm,
+                    self.gate_results_digest.hex_digest,
+                ),
+                "accepted_sign_off_digests": tuple(
+                    ContentDigest(value.algorithm, value.hex_digest)
+                    for value in self.accepted_sign_off_digests
+                ),
+                "steward_actor_id": ActorId(self.steward_actor_id.value),
+                "operation_id": OperationId(self.operation_id.value),
+                "approval_digest": ContentDigest(
+                    self.approval_digest.algorithm, self.approval_digest.hex_digest
+                ),
+            }
+        except AttributeError as error:
+            raise ValidationError("release approval is incomplete") from error
         return type(self).reconstitute(
-            release_candidate_ref=self.release_candidate_ref,
-            edition_ref=self.edition_ref,
-            review_evidence_ref=self.review_evidence_ref,
-            policy_ref=self.policy_ref,
-            external_gate_set_ref=self.external_gate_set_ref,
-            evaluator_ref=self.evaluator_ref,
-            content_manifest_ref=self.content_manifest_ref,
-            assessment_ref=self.assessment_ref,
-            gate_results_digest=self.gate_results_digest,
-            accepted_sign_off_digests=self.accepted_sign_off_digests,
-            steward_actor_id=self.steward_actor_id,
-            approved_at_us=self.approved_at_us,
-            operation_id=self.operation_id,
-            approval_digest=self.approval_digest,
+            approved_at_us=self.approved_at_us, **rebuilt
         )

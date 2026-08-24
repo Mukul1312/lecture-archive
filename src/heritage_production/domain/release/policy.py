@@ -283,6 +283,50 @@ class ReleasePolicyRules:
                 "maximum_unresolved_findings must be a nonnegative integer"
             )
 
+    def validated(self) -> "ReleasePolicyRules":
+        """Reconstruct every rule value through its own constructor."""
+        return ReleasePolicyRules(
+            required_integrity_checks=tuple(
+                IntegrityCheckCode(value.value)
+                for value in self.required_integrity_checks
+            ),
+            uncertainty_allowances=tuple(
+                UncertaintyAllowance(value.kind, value.metric, value.maximum)
+                for value in self.uncertainty_allowances
+            ),
+            blocking_finding_rules=tuple(
+                BlockingFindingRule(
+                    FindingCategoryCode(value.category_code.value),
+                    tuple(
+                        FindingSeverityCode(code.value)
+                        for code in value.severity_codes
+                    ),
+                )
+                for value in self.blocking_finding_rules
+            ),
+            review_coverage_requirements=tuple(
+                ReviewCoverageRequirement(
+                    RoleCode(value.role.value),
+                    value.minimum_basis_points,
+                    value.require_complete_submission,
+                )
+                for value in self.review_coverage_requirements
+            ),
+            review_signoff_requirements=tuple(
+                _revalidate_requirement(value)
+                for value in self.review_signoff_requirements
+            ),
+            external_signoff_requirements=tuple(
+                _revalidate_requirement(value)
+                for value in self.external_signoff_requirements
+            ),
+            required_release_members=tuple(
+                ManifestMemberRole(value.value)
+                for value in self.required_release_members
+            ),
+            maximum_unresolved_findings=self.maximum_unresolved_findings,
+        )
+
     def payload(self) -> dict[str, JsonValue]:
         return {
             "required_integrity_checks": [
@@ -308,6 +352,23 @@ class ReleasePolicyRules:
             ],
             "maximum_unresolved_findings": self.maximum_unresolved_findings,
         }
+
+
+def _revalidate_requirement(value: "SignOffRequirement") -> "SignOffRequirement":
+    if type(value) is not SignOffRequirement:
+        raise ValidationError("a sign-off requirement must be an exact value")
+    return SignOffRequirement(
+        value.scope,
+        RoleCode(value.role.value),
+        value.target_kind,
+        (
+            ManifestMemberRole(value.required_member_role.value)
+            if value.required_member_role is not None
+            else None
+        ),
+        value.minimum_assurance,
+        value.required_count,
+    )
 
 
 def _policy_payload(
@@ -440,16 +501,29 @@ class ReleasePolicyVersion:
         )
 
     def validated(self) -> ReleasePolicyVersion:
+        """Reconstruct this policy and every reachable rule value."""
         return type(self).reconstitute(
-            release_policy_version_id=self.release_policy_version_id,
+            release_policy_version_id=ReleasePolicyVersionId(
+                self.release_policy_version_id.value
+            ),
             semantic_label=self.semantic_label,
             policy_schema_version=self.policy_schema_version,
             policy_schema_code=self.policy_schema_code,
-            evaluator_ref=self.evaluator_ref,
-            rules=self.rules,
-            author_actor_id=self.author_actor_id,
+            evaluator_ref=PolicyEvaluatorRef(
+                self.evaluator_ref.evaluator_name,
+                self.evaluator_ref.semantic_version,
+                self.evaluator_ref.supported_policy_schema,
+                ContentDigest(
+                    self.evaluator_ref.implementation_build_digest.algorithm,
+                    self.evaluator_ref.implementation_build_digest.hex_digest,
+                ),
+            ),
+            rules=self.rules.validated(),
+            author_actor_id=ActorId(self.author_actor_id.value),
             created_at_us=self.created_at_us,
-            policy_digest=self.policy_digest,
+            policy_digest=ContentDigest(
+                self.policy_digest.algorithm, self.policy_digest.hex_digest
+            ),
         )
 
     def rules_payload(self) -> dict[str, JsonValue]:
