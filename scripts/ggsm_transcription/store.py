@@ -187,6 +187,15 @@ class JobTransaction:
             self._state["source_url_aliases"].append(alias)
             self._dirty = True
 
+    def record_asr_metadata(self, metadata: dict[str, Any]) -> None:
+        """Bind immutable full-run provenance to the job with its evidence files."""
+        if self._state["stage"] != "source_ready":
+            raise StageTransitionError("full ASR metadata requires a source_ready job")
+        if not isinstance(metadata, dict) or self._state.get("asr") is not None:
+            raise ArtifactValidationError("full ASR metadata is missing or already bound")
+        self._state["asr"] = json.loads(json.dumps(metadata, allow_nan=False))
+        self._dirty = True
+
     def complete_source_intake(self, staging_path: Path, source: dict[str, Any], tool_versions: dict[str, str]) -> None:
         self.store._validate_source_metadata(source, tool_versions)
         digest, size = source["sha256"], source["byte_size"]
@@ -492,6 +501,14 @@ class JobStore:
             self._validate_source_metadata(state["source"], state["tool_versions"])
             if state["source"]["sha256"] != state["source_sha256"] or "source/source.bin" not in state["artifacts"] or not state["source_url_aliases"]:
                 raise RepositoryHealthError("bound source evidence is incomplete")
+        asr = state.get("asr")
+        if asr is not None:
+            if not isinstance(asr, dict) or state["stage"] == "created":
+                raise RepositoryHealthError("job ASR provenance is invalid")
+            if not {"source_sha256", "configuration", "runtime"}.issubset(asr):
+                raise RepositoryHealthError("job ASR provenance is incomplete")
+            if asr["source_sha256"] != state["source_sha256"] or not isinstance(asr["configuration"], dict) or not isinstance(asr["runtime"], dict):
+                raise RepositoryHealthError("job ASR provenance is not source-bound")
 
     @staticmethod
     def _write_manifest(root: Path, state: dict[str, Any]) -> None:
