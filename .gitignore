@@ -48,8 +48,14 @@ site/.vercel/
 .gitconfig-codex-temp
 
 # Local skill cache
-.claude/skills/
+.claude/skills/*
+!.claude/skills/transcribing-ggsm-lecture/
+!.claude/skills/transcribing-ggsm-lecture/SKILL.md
 skills-lock.json
+
+# Generated transcription jobs and source-download staging
+data/transcribe/jobs/
+data/transcribe/incoming/
 
 # local scratch (16k decodes, temp)
 _work/
