@@ -34,4 +34,4 @@ the intended exception is ready for that exact path.
 
 ## Commit
 
-Commit hash: `d9809ae`.
+Implementation commit hash: `60d8b0f254ee45588b15062422752898e2dd4673`.
