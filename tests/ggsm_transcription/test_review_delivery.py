@@ -603,6 +603,99 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         with self.assertRaises(StageTransitionError):
             self.store.advance_stage(draft["job_id"], "handed_off")
 
+    def test_remaining_low_level_and_typed_completion_paths_reject_junk_evidence(self) -> None:
+        def register_junk(job_id: str, paths: list[str]) -> None:
+            root = self.store.job_root(job_id)
+            for relative in paths:
+                path = root / relative
+                path.write_text("junk", encoding="utf-8")
+                self.store.register_artifact(job_id, relative)
+
+        legacy_review = self._inspected()
+        register_junk(legacy_review["job_id"], ["review/manifest.json", "review/chunk-001.md"])
+        with self.assertRaises((AttributeError, StageTransitionError)):
+            with self.store.transaction(legacy_review["job_id"]) as transaction:
+                transaction._advance_stage("reviewed")
+
+        legacy_draft, service = self._reviewed()
+        register_junk(legacy_draft["job_id"], ["delivery/onenote-transcript.md", "delivery/verification.json"])
+        with self.assertRaises((AttributeError, StageTransitionError)):
+            with self.store.transaction(legacy_draft["job_id"]) as transaction:
+                transaction._advance_stage("draft_ready")
+
+        legacy_handoff, service = self._reviewed()
+        service.assemble(legacy_handoff["job_id"])
+        service.verify(legacy_handoff["job_id"])
+        register_junk(legacy_handoff["job_id"], ["delivery/handoff.json"])
+        with self.assertRaises((AttributeError, StageTransitionError)):
+            with self.store.transaction(legacy_handoff["job_id"]) as transaction:
+                transaction._advance_stage("handed_off")
+
+        typed_review = self._inspected()
+        register_junk(typed_review["job_id"], ["review/manifest.json", "review/chunk-001.md"])
+        with self.assertRaises((ArtifactValidationError, JobValidationError)):
+            with self.store.transaction(typed_review["job_id"]) as transaction:
+                transaction.complete_review()
+
+        typed_draft, _ = self._reviewed()
+        register_junk(typed_draft["job_id"], ["delivery/onenote-transcript.md", "delivery/verification.json"])
+        with self.assertRaises((ArtifactValidationError, JobValidationError)):
+            with self.store.transaction(typed_draft["job_id"]) as transaction:
+                transaction.complete_verification()
+
+        typed_handoff, service = self._reviewed()
+        service.assemble(typed_handoff["job_id"])
+        service.verify(typed_handoff["job_id"])
+        register_junk(typed_handoff["job_id"], ["delivery/handoff.json"])
+        with self.assertRaises((ArtifactValidationError, JobValidationError)):
+            with self.store.transaction(typed_handoff["job_id"]) as transaction:
+                transaction.complete_handoff()
+
+    def test_each_typed_completion_resumes_after_publication_commit_boundary_failure(self) -> None:
+        original_writer = self.store._write_manifest
+
+        def fail_second_manifest_write():
+            calls = 0
+
+            def writer(root: Path, state: dict[str, object]) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("completion manifest interrupted")
+                original_writer(root, state)  # type: ignore[arg-type]
+
+            return writer
+
+        review = self._inspected()
+        service = ReviewDeliveryService(self.store)
+        service.prepare_review(review["job_id"])
+        self._mark_reviewed(review["job_id"], ["[00:00:00] Opening.\n\n[00:05:00] More.\n\n[00:10:00] Closing."])
+        with patch.object(self.store, "_write_manifest", side_effect=fail_second_manifest_write()):
+            with self.assertRaisesRegex(JobValidationError, "manifest replacement"):
+                service.record_review(review["job_id"])
+        self.assertEqual(self.store.load_job(review["job_id"])["stage"], "inspected")
+        self.store.validate_artifact(review["job_id"], "review/manifest.json")
+        self.assertEqual(service.record_review(review["job_id"])["stage"], "reviewed")
+
+        verification, service = self._reviewed()
+        service.assemble(verification["job_id"])
+        with patch.object(self.store, "_write_manifest", side_effect=fail_second_manifest_write()):
+            with self.assertRaisesRegex(JobValidationError, "manifest replacement"):
+                service.verify(verification["job_id"])
+        self.assertEqual(self.store.load_job(verification["job_id"])["stage"], "reviewed")
+        self.store.validate_artifact(verification["job_id"], "delivery/verification.json")
+        self.assertEqual(service.verify(verification["job_id"])["stage"], "draft_ready")
+
+        handoff, service = self._reviewed()
+        service.assemble(handoff["job_id"])
+        service.verify(handoff["job_id"])
+        with patch.object(self.store, "_write_manifest", side_effect=fail_second_manifest_write()):
+            with self.assertRaisesRegex(JobValidationError, "manifest replacement"):
+                service.handoff(handoff["job_id"])
+        self.assertEqual(self.store.load_job(handoff["job_id"])["stage"], "draft_ready")
+        self.store.validate_artifact(handoff["job_id"], "delivery/handoff.json")
+        self.assertEqual(service.handoff(handoff["job_id"])["stage"], "handed_off")
+
 
 if __name__ == "__main__":
     unittest.main()

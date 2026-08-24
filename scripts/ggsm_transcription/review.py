@@ -35,6 +35,15 @@ _HEADER_KEYS = {
     "Chunk-ID", "Start-Seconds", "End-Seconds", "Source-SHA256",
     "Full-ASR-SHA256", "Review-State", "Audible-Silence-Confirmed",
 }
+_VERIFICATION_CHECKS = [
+    "source", "ASR", "inspection", "full ordered review", "Unicode NFC",
+    "Listening draft label", "exact markers", "five-minute timestamps", "deterministic assembly",
+]
+_HANDOFF_FIELDS = {
+    "status": "Listening draft",
+    "message": "The draft is ready for manual OneNote copy/editing.",
+    "copied_or_synced": False,
+}
 
 
 def _utcnow() -> str:
@@ -409,7 +418,8 @@ class ReviewDeliveryService:
             for chunk, _path, _header, _body in parsed:
                 transaction.register_artifact(str(chunk["path"]))
             transaction.register_artifact("review/manifest.json")
-            transaction._advance_stage("reviewed")
+        with self.store.transaction(job_id) as transaction:
+            transaction.complete_review()
         return self.store.load_job(job_id)
 
     def register_reference(self, job_id: str, reference_url: str, markdown_file: str | Path) -> dict[str, Any]:
@@ -590,6 +600,49 @@ class ReviewDeliveryService:
             raise ArtifactValidationError("delivery does not match deterministic reviewed assembly")
         return delivery_path, delivery_bytes
 
+    def validate_review_completion(self, job_id: str) -> None:
+        state = self.store.load_job(job_id)
+        if state["stage"] != "inspected":
+            raise StageTransitionError("review completion requires an inspected job")
+        self._validated_review(job_id, state)
+
+    def _validate_verification_evidence(self, job_id: str, state: dict[str, Any]) -> bytes:
+        self.store.validate_source(job_id)
+        _delivery_path, delivery_bytes = self._validate_delivery(job_id, state)
+        verification_path = self.store.validate_artifact(job_id, "delivery/verification.json")
+        verification = _read_json(verification_path, "delivery verification")
+        expected = {
+            "success": True,
+            "source_sha256": state["source_sha256"],
+            "delivery_sha256": _hash_bytes(delivery_bytes),
+            "checks": _VERIFICATION_CHECKS,
+        }
+        if ({key: verification.get(key) for key in expected} != expected
+                or set(verification) != {*expected, "verified_at"}
+                or not isinstance(verification.get("verified_at"), str)
+                or not verification["verified_at"]):
+            raise ArtifactValidationError("successful current-evidence verification is required")
+        return delivery_bytes
+
+    def validate_verification_completion(self, job_id: str) -> None:
+        state = self.store.load_job(job_id)
+        if state["stage"] != "reviewed":
+            raise StageTransitionError("verification completion requires a reviewed job")
+        self._validate_verification_evidence(job_id, state)
+
+    def validate_handoff_completion(self, job_id: str) -> None:
+        state = self.store.load_job(job_id)
+        if state["stage"] != "draft_ready":
+            raise StageTransitionError("handoff completion requires a draft_ready job")
+        self._validate_verification_evidence(job_id, state)
+        receipt_path = self.store.validate_artifact(job_id, "delivery/handoff.json")
+        receipt = _read_json(receipt_path, "handoff receipt")
+        if ({key: receipt.get(key) for key in _HANDOFF_FIELDS} != _HANDOFF_FIELDS
+                or set(receipt) != {*_HANDOFF_FIELDS, "created_at"}
+                or not isinstance(receipt.get("created_at"), str)
+                or not receipt["created_at"]):
+            raise ArtifactValidationError("manual-only matching handoff receipt is required")
+
     def verify(self, job_id: str) -> dict[str, Any]:
         with self.store.transaction(job_id) as transaction:
             state = transaction.state
@@ -602,8 +655,7 @@ class ReviewDeliveryService:
                 "verified_at": _utcnow(),
                 "source_sha256": state["source_sha256"],
                 "delivery_sha256": _hash_bytes(delivery_bytes),
-                "checks": ["source", "ASR", "inspection", "full ordered review", "Unicode NFC",
-                           "Listening draft label", "exact markers", "five-minute timestamps", "deterministic assembly"],
+                "checks": _VERIFICATION_CHECKS,
             }
             verification_path = self.store.job_root(job_id) / "delivery" / "verification.json"
             self.store.validate_output_path(job_id, "delivery/verification.json")
@@ -616,7 +668,8 @@ class ReviewDeliveryService:
             else:
                 _atomic_text(verification_path, _json_text(verification))
             transaction.register_artifact("delivery/verification.json")
-            transaction._advance_stage("draft_ready")
+        with self.store.transaction(job_id) as transaction:
+            transaction.complete_verification()
         return self.store.load_job(job_id)
 
     def handoff(self, job_id: str) -> dict[str, Any]:
@@ -624,20 +677,8 @@ class ReviewDeliveryService:
             state = transaction.state
             if state["stage"] != "draft_ready":
                 raise StageTransitionError("handoff requires a draft_ready job")
-            self.store.validate_source(job_id)
-            delivery, delivery_bytes = self._validate_delivery(job_id, state)
-            verification_path = self.store.validate_artifact(job_id, "delivery/verification.json")
-            verification = _read_json(verification_path, "delivery verification")
-            if verification.get("success") is not True or verification.get("source_sha256") != state["source_sha256"]:
-                raise ArtifactValidationError("successful source-bound verification is required for handoff")
-            if verification.get("delivery_sha256") != _hash_bytes(delivery_bytes):
-                raise ArtifactValidationError("handoff delivery differs from verified delivery")
-            receipt = {
-                "created_at": _utcnow(),
-                "status": "Listening draft",
-                "message": "The draft is ready for manual OneNote copy/editing.",
-                "copied_or_synced": False,
-            }
+            self._validate_verification_evidence(job_id, state)
+            receipt = {"created_at": _utcnow(), **_HANDOFF_FIELDS}
             path = self.store.job_root(job_id) / "delivery" / "handoff.json"
             self.store.validate_output_path(job_id, "delivery/handoff.json")
             if path.exists():
@@ -649,5 +690,6 @@ class ReviewDeliveryService:
             else:
                 _atomic_text(path, _json_text(receipt))
             transaction.register_artifact("delivery/handoff.json")
-            transaction._advance_stage("handed_off")
+        with self.store.transaction(job_id) as transaction:
+            transaction.complete_handoff()
         return self.store.load_job(job_id)

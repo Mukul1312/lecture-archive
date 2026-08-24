@@ -221,7 +221,7 @@ class ASRService:
             transaction.register_artifact("asr/full.jsonl")
             transaction.register_artifact("asr/metadata.json")
             transaction.record_asr_metadata(metadata)
-            transaction._advance_stage("asr_ready")
+            transaction.complete_asr()
         return self.store.load_job(job_id)
 
     def rerun_span(self, job_id: str, start: float, end: float) -> dict[str, Path]:
@@ -287,7 +287,7 @@ class ASRService:
             _atomic_text(report_markdown, _inspection_markdown(report))
             transaction.register_artifact("inspection/report.json")
             transaction.register_artifact("inspection/report.md")
-            transaction._advance_stage("inspected")
+            transaction.complete_inspection()
         return self.store.load_job(job_id)
 
     def _validate_primary_asr_evidence(self, job_id: str, state: dict[str, Any]) -> None:

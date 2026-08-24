@@ -172,18 +172,50 @@ class JobTransaction:
         self._state["artifacts"][relative.as_posix()] = record
         self._dirty = True
 
-    def _advance_stage(self, target_stage: str) -> None:
-        current = self._state["stage"]
-        if current == "created" and target_stage == "source_ready":
-            raise StageTransitionError("source_ready is entered only by source intake completion")
-        if _NEXT_STAGE.get(current) != target_stage:
-            raise StageTransitionError(f"cannot advance {current!r} to {target_stage!r}")
-        self._state["stage"] = target_stage
-        self._state["stage_history"].append({"stage": target_stage, "at": _utcnow()})
-        self._dirty = True
-
     def advance_stage(self, _target_stage: str) -> None:
         raise StageTransitionError("generic stage mutation is not supported; use a typed workflow operation")
+
+    def complete_asr(self) -> None:
+        if self._state["stage"] != "source_ready":
+            raise StageTransitionError("ASR completion requires a source_ready job")
+        if self._state.get("asr") is None or not {"asr/full.jsonl", "asr/metadata.json"}.issubset(self._state["artifacts"]):
+            raise ArtifactValidationError("ASR completion requires bound full ASR evidence")
+        self._state["stage"] = "asr_ready"
+        self._state["stage_history"].append({"stage": "asr_ready", "at": _utcnow()})
+        self._dirty = True
+
+    def complete_inspection(self) -> None:
+        if self._state["stage"] != "asr_ready":
+            raise StageTransitionError("inspection completion requires an asr_ready job")
+        if not {"inspection/report.json", "inspection/report.md"}.issubset(self._state["artifacts"]):
+            raise ArtifactValidationError("inspection completion requires both inspection artifacts")
+        self._state["stage"] = "inspected"
+        self._state["stage_history"].append({"stage": "inspected", "at": _utcnow()})
+        self._dirty = True
+
+    def complete_review(self) -> None:
+        if self._state["stage"] != "inspected":
+            raise StageTransitionError("review completion requires an inspected job")
+        self.store.validate_review_completion(self.job_id)
+        self._state["stage"] = "reviewed"
+        self._state["stage_history"].append({"stage": "reviewed", "at": _utcnow()})
+        self._dirty = True
+
+    def complete_verification(self) -> None:
+        if self._state["stage"] != "reviewed":
+            raise StageTransitionError("verification completion requires a reviewed job")
+        self.store.validate_verification_completion(self.job_id)
+        self._state["stage"] = "draft_ready"
+        self._state["stage_history"].append({"stage": "draft_ready", "at": _utcnow()})
+        self._dirty = True
+
+    def complete_handoff(self) -> None:
+        if self._state["stage"] != "draft_ready":
+            raise StageTransitionError("handoff completion requires a draft_ready job")
+        self.store.validate_handoff_completion(self.job_id)
+        self._state["stage"] = "handed_off"
+        self._state["stage_history"].append({"stage": "handed_off", "at": _utcnow()})
+        self._dirty = True
 
     def record_source_alias(self, requested_url: str, resolved_url: str) -> None:
         self.store._validate_https_url(requested_url)
@@ -413,6 +445,18 @@ class JobStore:
         if target.exists() and (not target.is_file() or _is_reparse(target)):
             raise ArtifactValidationError(f"artifact output target is unsafe: {relative.as_posix()}")
         return target
+
+    def validate_review_completion(self, job_id: str) -> None:
+        from .review import ReviewDeliveryService
+        ReviewDeliveryService(self).validate_review_completion(job_id)
+
+    def validate_verification_completion(self, job_id: str) -> None:
+        from .review import ReviewDeliveryService
+        ReviewDeliveryService(self).validate_verification_completion(job_id)
+
+    def validate_handoff_completion(self, job_id: str) -> None:
+        from .review import ReviewDeliveryService
+        ReviewDeliveryService(self).validate_handoff_completion(job_id)
 
     def validate_source(self, job_id: str) -> Path:
         state = self.load_job(job_id)
