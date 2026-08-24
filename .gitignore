@@ -50,6 +50,7 @@ site/.vercel/
 # Local skill cache
 .claude/skills/*
 !.claude/skills/transcribing-ggsm-lecture/
+.claude/skills/transcribing-ggsm-lecture/*
 !.claude/skills/transcribing-ggsm-lecture/SKILL.md
 skills-lock.json
 
