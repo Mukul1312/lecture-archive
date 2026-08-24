@@ -1,8 +1,12 @@
 import sys, csv
 sys.stdout.reconfigure(encoding="utf-8")
 from statistics import median
+try:
+    from scripts.repo_paths import data_root
+except ModuleNotFoundError:
+    from repo_paths import data_root
 
-METRICS = r"C:/Users/Mukul/code/personal-projects/voice-cloning/data/out/lecture1/qa_asr_report.tsv"
+METRICS = data_root(__file__) / "out" / "lecture1" / "qa_asr_report.tsv"
 CUT_IDS = {1,5,11,15,16,30,35,36,48,49,51,58,66,70,79,80,81,85,93,98,99,100,101,109,115,117,118,123,125}
 
 rows=[]

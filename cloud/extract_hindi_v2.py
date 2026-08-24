@@ -43,13 +43,17 @@ def merge_spans(wins, langs, min_prob, gap=1.0):
 
 
 def clips_from_speech(segs, min_s, max_s, gap_bridge=0.6):
-    """segs: [(start,end)] VAD speech (within a span) -> clips ~min..max sec, flushed at a real pause
-    (a gap > gap_bridge once the clip is long enough, or hard max). Boundaries sit at speech edges,
-    i.e. next to silence -> clean cuts, never mid-word."""
+    """segs: [(start,end)] VAD speech (within a span) -> clips ~min..max sec. ANY pause > gap_bridge
+    ENDS the current clip: flush it if it's already long enough, else DISCARD the short fragment.
+    Because merged Hindi spans are >1s apart, a clip can never bridge across the gap between two spans,
+    so it stays inside contiguous in-span (Hindi) speech and does NOT swallow the Odia in between.
+    (The old code only flushed on a gap once the clip had reached min_s, so short Hindi bits bridged
+    the Odia to the next Hindi bit -> ~2x over-extraction + Odia contamination.)"""
     clips, cur = [], []
     for s, e in segs:
-        if cur and (s - cur[-1][1] > gap_bridge) and (cur[-1][1] - cur[0][0] >= min_s):
-            clips.append((cur[0][0], cur[-1][1]))
+        if cur and (s - cur[-1][1] > gap_bridge):
+            if cur[-1][1] - cur[0][0] >= min_s:
+                clips.append((cur[0][0], cur[-1][1]))
             cur = []
         cur.append((s, e))
         if cur[-1][1] - cur[0][0] >= max_s:
@@ -73,6 +77,14 @@ def main():
     ap.add_argument("--min-sec", type=float, default=8.0)
     ap.add_argument("--max-sec", type=float, default=18.0)
     ap.add_argument("--decoder", default="rnnt", choices=["rnnt", "ctc"], help="IndicConformer decoder")
+    ap.add_argument("--asr", default="indicwhisper", choices=["indicwhisper", "indicconformer"],
+                    help="indicwhisper = ungated Whisper-Hindi drop-in (default); indicconformer = gated "
+                         "AI4Bharat (needs HF access granted)")
+    ap.add_argument("--whisper-model", default="vasista22/whisper-hindi-large-v2",
+                    help="HF Whisper-Hindi checkpoint for --asr indicwhisper")
+    ap.add_argument("--base-whisper", default="openai/whisper-large-v2",
+                    help="base Whisper whose up-to-date generation_config is grafted onto --whisper-model "
+                         "(vasista22's shipped config is outdated: no language map, empty suppress_tokens)")
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -84,20 +96,37 @@ def main():
 
     from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
     vad = load_silero_vad()
-    from transformers import AutoModel
-    print("loading IndicConformer-600M ...", file=sys.stderr)
-    asr = AutoModel.from_pretrained("ai4bharat/indic-conformer-600m-multilingual",
-                                    trust_remote_code=True).to(dev).eval()
+    if a.asr == "indicconformer":
+        from transformers import AutoModel
+        print("loading IndicConformer-600M (RNNT) ...", file=sys.stderr)
+        model = AutoModel.from_pretrained("ai4bharat/indic-conformer-600m-multilingual",
+                                          trust_remote_code=True).to(dev).eval()
 
-    def transcribe(wav_path):
-        w, sr = torchaudio.load(wav_path)
-        if w.shape[0] > 1:
-            w = w.mean(0, keepdim=True)
-        if sr != 16000:
-            w = torchaudio.transforms.Resample(sr, 16000)(w)
-        with torch.no_grad():
-            out = asr(w.to(dev), "hi", a.decoder)
-        return (out[0] if isinstance(out, (list, tuple)) else out)
+        def transcribe(wav_path):
+            w, sr = torchaudio.load(wav_path)
+            if w.shape[0] > 1:
+                w = w.mean(0, keepdim=True)
+            if sr != 16000:
+                w = torchaudio.transforms.Resample(sr, 16000)(w)
+            with torch.no_grad():
+                out = model(w.to(dev), "hi", a.decoder)
+            return out[0] if isinstance(out, (list, tuple)) else out
+    else:
+        from transformers import (pipeline, WhisperForConditionalGeneration,
+                                   WhisperProcessor, GenerationConfig)
+        print(f"loading Hindi Whisper ({a.whisper_model}) ...", file=sys.stderr)
+        model = WhisperForConditionalGeneration.from_pretrained(a.whisper_model)
+        # vasista22's shipped generation_config is outdated (no language-token map, empty suppress_tokens),
+        # which breaks BOTH the forced_decoder_ids path and the language= path on transformers 4.46.
+        # Graft the base whisper-large-v2 generation config, then force language via generate_kwargs.
+        model.generation_config = GenerationConfig.from_pretrained(a.base_whisper)
+        proc = WhisperProcessor.from_pretrained(a.whisper_model)
+        pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,
+                        feature_extractor=proc.feature_extractor,
+                        device=(0 if dev == "cuda" else -1), chunk_length_s=30)
+
+        def transcribe(wav_path):
+            return pipe(wav_path, generate_kwargs={"language": "hi", "task": "transcribe"})["text"]
 
     langs = set(a.langs.split(","))
     slugs = [a.slug] if a.slug else [p.name for p in sorted(HI.iterdir()) if p.is_dir()]
@@ -137,7 +166,7 @@ def main():
         print(f"  {slug}: {len(rows)} clips, {sec/60:.1f}min from {len(spans)} spans / {len(segs)} vad segs")
 
     print(f"\n==== HINDI CLIP SET v2 ==== {tot_clips} clips, {tot_sec/60:.0f}min "
-          f"(Silero-VAD cuts + IndicConformer-{a.decoder})")
+          f"(Silero-VAD cuts + {a.asr})")
     print("NEXT: rebuild the review gallery; drafts should need only light edits now.")
 
 

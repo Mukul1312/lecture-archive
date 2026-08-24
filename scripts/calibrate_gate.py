@@ -1,9 +1,13 @@
 import sys, json, csv, re
 sys.stdout.reconfigure(encoding="utf-8")
+try:
+    from scripts.repo_paths import data_root
+except ModuleNotFoundError:
+    from repo_paths import data_root
 
-BASE = "C:/Users/Mukul/code/personal-projects/voice-cloning/data/out/lecture1"
-REPORT = BASE + "/qa_asr_report.tsv"
-MANIFEST = BASE + "/train.jsonl"
+BASE = data_root(__file__) / "out" / "lecture1"
+REPORT = BASE / "qa_asr_report.tsv"
+MANIFEST = BASE / "train.jsonl"
 
 # ---- load metrics ----
 rows = []

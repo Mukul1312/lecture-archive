@@ -1,5 +1,6 @@
 # Python env (recreated on each machine — never commit)
 .venv/
+.venv-*/
 __pycache__/
 *.pyc
 
@@ -43,6 +44,8 @@ site/.vercel/
 # Secrets — NEVER commit (the repo is public)
 .hf_token
 *.token
+.claude/settings.json
+.gitconfig-codex-temp
 
 # Local skill cache
 .claude/skills/
@@ -50,3 +53,38 @@ skills-lock.json
 
 # local scratch (16k decodes, temp)
 _work/
+
+# Isolated Git worktrees used by agent-assisted implementation
+.worktrees/
+
+# Local source and generated artifacts for the YouTube lecture enhancement
+Haladhara-lecture.webm
+.tmp-source-comparison/
+data/enhance/youtube/**/*.wav
+data/enhance/youtube/**/*.webm
+data/enhance/youtube/**/*.flac
+data/enhance/youtube/**/*.mp3
+data/enhance/youtube/**/work/
+data/enhance/youtube/**/candidate-map.private.json
+
+# Local lecture-enhancement outputs and preserved delivery archives
+data/enhance/jobs/
+data/enhance/audio/
+data/enhance/archive/
+data/enhance/youtube/
+docs/superpowers/evidence/
+
+# Private inputs, experiments, and generated review bundles
+data/enhance/clips-above24/
+data/enhance/jiva_goswami/
+data/enhance/out/
+data/enhance/poc/*.wav
+data/enhance/poc/v2/
+data/enhance/poc/diagnosis.json
+site-casting/audio/
+site-odia-check/audio/
+.tmp-audio-analysis/
+.tmp-dfn-*-diagnostics.json
+
+# Accidental literal expansion of a Windows environment-variable path
+/%localappdata%/
