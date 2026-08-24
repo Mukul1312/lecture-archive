@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -61,15 +63,18 @@ def layer_for(module: tuple[str, ...]) -> str | None:
 
 
 def repository_port_names() -> set[str]:
-    repositories = PACKAGE_ROOT / "application" / "ports" / "repositories.py"
-    if not repositories.exists():
+    ports_root = PACKAGE_ROOT / "application" / "ports"
+    if not ports_root.exists():
         return set()
-    tree = ast.parse(repositories.read_text(encoding="utf-8"), filename=str(repositories))
-    return {
-        node.name
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name.endswith("Repository")
-    }
+    names: set[str] = set()
+    for source_file in ports_root.rglob("*.py"):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        names.update(
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Repository")
+        )
+    return names
 
 
 def presentation_repository_imports(source_file: Path) -> list[str]:
@@ -143,3 +148,18 @@ class ArchitectureFirewallTests(unittest.TestCase):
     def test_repository_ports_are_empty_until_task_six_then_match_the_allowlist(self) -> None:
         actual_ports = repository_port_names()
         self.assertIn(actual_ports, (set(), REPOSITORY_PORTS))
+
+    def test_repository_port_scan_discovers_declarations_in_every_ports_module(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            fixture_root = Path(temporary_directory) / "heritage_production"
+            fixture_module = fixture_root / "application" / "ports" / "alternate.py"
+            fixture_module.parent.mkdir(parents=True)
+            fixture_module.write_text(
+                "from typing import Protocol\n\n"
+                "class AlternateRepository(Protocol):\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+
+            with patch(f"{__name__}.PACKAGE_ROOT", fixture_root):
+                self.assertEqual(repository_port_names(), {"AlternateRepository"})
