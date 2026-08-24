@@ -23,7 +23,6 @@ from heritage_production.domain.shared import (
     EditionRef,
     ExternalGateSetRef,
     InvariantError,
-    JsonValue,
     OperationId,
     PolicyRef,
     ProductionId,
@@ -31,6 +30,7 @@ from heritage_production.domain.shared import (
     SignOffDecision,
     StaleReferenceError,
     ValidationError,
+    assurance_satisfies,
 )
 from heritage_production.domain.shared.text import require_canonical_text
 
@@ -41,6 +41,17 @@ from .sources import AttachedSource, EditionSelection
 def _require_exact(value: object, expected: type[object], field: str) -> None:
     if type(value) is not expected:
         raise ValidationError(f"{field} must be an exact {expected.__name__}")
+
+
+def _sign_off_gate_key(sign_off: ExternalSignOff) -> tuple[str, ...]:
+    """One actor's decision on one gate for one exact typed target."""
+    return (
+        sign_off.gate_code.value,
+        sign_off.role.value,
+        sign_off.credential.actor_id.value,
+        sign_off.target.target_identity,
+        sign_off.target.target_digest.hex_digest,
+    )
 
 
 def _require_event_inputs(event_id: object, event_occurred_at_us: object) -> None:
@@ -255,14 +266,28 @@ class Production(AggregateEventRecorder):
         if active_gate_set_ref is None and gate_sets:
             raise ValidationError("stored gate sets require an active selection")
 
+        gate_keys = tuple(_sign_off_gate_key(value) for value in external_sign_offs)
+        if len(set(gate_keys)) != len(gate_keys):
+            raise ValidationError(
+                "stored sign-offs repeat one actor's decision on one gate target"
+            )
+        recorded_sign_offs = {
+            value.sign_off_digest: value for value in external_sign_offs
+        }
         for candidate in candidates:
-            if candidate.included_sign_off_digests and not all(
-                digest in {value.sign_off_digest for value in external_sign_offs}
-                for digest in candidate.included_sign_off_digests
-            ):
-                raise ValidationError(
-                    "a stored candidate includes a sign-off this Production never recorded"
-                )
+            for digest in candidate.included_sign_off_digests:
+                sign_off = recorded_sign_offs.get(digest)
+                if sign_off is None:
+                    raise ValidationError(
+                        "a stored candidate includes a sign-off this Production "
+                        "never recorded"
+                    )
+                if sign_off.target.content_manifest_ref != (
+                    candidate.content_manifest_ref
+                ):
+                    raise ValidationError(
+                        "a stored candidate includes a sign-off for other release content"
+                    )
 
         if approval is not None:
             if approval.validated() != approval:
@@ -281,6 +306,26 @@ class Production(AggregateEventRecorder):
                 active_gate_set_ref
             ):
                 raise ValidationError("approval does not bind the active gate set")
+            approved_candidate = next(
+                (
+                    value
+                    for value in candidates
+                    if value.ref == approval.release_candidate_ref
+                ),
+                None,
+            )
+            if approved_candidate is None:
+                raise ValidationError("approval names no stored candidate snapshot")
+            if approval.content_manifest_ref != approved_candidate.content_manifest_ref:
+                raise ValidationError(
+                    "approval does not bind its candidate's release content manifest"
+                )
+            if tuple(approval.accepted_sign_off_digests) != (
+                approved_candidate.included_sign_off_digests
+            ):
+                raise ValidationError(
+                    "approval sign-offs do not match its candidate snapshot"
+                )
 
         if active_candidate_ref is not None:
             if edition_selection is None:
@@ -332,17 +377,20 @@ class Production(AggregateEventRecorder):
         self._require_open()
         _require_exact(attached_source, AttachedSource, "attached_source")
         _require_event_inputs(event_id, event_occurred_at_us)
+        checked = attached_source.validated()
+        if checked != attached_source:
+            raise ValidationError("attached source failed reconstruction")
 
         for existing in self.sources:
-            if existing.identity != attached_source.identity:
+            if existing.identity != checked.identity:
                 continue
-            if existing.content != attached_source.content:
+            if existing.content != checked.content:
                 raise ValidationError(
                     "this source identity is already attached with different content"
                 )
             return existing
 
-        self._write("sources", (*self.sources, attached_source))
+        self._write("sources", (*self.sources, checked))
         self._record_event(
             DomainEvent(
                 event_id,
@@ -350,15 +398,13 @@ class Production(AggregateEventRecorder):
                 "SourceRecordingAttached",
                 {
                     "production_id": self.production_id.value,
-                    "source_recording_id": attached_source.source_recording_id.value,
-                    "source_version_id": attached_source.source_version_id.value,
-                    "artifact_digest": (
-                        attached_source.artifact.content_digest.hex_digest
-                    ),
+                    "source_recording_id": checked.source_recording_id.value,
+                    "source_version_id": checked.source_version_id.value,
+                    "artifact_digest": checked.artifact.content_digest.hex_digest,
                 },
             )
         )
-        return attached_source
+        return checked
 
     def select_candidate_edition(
         self,
@@ -379,9 +425,17 @@ class Production(AggregateEventRecorder):
                 "edition selection uses a source version this Production never attached"
             )
 
+        checked_selection = selection.validated()
+        if checked_selection != selection:
+            raise ValidationError("edition selection failed reconstruction")
+
         current = self.selected_edition_ref
         if current is not None:
             if current == selection.edition_ref:
+                if self.edition_selection != checked_selection:
+                    raise ValidationError(
+                        "this edition is already selected with a different source set"
+                    )
                 return current
             if (
                 current.transcript_edition_id
@@ -391,7 +445,7 @@ class Production(AggregateEventRecorder):
                     "this edition ID is already selected with a different digest"
                 )
 
-        self._write("edition_selection", selection.validated())
+        self._write("edition_selection", checked_selection)
         self._write("active_candidate_ref", None)
         self._record_event(
             DomainEvent(
@@ -518,7 +572,9 @@ class Production(AggregateEventRecorder):
         _require_exact(content, ReleaseContentBinding, "content")
         _require_event_inputs(event_id, event_occurred_at_us)
         checked = sign_off.validated()
-        content.validated()
+        checked_content = content.validated()
+        if checked_content != content:
+            raise ValidationError("release content failed reconstruction")
 
         if checked.production_id != self.production_id:
             raise ValidationError("sign-off names a different Production")
@@ -527,8 +583,8 @@ class Production(AggregateEventRecorder):
             raise InvariantError(
                 "an explicit active gate set is required before recording sign-offs"
             )
-        self._require_content_matches_selection(content)
-        if checked.target.content_manifest_ref != content.content_manifest_ref:
+        self._require_content_matches_selection(checked_content)
+        if checked.target.content_manifest_ref != checked_content.content_manifest_ref:
             raise ValidationError(
                 "sign-off does not target this exact sealed release content"
             )
@@ -545,15 +601,19 @@ class Production(AggregateEventRecorder):
             raise ValidationError(
                 "sign-off names a gate the active gate set does not declare"
             )
+        # The pinned credential is required for every decision: an unpinned
+        # credential must never enter append-only history, even as a decline.
         if (
             requirement.role != checked.role
-            or requirement.actor_id != checked.credential.actor_id
+            or requirement.credential != checked.credential
             or requirement.target_rule.target_kind is not checked.target.target_kind
         ):
-            raise ValidationError("sign-off does not match its declared gate")
+            raise ValidationError(
+                "sign-off does not match the exact credential, role, and target its gate pins"
+            )
         required_member = requirement.target_rule.required_member_role
         if required_member is not None:
-            expected_digest = content.member_digest(required_member)
+            expected_digest = checked_content.member_digest(required_member)
             if (
                 checked.target.member_role != required_member
                 or expected_digest is None
@@ -562,14 +622,27 @@ class Production(AggregateEventRecorder):
                 raise ValidationError(
                     "sign-off does not bind the exact manifest member its gate requires"
                 )
-        if checked.decision is SignOffDecision.APPROVED and not (
-            requirement.is_satisfied_by(checked)
+        if checked.decision is SignOffDecision.APPROVED and not assurance_satisfies(
+            checked.assurance.assurance, requirement.minimum_assurance
         ):
-            raise ValidationError("sign-off assurance is below its gate minimum")
+            raise ValidationError(
+                "approving sign-off assurance is below its gate minimum"
+            )
 
         for existing in self.external_sign_offs:
             if existing.sign_off_digest == checked.sign_off_digest:
                 return existing
+        # One actor decides one gate once, matching how ReviewRound keys a
+        # sign-off by (role, actor, target). Re-signing the same gate and target
+        # at a different time would otherwise pollute append-only history and
+        # make "how many signers" ambiguous.
+        if any(
+            _sign_off_gate_key(existing) == _sign_off_gate_key(checked)
+            for existing in self.external_sign_offs
+        ):
+            raise ValidationError(
+                "this actor has already decided this gate for this exact target"
+            )
 
         self._write("external_sign_offs", (*self.external_sign_offs, checked))
         self._record_event(
@@ -624,12 +697,14 @@ class Production(AggregateEventRecorder):
         _require_exact(content, ReleaseContentBinding, "content")
         _require_event_inputs(event_id, event_occurred_at_us)
         checked = candidate.validated()
-        content.validated()
+        checked_content = content.validated()
+        if checked_content != content:
+            raise ValidationError("release content failed reconstruction")
 
         if checked.production_id != self.production_id:
             raise ValidationError("candidate names a different Production")
-        self._require_content_matches_selection(content)
-        checked.bind(content)
+        self._require_content_matches_selection(checked_content)
+        checked.bind(checked_content)
 
         recorded = {value.sign_off_digest: value for value in self.external_sign_offs}
         for digest in checked.included_sign_off_digests:
@@ -638,40 +713,56 @@ class Production(AggregateEventRecorder):
                 raise ValidationError(
                     "candidate includes a sign-off this Production never recorded"
                 )
-            if sign_off.target.content_manifest_ref != content.content_manifest_ref:
+            if sign_off.target.content_manifest_ref != (
+                checked_content.content_manifest_ref
+            ):
                 raise ValidationError(
                     "candidate includes a sign-off for other release content"
                 )
 
+        # An ID conflict is decided over the whole history before any
+        # digest-reuse shortcut, so rejection cannot depend on iteration order.
         for existing in self.candidates:
-            if existing.semantic_digest == checked.semantic_digest:
-                if self.active_candidate_ref != existing.ref:
-                    self._write("active_candidate_ref", existing.ref)
-                return existing
-            if existing.release_candidate_id == checked.release_candidate_id:
+            if (
+                existing.release_candidate_id == checked.release_candidate_id
+                and existing.semantic_digest != checked.semantic_digest
+            ):
                 raise ValidationError(
                     "this candidate ID already exists with a different digest"
                 )
 
-        self._write("candidates", (*self.candidates, checked))
-        self._write("active_candidate_ref", checked.ref)
-        self._record_event(
-            DomainEvent(
-                event_id,
-                event_occurred_at_us,
-                "ReleaseCandidateAssembled",
-                {
-                    "production_id": self.production_id.value,
-                    "release_candidate_id": checked.release_candidate_id.value,
-                    "candidate_digest": checked.semantic_digest.hex_digest,
-                    "release_content_manifest_id": (
-                        checked.content_manifest_ref.release_content_manifest_id.value
-                    ),
-                    "sign_off_count": len(checked.included_sign_off_digests),
-                },
-            )
+        replayed = next(
+            (
+                value
+                for value in self.candidates
+                if value.semantic_digest == checked.semantic_digest
+            ),
+            None,
         )
-        return checked
+        selected = replayed if replayed is not None else checked
+        if replayed is not None and self.active_candidate_ref == replayed.ref:
+            return replayed
+
+        event = DomainEvent(
+            event_id,
+            event_occurred_at_us,
+            "ReleaseCandidateAssembled",
+            {
+                "production_id": self.production_id.value,
+                "release_candidate_id": selected.release_candidate_id.value,
+                "candidate_digest": selected.semantic_digest.hex_digest,
+                "release_content_manifest_id": (
+                    selected.content_manifest_ref.release_content_manifest_id.value
+                ),
+                "sign_off_count": len(selected.included_sign_off_digests),
+                "replayed": replayed is not None,
+            },
+        )
+        if replayed is None:
+            self._write("candidates", (*self.candidates, checked))
+        self._write("active_candidate_ref", selected.ref)
+        self._record_event(event)
+        return selected
 
     def approve_candidate(
         self,

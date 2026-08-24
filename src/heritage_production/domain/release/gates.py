@@ -17,8 +17,6 @@ from dataclasses import dataclass
 from heritage_production.domain.shared import (
     ActorCredentialRef,
     ActorId,
-    ArtifactId,
-    ArtifactRef,
     AssuranceLevel,
     ContentDigest,
     ExternalGateSetId,
@@ -35,92 +33,13 @@ from heritage_production.domain.shared import (
     semantic_digest,
 )
 
-
-def digest_value(value: ContentDigest) -> dict[str, JsonValue]:
-    return {"algorithm": value.algorithm, "hex_digest": value.hex_digest}
-
-
-def credential_value(value: ActorCredentialRef) -> dict[str, JsonValue]:
-    return {
-        "actor_id": value.actor_id.value,
-        "verification_method": value.verification_method.value,
-        "assurance": value.assurance.value,
-        "credential_fingerprint": (
-            digest_value(value.credential_fingerprint)
-            if value.credential_fingerprint is not None
-            else None
-        ),
-        "public_key_artifact": (
-            {
-                "artifact_id": value.public_key_artifact.artifact_id.value,
-                "content_digest": digest_value(value.public_key_artifact.content_digest),
-                "byte_size": value.public_key_artifact.byte_size,
-                "media_type": value.public_key_artifact.media_type,
-            }
-            if value.public_key_artifact is not None
-            else None
-        ),
-    }
-
-
-def credential_key(value: ActorCredentialRef) -> tuple[str, str, str, str]:
-    """The exact identity of one pinned credential, not merely its actor."""
-    return (
-        value.actor_id.value,
-        value.verification_method.value,
-        value.assurance.value,
-        (
-            value.credential_fingerprint.hex_digest
-            if value.credential_fingerprint is not None
-            else ""
-        ),
-    )
-
-
-def revalidate_credential(value: object, *, field: str) -> ActorCredentialRef:
-    """Reconstruct a credential through its own constructor."""
-    if type(value) is not ActorCredentialRef:
-        raise ValidationError(f"{field} must be an exact ActorCredentialRef")
-    try:
-        return ActorCredentialRef(
-            ActorId(value.actor_id.value),
-            value.verification_method,
-            value.assurance,
-            (
-                ContentDigest(
-                    value.credential_fingerprint.algorithm,
-                    value.credential_fingerprint.hex_digest,
-                )
-                if value.credential_fingerprint is not None
-                else None
-            ),
-            (
-                ArtifactRef(
-                    ArtifactId(value.public_key_artifact.artifact_id.value),
-                    ContentDigest(
-                        value.public_key_artifact.content_digest.algorithm,
-                        value.public_key_artifact.content_digest.hex_digest,
-                    ),
-                    value.public_key_artifact.byte_size,
-                    value.public_key_artifact.media_type,
-                )
-                if value.public_key_artifact is not None
-                else None
-            ),
-        )
-    except AttributeError as error:
-        raise ValidationError(f"{field} is incomplete") from error
-
-
-def target_rule_value(value: SignOffTargetRule) -> dict[str, JsonValue]:
-    return {
-        "target_kind": value.target_kind.value,
-        "required_member_role": (
-            value.required_member_role.value
-            if value.required_member_role is not None
-            else None
-        ),
-    }
+from .canonical import (
+    credential_key,
+    credential_value,
+    digest_value,
+    revalidate_credential,
+    target_rule_value,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,26 +89,9 @@ class ExternalGateRequirement:
             ),
         )
 
-    def is_satisfied_by(self, sign_off: object) -> bool:
-        """Report whether one immutable external sign-off discharges this gate."""
-        from .signoffs import ExternalSignOff
-        from heritage_production.domain.shared import SignOffDecision
-
-        if type(sign_off) is not ExternalSignOff:
-            return False
-        if sign_off.decision is not SignOffDecision.APPROVED:
-            return False
-        # The pinned credential must match exactly; an actor may hold several.
-        if sign_off.role != self.role or sign_off.credential != self.credential:
-            return False
-        if sign_off.target.target_kind is not self.target_rule.target_kind:
-            return False
-        if (
-            self.target_rule.required_member_role is not None
-            and sign_off.target.member_role != self.target_rule.required_member_role
-        ):
-            return False
-        return assurance_satisfies(sign_off.assurance.assurance, self.minimum_assurance)
+    def accepts_assurance(self, assurance: AssuranceLevel) -> bool:
+        """Whether an assurance level reaches this gate's declared minimum."""
+        return assurance_satisfies(assurance, self.minimum_assurance)
 
     def validated(self) -> ExternalGateRequirement:
         """Reconstruct this requirement and every reachable child value."""

@@ -27,6 +27,7 @@ from heritage_production.domain.shared import (
 
 from tests.heritage_production.heritage_release_fixtures import (
     artifact,
+    default_edition_evidence,
     digest,
     uid,
 )
@@ -159,6 +160,8 @@ class ProductionApprovalStateMachine(RuleBasedStateMachine):
         content = seal_content(
             policy_ref=self.policy.ref,
             gate_set_ref=self.production.active_gate_set_ref,
+            provenance_input_digests=(default_edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
         )
         candidate = seal_candidate(content)
         try:

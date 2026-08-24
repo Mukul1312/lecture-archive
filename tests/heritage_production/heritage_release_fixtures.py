@@ -389,3 +389,34 @@ def partially_covered_review() -> ClosedReviewEvidence:
     )
     round_.pull_events()
     return evidence
+
+
+def default_edition_evidence(
+    *,
+    edition=None,
+    observations=(),
+    uncovered: int = 0,
+    owner=None,
+):
+    """The canonical selected-edition evidence every fixture agrees on.
+
+    Its `semantic_digest` is derived from this exact content, so release
+    content must seal that digest among its provenance inputs for the
+    evaluator to accept the evidence.
+    """
+    from heritage_production.domain.release import (
+        SelectedEditionEvidence,
+        TranscriptScopeAssessment,
+    )
+
+    return SelectedEditionEvidence(
+        production_id=owner or production_id(),
+        edition_ref=edition or edition_ref(),
+        scope_assessment=TranscriptScopeAssessment(
+            required_span_count=3,
+            covered_span_count=3 - uncovered,
+            declared_gap_count=0,
+            uncovered_span_count=uncovered,
+        ),
+        uncertainty_observations=observations,
+    )

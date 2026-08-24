@@ -28,6 +28,31 @@ REPOSITORY_PORTS = {
 }
 FORBIDDEN_LEGACY_ROOTS = {"scripts", "voice_lab", "youtube_enhance"}
 
+# The six approved aggregate roots. Four record domain events; two are sealed at
+# creation and emit nothing. Adding a seventh root is a design change, not an
+# implementation detail, so it must break this test.
+EVENT_RECORDING_ROOTS = {
+    "Production",
+    "ReviewRound",
+    "ReviewFinding",
+    "TranscriptEdition",
+}
+SEALED_ROOTS = {"ASRProposalSet", "ReleasePolicyVersion"}
+
+
+def domain_classes() -> dict[str, list[str]]:
+    """Every class defined under domain/, mapped to its base-class names."""
+    found: dict[str, list[str]] = {}
+    for source_file in (PACKAGE_ROOT / "domain").rglob("*.py"):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                found[node.name] = [
+                    base.id if isinstance(base, ast.Name) else getattr(base, "attr", "")
+                    for base in node.bases
+                ]
+    return found
+
 
 def python_modules() -> list[tuple[Path, tuple[str, ...]]]:
     modules: list[tuple[Path, tuple[str, ...]]] = []
@@ -166,6 +191,21 @@ class ArchitectureFirewallTests(unittest.TestCase):
                     violations.append(f"{source_file.relative_to(PROJECT_ROOT)} -> {'.'.join(imported)}")
 
         self.assertEqual(violations, [])
+
+    def test_exactly_six_aggregate_roots_exist(self) -> None:
+        classes = domain_classes()
+
+        recording = {
+            name
+            for name, bases in classes.items()
+            if "AggregateEventRecorder" in bases
+        }
+        self.assertEqual(recording, EVENT_RECORDING_ROOTS)
+
+        for name in SEALED_ROOTS:
+            self.assertIn(name, classes, f"{name} must remain an aggregate root")
+
+        self.assertEqual(len(EVENT_RECORDING_ROOTS | SEALED_ROOTS), 6)
 
     def test_repository_ports_are_empty_until_task_six_then_match_the_allowlist(self) -> None:
         actual_ports = repository_port_names()

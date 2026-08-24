@@ -61,6 +61,8 @@ def seal_content(
     gate_set_ref: ExternalGateSetRef = GATE_SET_REF,
     owner: ProductionId | None = None,
     release_members: tuple[ReleaseMember, ...] | None = None,
+    provenance_input_digests: tuple[ContentDigest, ...] | None = None,
+    integrity_input_digests: tuple[ContentDigest, ...] | None = None,
 ) -> ReleaseContentBinding:
     review_evidence = evidence if evidence is not None else closed_review()
     return ReleaseContentBinding.seal(
@@ -71,8 +73,16 @@ def seal_content(
         policy_ref=policy_ref,
         external_gate_set_ref=gate_set_ref,
         members=release_members if release_members is not None else members(),
-        provenance_input_digests=(digest("a"), digest("b")),
-        integrity_input_digests=(digest("c"),),
+        provenance_input_digests=(
+            provenance_input_digests
+            if provenance_input_digests is not None
+            else (digest("a"), digest("b"))
+        ),
+        integrity_input_digests=(
+            integrity_input_digests
+            if integrity_input_digests is not None
+            else (digest("c"),)
+        ),
         wrapper_artifact=artifact(82, "3"),
     )
 

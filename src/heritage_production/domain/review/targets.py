@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from heritage_production.domain.shared import (
+    ArtifactId,
     ArtifactRef,
     ContentDigest,
     EditionRef,
@@ -268,6 +269,40 @@ class ReviewTargetManifest:
         members: tuple[ReviewTargetMember, ...],
     ) -> ReviewTargetManifest:
         return cls(ref, production_id, edition_ref, rubric_ref, members)
+
+    def validated(self) -> ReviewTargetManifest:
+        """Recompute this manifest from its own stored fields.
+
+        `heritage-review-target-v1` covers production_id, edition_ref,
+        rubric_ref and every member, so a field forged behind the stored
+        `ref.semantic_digest` fails the recomputation in `__post_init__`.
+        """
+        ref = self.ref
+        try:
+            checked_ref = ReviewTargetManifestRef(
+                ReviewRoundId(ref.review_round_id.value),
+                ContentDigest(
+                    ref.semantic_digest.algorithm, ref.semantic_digest.hex_digest
+                ),
+                ArtifactRef(
+                    ArtifactId(ref.artifact.artifact_id.value),
+                    ContentDigest(
+                        ref.artifact.content_digest.algorithm,
+                        ref.artifact.content_digest.hex_digest,
+                    ),
+                    ref.artifact.byte_size,
+                    ref.artifact.media_type,
+                ),
+            )
+        except AttributeError as error:
+            raise ValidationError("review target manifest ref is incomplete") from error
+        return type(self).reconstitute(
+            ref=checked_ref,
+            production_id=self.production_id,
+            edition_ref=self.edition_ref,
+            rubric_ref=self.rubric_ref,
+            members=self.members,
+        )
 
     @property
     def review_round_id(self) -> ReviewRoundId:

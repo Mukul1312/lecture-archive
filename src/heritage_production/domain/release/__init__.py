@@ -19,12 +19,14 @@ from .assessment import (
     GateType,
 )
 from .gates import ExternalGateRequirement, ExternalGateSet
+from .canonical import credential_key
 from .signoffs import (
     EXTERNAL_SIGN_OFF_OPERATION,
     ExternalSignOff,
     ExternalSignOffTarget,
     external_signoff_context_digest,
     external_signoff_intent_digest,
+    gate_is_satisfied_by,
 )
 from .content import (
     ReleaseCandidateSnapshot,
@@ -32,6 +34,7 @@ from .content import (
     ReleaseMember,
 )
 from .eligibility import (
+    SUPPORTED_EVALUATOR_REF,
     EligibilityInputSnapshot,
     IntegrityCheckResult,
     ReleaseEligibilityEvaluator,
@@ -44,6 +47,7 @@ from .eligibility import (
 
 __all__ = [
     "BASIS_POINTS_MAX",
+    "SUPPORTED_EVALUATOR_REF",
     "EXTERNAL_SIGN_OFF_OPERATION",
     "ExternalGateRequirement",
     "ExternalGateSet",
@@ -51,6 +55,7 @@ __all__ = [
     "ExternalSignOffTarget",
     "external_signoff_context_digest",
     "external_signoff_intent_digest",
+    "gate_is_satisfied_by",
     "BlockingFindingRule",
     "EligibilityAssessment",
     "EligibilityAssessmentRef",

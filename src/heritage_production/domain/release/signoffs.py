@@ -31,7 +31,8 @@ from heritage_production.domain.shared import (
     semantic_digest,
 )
 
-from .gates import credential_value, digest_value, revalidate_credential
+from .canonical import credential_value, digest_value, revalidate_credential
+from .gates import ExternalGateRequirement
 
 
 EXTERNAL_SIGN_OFF_OPERATION = "external_sign_off"
@@ -432,3 +433,31 @@ class ExternalSignOff:
     @property
     def actor_id(self) -> ActorId:
         return self.credential.actor_id
+
+
+def gate_is_satisfied_by(
+    requirement: ExternalGateRequirement, sign_off: object
+) -> bool:
+    """Whether one immutable external sign-off discharges a gate.
+
+    This lives beside `ExternalSignOff` rather than on the requirement so
+    `gates` never has to import `signoffs`, keeping the Release module acyclic.
+    """
+    if type(requirement) is not ExternalGateRequirement:
+        raise ValidationError("requirement must be an exact ExternalGateRequirement")
+    if type(sign_off) is not ExternalSignOff:
+        return False
+    if sign_off.decision is not SignOffDecision.APPROVED:
+        return False
+    # The pinned credential must match exactly; an actor may hold several.
+    if sign_off.role != requirement.role or sign_off.credential != requirement.credential:
+        return False
+    rule = requirement.target_rule
+    if sign_off.target.target_kind is not rule.target_kind:
+        return False
+    if (
+        rule.required_member_role is not None
+        and sign_off.target.member_role != rule.required_member_role
+    ):
+        return False
+    return requirement.accepts_assurance(sign_off.assurance.assurance)

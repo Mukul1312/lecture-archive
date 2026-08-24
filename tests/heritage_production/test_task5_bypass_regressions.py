@@ -11,48 +11,51 @@ from copy import copy
 import unittest
 
 from heritage_production.domain.production import (
+    gate_is_satisfied_by,
     ApprovalEvidence,
-    AttachedSource,
     EditionSelection,
+    ExternalSignOffTarget,
     Production,
 )
 from heritage_production.domain.release import (
+    SUPPORTED_EVALUATOR_REF,
     EligibilityAssessment,
     EligibilityAssessmentRef,
     EligibilityInputSnapshot,
-    ExternalGateRequirement,
-    ExternalGateSet,
-    ExternalSignOffTarget,
     GateOutcome,
     GateResult,
     GateType,
     IntegrityCheckCode,
+    ReleaseCandidateSnapshot,
     ReleaseEligibilityEvaluator,
+    IntegrityCheckResult,
+    ReleaseMember,
+    UncertaintyObservation,
     ReleasePolicyRules,
     ReleasePolicyVersion,
+    SignOffRequirement,
 )
 from heritage_production.domain.review import FindingDecision
+from heritage_production.domain.transcription import UncertaintyKind
 from heritage_production.domain.shared import (
     ActorCredentialRef,
-    ActorId,
     AssuranceLevel,
-    ContentDigest,
     CredentialVerificationMethod,
-    DomainError,
-    EditionRef,
-    ExternalGateSetId,
+    EvaluatorUnavailableError,
     GateCode,
     GateScope,
     InvariantError,
-    OperationId,
+    PolicyEvaluatorRef,
+    ManifestMemberRole,
     ProductionId,
+    ReleaseCandidateId,
     ReleasePolicyVersionId,
+    ReviewEvidenceRef,
+    ReviewRoundId,
     RoleCode,
+    SignOffDecision,
     SignOffTargetKind,
-    SignOffTargetRule,
-    SourceVersionRef,
     StaleReferenceError,
-    TranscriptEditionId,
     ValidationError,
 )
 
@@ -64,8 +67,8 @@ from tests.heritage_production.heritage_release_fixtures import (
     edition_ref,
     production_id,
     source_version,
+    successor_edition_ref,
     uid,
-    verified_credential,
 )
 from tests.heritage_production.test_production_aggregate import (
     STEWARD,
@@ -75,17 +78,14 @@ from tests.heritage_production.test_production_aggregate import (
     gate_set,
     rights_holder_gate,
     selection_for,
+    sourced_production,
 )
 from tests.heritage_production.test_production_approval import (
     APPROVED_AT,
     OPERATION,
-    approvable,
     approve,
 )
-from tests.heritage_production.test_production_gates import (
-    FINGERPRINT,
-    verified_sign_off,
-)
+from tests.heritage_production.test_production_gates import verified_sign_off
 from tests.heritage_production.test_release_content import seal_candidate, seal_content
 from tests.heritage_production.test_release_eligibility import (
     ASSESSED_AT,
@@ -124,7 +124,6 @@ def blocking_policy() -> ReleasePolicyVersion:
 
 def production_with(policy: ReleasePolicyVersion, review_evidence=None):
     """Assemble a Production and a matching candidate for an arbitrary policy."""
-    production, source = (lambda: None), None
     production = Production.create(
         production_id=production_id(),
         intended_deliverable="August 21 listening transcript",
@@ -148,10 +147,17 @@ def production_with(policy: ReleasePolicyVersion, review_evidence=None):
         gate_set=gates, event_id=event_id(4), event_occurred_at_us=5
     )
     production.pull_events()
+    evidence_for_content = (
+        review_evidence if review_evidence is not None else closed_review()
+    )
     content = seal_content(
-        evidence=review_evidence if review_evidence is not None else closed_review(),
+        evidence=evidence_for_content,
         policy_ref=policy.ref,
         gate_set_ref=gates.ref,
+        provenance_input_digests=(
+            edition_evidence(edition=evidence_for_content.edition_ref).semantic_digest,
+        ),
+        integrity_input_digests=(),
     )
     candidate = seal_candidate(content)
     production.assemble_candidate(
@@ -206,7 +212,7 @@ class FabricatedAssessmentTests(unittest.TestCase):
         )
         self.assertTrue(forged.eligible)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(StaleReferenceError):
             ApprovalEvidence(
                 snapshot=snapshot,
                 assessment=forged,
@@ -253,7 +259,7 @@ class FabricatedAssessmentTests(unittest.TestCase):
         )
         self.assertTrue(forged.eligible)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(StaleReferenceError):
             ApprovalEvidence(
                 snapshot=snapshot,
                 assessment=forged,
@@ -280,7 +286,7 @@ class FabricatedAssessmentTests(unittest.TestCase):
         )
         self.assertTrue(forged.eligible)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(StaleReferenceError):
             ApprovalEvidence(
                 snapshot=snapshot,
                 assessment=forged,
@@ -315,7 +321,7 @@ class FabricatedAssessmentTests(unittest.TestCase):
         mutated = copy(genuine)
         object.__setattr__(mutated, "input_digest", digest("e"))
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             ApprovalEvidence(
                 snapshot=snapshot,
                 assessment=mutated,
@@ -329,7 +335,7 @@ class ForgedReviewEvidenceTests(unittest.TestCase):
     def test_zero_submission_review_cannot_be_bound_to_a_foreign_production(
         self,
     ) -> None:
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             seal_content(
                 evidence=closed_review(with_submission=False),
                 owner=ProductionId(uid(555)),
@@ -344,7 +350,7 @@ class ForgedReviewEvidenceTests(unittest.TestCase):
         stripped = copy(genuine)
         object.__setattr__(stripped, "findings", ())
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             seal_content(evidence=stripped)
 
     def test_coverage_cannot_be_replaced_behind_a_retained_evidence_digest(
@@ -355,8 +361,73 @@ class ForgedReviewEvidenceTests(unittest.TestCase):
         forged = copy(genuine)
         object.__setattr__(forged, "coverage", other.coverage)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             seal_content(evidence=forged)
+
+    def test_forged_target_identity_dies_behind_an_unchanged_evidence_digest(
+        self,
+    ) -> None:
+        """The evidence digest hashes only the target's stored semantic digest.
+
+        Forging the manifest's own Production or edition therefore leaves
+        `heritage-review-evidence-v1` byte-identical, so only recomputing the
+        target from its own fields can catch it.
+        """
+        genuine = closed_review(with_submission=False)
+        foreign = ProductionId(uid(555))
+        swapped = successor_edition_ref()
+
+        for label, manifest_change, evidence_change in (
+            ("production", {"production_id": foreign}, {"production_id": foreign}),
+            ("edition", {"edition_ref": swapped}, {"edition_ref": swapped}),
+        ):
+            with self.subTest(forged=label):
+                manifest = copy(genuine.target_manifest)
+                for name, value in manifest_change.items():
+                    object.__setattr__(manifest, name, value)
+                forged = copy(genuine)
+                object.__setattr__(forged, "target_manifest", manifest)
+                for name, value in evidence_change.items():
+                    object.__setattr__(forged, name, value)
+
+                # The load-bearing assertion: the digest is NOT the defence.
+                self.assertEqual(forged.evidence_ref, genuine.evidence_ref)
+
+                with self.assertRaises(ValidationError):
+                    forged.validated()
+                with self.assertRaises(ValidationError):
+                    seal_content(
+                        evidence=forged,
+                        owner=forged.production_id,
+                        edition=forged.edition_ref,
+                    )
+
+    def test_a_forged_reviewer_assignment_is_rejected(self) -> None:
+        """Assignment credentials are excluded from every digest by design."""
+        genuine = closed_review()
+        assignment = copy(genuine.reviewer_assignments[0])
+        object.__setattr__(
+            assignment, "minimum_assurance", AssuranceLevel.VERIFIED_SIGNATURE
+        )
+        forged = copy(genuine)
+        object.__setattr__(forged, "reviewer_assignments", (assignment,))
+
+        self.assertEqual(forged.evidence_ref, genuine.evidence_ref)
+        with self.assertRaises(ValidationError):
+            forged.validated()
+
+    def test_a_forged_target_manifest_wrapper_artifact_is_rejected(self) -> None:
+        """The wrapper artifact is outside the target payload, so rebuild it."""
+        genuine = closed_review(with_submission=False)
+        manifest_ref = copy(genuine.target_manifest.ref)
+        object.__setattr__(manifest_ref, "artifact", "not-an-artifact-ref")
+        manifest = copy(genuine.target_manifest)
+        object.__setattr__(manifest, "ref", manifest_ref)
+        forged = copy(genuine)
+        object.__setattr__(forged, "target_manifest", manifest)
+
+        with self.assertRaises(ValidationError):
+            forged.validated()
 
     def test_closed_evidence_self_identifies_its_production_and_target(self) -> None:
         evidence = closed_review()
@@ -387,7 +458,7 @@ class PinnedCredentialTests(unittest.TestCase):
 
         sign_off = verified_sign_off(credential=substitute)
 
-        self.assertFalse(requirement.is_satisfied_by(sign_off))
+        self.assertFalse(gate_is_satisfied_by(requirement, sign_off))
 
     def test_production_refuses_a_sign_off_from_a_substituted_credential(self) -> None:
         production, _, content = configured_production(
@@ -400,7 +471,7 @@ class PinnedCredentialTests(unittest.TestCase):
             target=target, credential=self.substitute_credential()
         )
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             production.record_external_sign_off(
                 sign_off=sign_off,
                 content=content,
@@ -476,7 +547,7 @@ class AssessmentArtifactBindingTests(unittest.TestCase):
             ),
         )
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             stripped.validated()
 
 
@@ -507,7 +578,7 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
         arguments = self.base_arguments(production)
         arguments["sources"] = (forged,)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
 
     def test_a_selection_using_an_unattached_source_is_rejected(self) -> None:
@@ -519,7 +590,7 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
             (source_version(suffix=77, character="8"),),
         )
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
 
     def test_an_active_candidate_without_a_selected_policy_is_rejected(self) -> None:
@@ -532,7 +603,7 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
         arguments = self.base_arguments(production)
         arguments["selected_policy_ref"] = None
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
 
     def test_an_active_candidate_without_an_active_gate_set_is_rejected(self) -> None:
@@ -546,7 +617,7 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
         arguments["active_gate_set_ref"] = None
         arguments["gate_sets"] = ()
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
 
     def test_an_active_candidate_without_a_selection_is_rejected(self) -> None:
@@ -559,7 +630,7 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
         arguments = self.base_arguments(production)
         arguments["edition_selection"] = None
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
 
     def test_a_forged_gate_set_is_rejected(self) -> None:
@@ -570,8 +641,450 @@ class ProductionReconstitutionHardeningTests(unittest.TestCase):
         arguments = self.base_arguments(production)
         arguments["gate_sets"] = (forged,)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaises(ValidationError):
             Production.reconstitute(**arguments)
+
+
+class MutatorChildValidationTests(unittest.TestCase):
+    """Fix round 2 — every mutator reconstructs its child before writing."""
+
+    def test_attach_source_rejects_a_forged_source(self) -> None:
+        production, source = sourced_production()
+        # A *fresh* identity, so this cannot pass through the duplicate-content
+        # branch: only the child reconstruction can reject it.
+        other = attached_source(
+            source_version(suffix=91, character="4"), media_digest="4"
+        )
+        forged = copy(other)
+        object.__setattr__(forged, "artifact", artifact(200, "9", "audio/mpeg"))
+        self.assertNotEqual(forged.identity, source.identity)
+
+        with self.assertRaises(ValidationError):
+            production.attach_source(
+                attached_source=forged,
+                event_id=event_id(40),
+                event_occurred_at_us=9,
+            )
+
+        self.assertEqual(production.sources, (source,))
+        self.assertEqual(production.pull_events(), ())
+
+    def _tampered_content(self, content):
+        tampered = copy(content)
+        object.__setattr__(
+            tampered,
+            "review_evidence_ref",
+            ReviewEvidenceRef(ReviewRoundId(uid(777)), digest("e")),
+        )
+        return tampered
+
+    def test_assemble_candidate_rejects_content_failing_reconstruction(self) -> None:
+        production, _, content = configured_production()
+        tampered = self._tampered_content(content)
+
+        with self.assertRaises(ValidationError):
+            production.assemble_candidate(
+                candidate=seal_candidate(tampered),
+                content=tampered,
+                event_id=event_id(41),
+                event_occurred_at_us=9,
+            )
+
+        self.assertEqual(production.candidates, ())
+        self.assertIsNone(production.active_candidate_ref)
+        self.assertEqual(production.pull_events(), ())
+
+    def test_record_sign_off_rejects_content_failing_reconstruction(self) -> None:
+        production, _, content = configured_production(
+            requirements=(rights_holder_gate(),)
+        )
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+        sign_off = verified_sign_off(target=target)
+
+        with self.assertRaises(ValidationError):
+            production.record_external_sign_off(
+                sign_off=sign_off,
+                content=self._tampered_content(content),
+                event_id=event_id(42),
+                event_occurred_at_us=9,
+            )
+
+        self.assertEqual(production.external_sign_offs, ())
+        self.assertEqual(production.pull_events(), ())
+
+    def test_a_declined_sign_off_from_a_substituted_credential_is_refused(self) -> None:
+        """An unpinned credential must never enter append-only history."""
+        production, _, content = configured_production(
+            requirements=(rights_holder_gate(),)
+        )
+        substitute = ActorCredentialRef(
+            actor(40),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            digest("9"),
+            artifact(410, "8", "application/octet-stream"),
+        )
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+
+        for decision in (SignOffDecision.APPROVED, SignOffDecision.DECLINED):
+            with self.subTest(decision=decision.value):
+                with self.assertRaises(ValidationError):
+                    production.record_external_sign_off(
+                        sign_off=verified_sign_off(
+                            target=target, credential=substitute, decision=decision
+                        ),
+                        content=content,
+                        event_id=event_id(43),
+                        event_occurred_at_us=9,
+                    )
+
+        self.assertEqual(production.external_sign_offs, ())
+        self.assertEqual(production.pull_events(), ())
+
+    def test_reselecting_an_edition_with_another_source_set_is_rejected(self) -> None:
+        production, source = sourced_production()
+        production.select_candidate_edition(
+            selection=selection_for(source),
+            event_id=event_id(44),
+            event_occurred_at_us=9,
+        )
+        production.pull_events()
+        before = production.edition_selection
+        widened = EditionSelection(
+            production.production_id,
+            edition_ref(),
+            tuple(
+                sorted(
+                    (source.source_version_ref, source_version(suffix=88, character="5")),
+                    key=lambda value: value.source_version_id.value,
+                )
+            ),
+        )
+
+        with self.assertRaises(ValidationError):
+            production.select_candidate_edition(
+                selection=widened,
+                event_id=event_id(45),
+                event_occurred_at_us=10,
+            )
+
+        self.assertEqual(production.edition_selection, before)
+        self.assertEqual(production.pull_events(), ())
+
+
+class StoredStateHardeningTests(unittest.TestCase):
+    """Fix round 2 — reconstitution refuses history the live path cannot produce."""
+
+    def test_a_candidate_sign_off_for_other_content_is_rejected(self) -> None:
+        production, _, content = configured_production(
+            requirements=(rights_holder_gate(),)
+        )
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+        sign_off = verified_sign_off(target=target)
+        production.record_external_sign_off(
+            sign_off=sign_off, content=content, event_id=event_id(46), event_occurred_at_us=9
+        )
+        production.pull_events()
+
+        foreign_content = seal_content(
+            policy_ref=production.selected_policy_ref,
+            gate_set_ref=production.active_gate_set_ref,
+            release_members=(
+                ReleaseMember(ManifestMemberRole("transcript-json"), artifact(80, "1")),
+            ),
+        )
+        candidate = ReleaseCandidateSnapshot.seal(
+            release_candidate_id=ReleaseCandidateId(uid(56)),
+            production_id=production.production_id,
+            content_manifest_ref=foreign_content.content_manifest_ref,
+            included_sign_off_digests=(sign_off.sign_off_digest,),
+            assembled_at_us=1_700_000_000_000_050,
+        )
+
+        with self.assertRaises(ValidationError):
+            Production.reconstitute(
+                production_id=production.production_id,
+                intended_deliverable=production.intended_deliverable,
+                steward_actor_id=production.steward_actor_id,
+                created_at_us=production.created_at_us,
+                sources=production.sources,
+                edition_selection=production.edition_selection,
+                selected_policy_ref=production.selected_policy_ref,
+                gate_sets=production.gate_sets,
+                active_gate_set_ref=production.active_gate_set_ref,
+                external_sign_offs=production.external_sign_offs,
+                candidates=(candidate,),
+                active_candidate_ref=candidate.ref,
+                approval=None,
+            )
+
+
+class EvaluatorPinningTests(unittest.TestCase):
+    """Fix round 2 — an evaluator this build does not ship cannot interpret a policy."""
+
+    def ghost_evaluator(self) -> PolicyEvaluatorRef:
+        return PolicyEvaluatorRef(
+            SUPPORTED_EVALUATOR_REF.evaluator_name,
+            "9.9.9",
+            SUPPORTED_EVALUATOR_REF.supported_policy_schema,
+            digest("f"),
+        )
+
+    def test_a_ghost_evaluator_build_cannot_be_constructed(self) -> None:
+        with self.assertRaises(EvaluatorUnavailableError):
+            ReleaseEligibilityEvaluator(self.ghost_evaluator())
+
+    def test_a_ghost_pinned_policy_can_never_reach_an_approval(self) -> None:
+        """Sealing such a policy is allowed; evaluating it must fail closed."""
+        ghost_policy = ReleasePolicyVersion.seal(
+            release_policy_version_id=ReleasePolicyVersionId(uid(97)),
+            semantic_label="ghost-pinned-policy",
+            policy_schema_version=1,
+            policy_schema_code=SUPPORTED_EVALUATOR_REF.supported_policy_schema,
+            evaluator_ref=self.ghost_evaluator(),
+            rules=ReleasePolicyRules((), (), (), (), (), (), (), 0),
+            author_actor_id=actor(20),
+            created_at_us=1_700_000_000_000_060,
+        )
+        production, snapshot = production_with(ghost_policy)
+        genuine = real_assessment(production_with(seal_policy(empty_rules()))[1])
+
+        with self.assertRaises(EvaluatorUnavailableError):
+            ApprovalEvidence(
+                snapshot=snapshot,
+                assessment=genuine,
+                assessment_ref=stored_ref(genuine),
+            )
+
+        self.assertIsNone(production.approval)
+
+
+class SignerCountingTests(unittest.TestCase):
+    """Fix round 2 — a required count means that many distinct signers."""
+
+    def test_one_signer_cannot_satisfy_a_two_signer_gate(self) -> None:
+        policy = ReleasePolicyVersion.seal(
+            release_policy_version_id=ReleasePolicyVersionId(uid(98)),
+            semantic_label="two-signer-policy",
+            policy_schema_version=1,
+            policy_schema_code=SUPPORTED_EVALUATOR_REF.supported_policy_schema,
+            evaluator_ref=SUPPORTED_EVALUATOR_REF,
+            rules=ReleasePolicyRules(
+                (),
+                (),
+                (),
+                (),
+                (),
+                (
+                    SignOffRequirement(
+                        GateScope.EXTERNAL_RELEASE,
+                        RoleCode("rights-holder"),
+                        SignOffTargetKind.RELEASE_CONTENT,
+                        None,
+                        AssuranceLevel.VERIFIED_SIGNATURE,
+                        2,
+                    ),
+                ),
+                (),
+                0,
+            ),
+            author_actor_id=actor(20),
+            created_at_us=1_700_000_000_000_061,
+        )
+        gates = gate_set((rights_holder_gate(),))
+        content = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=gates.ref,
+            provenance_input_digests=(edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+        )
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+        # Same credential, two distinct sign-off records.
+        first = verified_sign_off(target=target, signed_at_us=1_700_000_000_000_001)
+        second = verified_sign_off(target=target, signed_at_us=1_700_000_000_000_002)
+        self.assertNotEqual(first.sign_off_digest, second.sign_off_digest)
+        self.assertEqual(first.credential, second.credential)
+
+        ordered = tuple(
+            sorted((first, second), key=lambda value: value.sign_off_digest.hex_digest)
+        )
+        candidate = seal_candidate(
+            content,
+            sign_off_digests=tuple(value.sign_off_digest for value in ordered),
+        )
+        snapshot = EligibilityInputSnapshot.seal(
+            production_id=content.production_id,
+            candidate=candidate,
+            content=content,
+            edition_evidence=edition_evidence(edition=content.edition_ref),
+            policy=policy,
+            gate_set=gates,
+            sign_offs=ordered,
+            integrity_results=(),
+        )
+        assessment = ReleaseEligibilityEvaluator(SUPPORTED_EVALUATOR_REF).evaluate(
+            snapshot=snapshot,
+            eligibility_assessment_id=ASSESSMENT_ID,
+            assessed_at_us=ASSESSED_AT,
+        )
+
+        self.assertFalse(assessment.eligible)
+        gate = next(
+            value
+            for value in assessment.gate_results
+            if "external-signoff" in value.gate_code.value
+        )
+        self.assertEqual(gate.actual, "1 qualifying signers")
+
+
+class UnauthenticatedInputTests(unittest.TestCase):
+    """Fix round 2 — evaluator inputs must be named by the signed release content."""
+
+    HONEST_RESULT = IntegrityCheckResult(
+        IntegrityCheckCode("object-digests"), True, "verified"
+    )
+
+    def graph(self):
+        policy = seal_policy(empty_rules())
+        gates = gate_set()
+        honest = edition_evidence()
+        content = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=gates.ref,
+            provenance_input_digests=(honest.semantic_digest,),
+            integrity_input_digests=(self.HONEST_RESULT.semantic_digest,),
+        )
+        return policy, gates, content, seal_candidate(content)
+
+    def seal_with(self, edition_ev, results):
+        policy, gates, content, candidate = self.graph()
+        return EligibilityInputSnapshot.seal(
+            production_id=content.production_id,
+            candidate=candidate,
+            content=content,
+            edition_evidence=edition_ev(content),
+            policy=policy,
+            gate_set=gates,
+            sign_offs=(),
+            integrity_results=results,
+        )
+
+    def test_an_invented_uncertainty_report_is_rejected(self) -> None:
+        """Changing any observation changes the derived digest, so it is unsigned."""
+        with self.assertRaises(StaleReferenceError):
+            self.seal_with(
+                lambda content: edition_evidence(
+                    edition=content.edition_ref,
+                    observations=(
+                        UncertaintyObservation(UncertaintyKind.INAUDIBLE, 7, 700, 70),
+                    ),
+                ),
+                (),
+            )
+
+    def test_a_flipped_integrity_verdict_is_rejected(self) -> None:
+        """A caller cannot pair a signed digest with the opposite verdict."""
+        with self.assertRaises(StaleReferenceError):
+            self.seal_with(
+                lambda content: edition_evidence(edition=content.edition_ref),
+                (
+                    IntegrityCheckResult(
+                        IntegrityCheckCode("object-digests"), False, "verified"
+                    ),
+                ),
+            )
+
+    def test_evidence_named_by_the_signed_content_is_accepted(self) -> None:
+        snapshot = self.seal_with(
+            lambda content: edition_evidence(edition=content.edition_ref),
+            (self.HONEST_RESULT,),
+        )
+
+        self.assertEqual(snapshot, snapshot.validated())
+
+
+class CandidateReplayTests(unittest.TestCase):
+    """Fix round 2 — replay rules do not depend on iteration order."""
+
+    def test_an_id_conflict_is_rejected_regardless_of_position(self) -> None:
+        production, _, content = configured_production()
+        first = seal_candidate(content, candidate_id=ReleaseCandidateId(uid(60)))
+        production.assemble_candidate(
+            candidate=first, content=content, event_id=event_id(50), event_occurred_at_us=1
+        )
+        production.pull_events()
+        conflicting = ReleaseCandidateSnapshot.seal(
+            release_candidate_id=first.release_candidate_id,
+            production_id=production.production_id,
+            content_manifest_ref=content.content_manifest_ref,
+            included_sign_off_digests=(digest("2"),),
+            assembled_at_us=1_700_000_000_000_070,
+        )
+
+        with self.assertRaises(ValidationError):
+            production.assemble_candidate(
+                candidate=conflicting,
+                content=content,
+                event_id=event_id(51),
+                event_occurred_at_us=2,
+            )
+
+        self.assertEqual(production.candidates, (first,))
+        self.assertEqual(production.active_candidate_ref, first.ref)
+        self.assertEqual(production.pull_events(), ())
+
+    def test_reselecting_a_stored_candidate_emits_its_fact(self) -> None:
+        """A state change without a domain fact would persist silently."""
+        production, _, content = configured_production()
+        first = seal_candidate(content, candidate_id=ReleaseCandidateId(uid(61)))
+        production.assemble_candidate(
+            candidate=first, content=content, event_id=event_id(52), event_occurred_at_us=1
+        )
+        production.pull_events()
+
+        # Re-selecting the already-active snapshot is a true no-op.
+        production.assemble_candidate(
+            candidate=first, content=content, event_id=event_id(53), event_occurred_at_us=2
+        )
+        self.assertEqual(production.pull_events(), ())
+
+
+class GateRequirementForgeryTests(unittest.TestCase):
+    """Fix round 2 — a gate requirement is reconstructed, not trusted."""
+
+    def test_a_gate_set_reconstructs_every_requirement(self) -> None:
+        gates = gate_set((rights_holder_gate(),))
+
+        self.assertEqual(gates.validated(), gates)
+        self.assertEqual(
+            gates.requirements[0].validated(), gates.requirements[0]
+        )
+
+    def test_a_forged_requirement_credential_is_rejected(self) -> None:
+        gates = gate_set((rights_holder_gate(),))
+        forged_requirement = copy(gates.requirements[0])
+        object.__setattr__(
+            forged_requirement,
+            "credential",
+            ActorCredentialRef(
+                actor(40),
+                CredentialVerificationMethod.STEWARD_ATTESTATION,
+                AssuranceLevel.STEWARD_ATTESTED,
+            ),
+        )
+        forged = copy(gates)
+        object.__setattr__(forged, "requirements", (forged_requirement,))
+
+        with self.assertRaises(ValidationError):
+            forged.validated()
 
 
 if __name__ == "__main__":

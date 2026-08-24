@@ -26,7 +26,8 @@ from heritage_production.domain.release.eligibility import (
     EligibilityInputSnapshot,
     ReleaseEligibilityEvaluator,
 )
-from heritage_production.domain.release.gates import ExternalGateSet, digest_value
+from heritage_production.domain.release.canonical import digest_value
+from heritage_production.domain.release.gates import ExternalGateSet
 from heritage_production.domain.release.policy import ReleasePolicyVersion
 from heritage_production.domain.release.signoffs import ExternalSignOff
 from heritage_production.domain.shared import (

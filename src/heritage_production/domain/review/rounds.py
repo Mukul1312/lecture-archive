@@ -54,6 +54,22 @@ class ReviewerAssignment:
         if not assurance_satisfies(self.credential.assurance, self.minimum_assurance):
             raise ValidationError("credential assurance is below the reviewer minimum")
 
+    def validated(self) -> ReviewerAssignment:
+        """Rebuild this assignment; its credential is not digest-covered."""
+        try:
+            credential = ActorCredentialRef(
+                ActorId(self.credential.actor_id.value),
+                self.credential.verification_method,
+                self.credential.assurance,
+                self.credential.credential_fingerprint,
+                self.credential.public_key_artifact,
+            )
+        except AttributeError as error:
+            raise ValidationError("reviewer assignment credential is incomplete") from error
+        return ReviewerAssignment(
+            credential, RoleCode(self.role.value), self.minimum_assurance
+        )
+
     @property
     def actor_id(self) -> ActorId:
         return self.credential.actor_id
@@ -685,6 +701,15 @@ def _validate_closed_evidence_snapshot(
         type(value) is ReviewerAssignment for value in reviewer_assignments
     ):
         raise ValidationError("reviewer_assignments must be a tuple of ReviewerAssignment")
+    # The evidence digest binds only the target's stored semantic digest, so the
+    # manifest and assignments must be recomputed from their own fields here.
+    # Without this, forging target_manifest.production_id or .edition_ref leaves
+    # heritage-review-evidence-v1 byte-identical.
+    if target_manifest.validated() != target_manifest:
+        raise ValidationError("review target manifest failed reconstruction")
+    for assignment in reviewer_assignments:
+        if assignment.validated() != assignment:
+            raise ValidationError("a reviewer assignment failed reconstruction")
     if type(edition_ref) is not EditionRef or edition_ref != target_manifest.edition_ref:
         raise ValidationError("closed evidence edition is foreign to its target")
     if (

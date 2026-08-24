@@ -55,6 +55,7 @@ from heritage_production.domain.transcription import UncertaintyKind
 
 from tests.heritage_production.heritage_release_fixtures import (
     actor,
+    default_edition_evidence,
     attested_credential,
     closed_review,
     digest,
@@ -95,12 +96,16 @@ def edition_evidence(
     edition: object | None = None,
     owner: ProductionId | None = None,
 ) -> SelectedEditionEvidence:
-    return SelectedEditionEvidence(
-        production_id=owner or production_id(),
-        edition_ref=edition or edition_ref(),
-        scope_assessment=scope_assessment(uncovered),
-        uncertainty_observations=observations,
+    return default_edition_evidence(
+        edition=edition, observations=observations, uncovered=uncovered, owner=owner
     )
+
+
+def integrity_result(
+    code: str, passed: bool, detail: str, character: str = ""
+) -> IntegrityCheckResult:
+    """An integrity result; its digest is derived from this exact content."""
+    return IntegrityCheckResult(IntegrityCheckCode(code), passed, detail)
 
 
 def gate_set(requirements: tuple[ExternalGateRequirement, ...] = ()) -> ExternalGateSet:
@@ -126,8 +131,29 @@ def build_snapshot(
     review_evidence = evidence if evidence is not None else closed_review()
     policy = seal_policy(rules if rules is not None else empty_rules())
     gates = gate_set(gate_requirements)
+    selected_edition = (
+        edition_evidence_override
+        if edition_evidence_override is not None
+        else edition_evidence(
+            observations=observations, edition=review_evidence.edition_ref
+        )
+    )
     content = seal_content(
-        evidence=review_evidence, policy_ref=policy.ref, gate_set_ref=gates.ref
+        evidence=review_evidence,
+        policy_ref=policy.ref,
+        gate_set_ref=gates.ref,
+        provenance_input_digests=tuple(
+            sorted(
+                {selected_edition.semantic_digest},
+                key=lambda value: value.hex_digest,
+            )
+        ),
+        integrity_input_digests=tuple(
+            sorted(
+                {value.semantic_digest for value in integrity_results},
+                key=lambda value: value.hex_digest,
+            )
+        ),
     )
     candidate = seal_candidate(
         content,
@@ -142,13 +168,7 @@ def build_snapshot(
         production_id=content.production_id,
         candidate=candidate,
         content=content,
-        edition_evidence=(
-            edition_evidence_override
-            if edition_evidence_override is not None
-            else edition_evidence(
-                observations=observations, edition=review_evidence.edition_ref
-            )
-        ),
+        edition_evidence=selected_edition,
         policy=policy,
         gate_set=gates,
         sign_offs=tuple(
@@ -337,8 +357,8 @@ class EligibilityInputSnapshotTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             build_snapshot(
                 integrity_results=(
-                    IntegrityCheckResult(IntegrityCheckCode("a"), True, "ok"),
-                    IntegrityCheckResult(IntegrityCheckCode("a"), False, "no"),
+                    integrity_result("a", True, "ok", "5"),
+                    integrity_result("a", False, "no", "5"),
                 )
             )
         with self.assertRaises(ValidationError):
@@ -373,21 +393,32 @@ class EligibilityInputSnapshotTests(unittest.TestCase):
 
 
 class EvaluatorCompatibilityTests(unittest.TestCase):
-    def test_incompatible_evaluator_is_a_dependency_failure(self) -> None:
-        snapshot = build_snapshot()
-        other = PolicyEvaluatorRef(
-            "heritage-transcript-evaluator",
-            "2.0.0",
-            "heritage-transcript-policy-v1",
-            ContentDigest("sha256", "e" * 64),
-        )
-
-        with self.assertRaises(EvaluatorUnavailableError):
-            ReleaseEligibilityEvaluator(other).evaluate(
-                snapshot=snapshot,
-                eligibility_assessment_id=ASSESSMENT_ID,
-                assessed_at_us=ASSESSED_AT,
-            )
+    def test_an_unavailable_evaluator_build_cannot_be_loaded(self) -> None:
+        # Design 13.2 fails closed: an evaluator this build does not ship must
+        # not be constructible, so it can never interpret a policy.
+        for label, other in (
+            (
+                "another version",
+                PolicyEvaluatorRef(
+                    EVALUATOR.evaluator_name,
+                    "2.0.0",
+                    EVALUATOR.supported_policy_schema,
+                    EVALUATOR.implementation_build_digest,
+                ),
+            ),
+            (
+                "another build digest",
+                PolicyEvaluatorRef(
+                    EVALUATOR.evaluator_name,
+                    EVALUATOR.semantic_version,
+                    EVALUATOR.supported_policy_schema,
+                    ContentDigest("sha256", "e" * 64),
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(EvaluatorUnavailableError):
+                    ReleaseEligibilityEvaluator(other)
 
 
 class EmptyPolicyEvaluationTests(unittest.TestCase):
@@ -490,9 +521,7 @@ class IntegrityGateTests(unittest.TestCase):
             build_snapshot(
                 rules=rules,
                 integrity_results=(
-                    IntegrityCheckResult(
-                        IntegrityCheckCode("object-digests"), False, "digest mismatch"
-                    ),
+                    integrity_result("object-digests", False, "digest mismatch", "1"),
                 ),
             )
         )
@@ -523,9 +552,7 @@ class IntegrityGateTests(unittest.TestCase):
             build_snapshot(
                 rules=rules,
                 integrity_results=(
-                    IntegrityCheckResult(
-                        IntegrityCheckCode("object-digests"), True, "verified"
-                    ),
+                    integrity_result("object-digests", True, "verified", "1"),
                 ),
             )
         )
@@ -857,7 +884,12 @@ class SignOffGateTests(unittest.TestCase):
     def test_present_verified_sign_off_satisfies_the_policy_gate(self) -> None:
         policy = seal_policy(self.external_rules(AssuranceLevel.VERIFIED_SIGNATURE))
         gates = gate_set()
-        content = seal_content(policy_ref=policy.ref, gate_set_ref=gates.ref)
+        content = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=gates.ref,
+            provenance_input_digests=(edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+        )
         sign_off = self.signed_content_sign_off(content)
         candidate = seal_candidate(content, sign_off_digests=(sign_off.sign_off_digest,))
         snapshot = EligibilityInputSnapshot.seal(
@@ -878,7 +910,12 @@ class SignOffGateTests(unittest.TestCase):
     def test_sign_off_for_other_content_never_satisfies_the_gate(self) -> None:
         policy = seal_policy(self.external_rules(AssuranceLevel.VERIFIED_SIGNATURE))
         gates = gate_set()
-        content = seal_content(policy_ref=policy.ref, gate_set_ref=gates.ref)
+        content = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=gates.ref,
+            provenance_input_digests=(edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+        )
         foreign = verified_sign_off(target=release_target())
         candidate = seal_candidate(content, sign_off_digests=(foreign.sign_off_digest,))
         snapshot = EligibilityInputSnapshot.seal(
@@ -990,8 +1027,8 @@ class DeterminismTests(unittest.TestCase):
             maximum_unresolved_findings=0,
         )
         results = (
-            IntegrityCheckResult(IntegrityCheckCode("a-check"), True, "ok"),
-            IntegrityCheckResult(IntegrityCheckCode("b-check"), True, "ok"),
+            integrity_result("a-check", True, "ok", "3"),
+            integrity_result("b-check", True, "ok", "4"),
         )
 
         first = evaluate(build_snapshot(rules=rules, integrity_results=results))

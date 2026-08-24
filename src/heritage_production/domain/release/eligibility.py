@@ -18,7 +18,6 @@ from heritage_production.domain.review import (
 )
 from heritage_production.domain.shared import (
     ActorCredentialRef,
-    ActorId,
     AssuranceLevel,
     ContentDigest,
     EditionRef,
@@ -49,7 +48,8 @@ from .assessment import (
     GateType,
 )
 from .content import ReleaseCandidateSnapshot, ReleaseContentBinding
-from .gates import ExternalGateRequirement, ExternalGateSet, credential_key, revalidate_credential
+from .canonical import credential_key
+from .gates import ExternalGateRequirement, ExternalGateSet
 from .signoffs import ExternalSignOff
 from .policy import (
     BASIS_POINTS_MAX,
@@ -60,11 +60,43 @@ from .policy import (
 )
 
 
-_ASSURANCE_STRENGTH = {
-    AssuranceLevel.UNVERIFIED: 0,
-    AssuranceLevel.STEWARD_ATTESTED: 1,
-    AssuranceLevel.VERIFIED_SIGNATURE: 2,
-}
+_EVALUATOR_NAME = "heritage-transcript-evaluator"
+_EVALUATOR_VERSION = "1.0.0"
+_EVALUATOR_POLICY_SCHEMA = "heritage-transcript-policy-v1"
+
+
+def _evaluator_build_digest() -> ContentDigest:
+    """Fingerprint this evaluator's observable decision surface.
+
+    A stdlib-only domain cannot hash its own wheel, so the build digest is
+    derived from the vocabulary that determines every gate this evaluator can
+    emit. Adding, removing, or renaming a gate type, metric, or scope changes
+    the digest, which makes assessments produced by an older surface fail
+    closed against design section 13.2 rather than be reinterpreted.
+    Task 9 replaces this with a real distribution build digest.
+    """
+    return semantic_digest(
+        "heritage-evaluator-build-v1",
+        {
+            "evaluator_name": _EVALUATOR_NAME,
+            "semantic_version": _EVALUATOR_VERSION,
+            "supported_policy_schema": _EVALUATOR_POLICY_SCHEMA,
+            "gate_types": sorted(value.value for value in GateType),
+            "gate_outcomes": sorted(value.value for value in GateOutcome),
+            "gate_scopes": sorted(value.value for value in GateScope),
+            "uncertainty_metrics": sorted(
+                value.value for value in UncertaintyLimitMetric
+            ),
+        },
+    )
+
+
+SUPPORTED_EVALUATOR_REF = PolicyEvaluatorRef(
+    _EVALUATOR_NAME,
+    _EVALUATOR_VERSION,
+    _EVALUATOR_POLICY_SCHEMA,
+    _evaluator_build_digest(),
+)
 
 
 def _digest_value(value: ContentDigest) -> dict[str, JsonValue]:
@@ -219,6 +251,16 @@ class SelectedEditionEvidence:
             ],
         }
 
+    @property
+    def semantic_digest(self) -> ContentDigest:
+        """The digest of this exact assertion, derived rather than declared.
+
+        Release content seals this value among its provenance inputs, so a
+        caller cannot pair a signed digest with a different claim: changing any
+        observation changes the digest and it is no longer in the signed set.
+        """
+        return semantic_digest("heritage-edition-evidence-v1", self.payload())
+
 
 @dataclass(frozen=True, slots=True)
 class IntegrityCheckResult:
@@ -243,6 +285,11 @@ class IntegrityCheckResult:
             "passed": self.passed,
             "detail": self.detail,
         }
+
+    @property
+    def semantic_digest(self) -> ContentDigest:
+        """The digest of this exact result, derived rather than declared."""
+        return semantic_digest("heritage-integrity-result-v1", self.payload())
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,8 +360,9 @@ def resolve_sign_off_requirements(
             continue
         stronger_assurance = (
             requirement.minimum_assurance
-            if _ASSURANCE_STRENGTH[requirement.minimum_assurance]
-            > _ASSURANCE_STRENGTH[existing.minimum_assurance]
+            if assurance_satisfies(
+                requirement.minimum_assurance, existing.minimum_assurance
+            )
             else existing.minimum_assurance
         )
         merged[key] = ResolvedSignOffRequirement(
@@ -476,6 +524,23 @@ class EligibilityInputSnapshot:
                 "supplied sign-offs do not exactly match the candidate snapshot"
             )
 
+        # The evaluator cannot recompute uncertainty from a sealed edition, nor
+        # run an integrity check -- both are infrastructure concerns. What it can
+        # require is that each supplied observation names evidence the sealed,
+        # externally signed release content already committed to, so a caller
+        # cannot invent an arbitrary uncertainty or integrity claim.
+        provenance = {value.hex_digest for value in self.content.provenance_input_digests}
+        if self.edition_evidence.semantic_digest.hex_digest not in provenance:
+            raise StaleReferenceError(
+                "selected-edition evidence is not named by the sealed release content"
+            )
+        integrity = {value.hex_digest for value in self.content.integrity_input_digests}
+        for result in self.integrity_results:
+            if result.semantic_digest.hex_digest not in integrity:
+                raise StaleReferenceError(
+                    "an integrity result is not named by the sealed release content"
+                )
+
         expected_digest = semantic_digest(
             "heritage-eligibility-input-v1",
             _input_payload(
@@ -627,6 +692,13 @@ class ReleaseEligibilityEvaluator:
 
     def __init__(self, evaluator_ref: PolicyEvaluatorRef) -> None:
         _require_exact(evaluator_ref, PolicyEvaluatorRef, "evaluator_ref")
+        # Fail closed: this process ships exactly one evaluator implementation,
+        # so a ref naming any other build cannot be loaded and must not be
+        # interpreted by this code (design 13.2, brief ruling 4).
+        if evaluator_ref != SUPPORTED_EVALUATOR_REF:
+            raise EvaluatorUnavailableError(
+                "the exact pinned policy evaluator is not available in this build"
+            )
         self._evaluator_ref = evaluator_ref
 
     @property
@@ -984,7 +1056,12 @@ class ReleaseEligibilityEvaluator:
                         key=lambda value: value.hex_digest,
                     )
                 )
-            passed = len(matched) >= requirement.required_count
+            # A required count means that many distinct signers, keyed by actor.
+            # Keying by full credential would let one actor holding two
+            # credentials count as two signers, which is the same defect in
+            # reverse. Review keys its coverage by (role, actor) for this reason.
+            signers = {value.credential.actor_id.value for value in matched}
+            passed = len(signers) >= requirement.required_count
             gates.append(
                 self._result(
                     requirement.gate_code.value,
@@ -996,7 +1073,7 @@ class ReleaseEligibilityEvaluator:
                         f"{requirement.role.value} sign-offs at "
                         f"{requirement.minimum_assurance.value}"
                     ),
-                    f"{len(matched)} qualifying sign-offs",
+                    f"{len(signers)} qualifying signers",
                     evidence,
                 )
             )

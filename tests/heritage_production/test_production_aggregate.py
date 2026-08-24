@@ -40,6 +40,7 @@ from heritage_production.domain.shared import (
 
 from tests.heritage_production.heritage_release_fixtures import (
     actor,
+    default_edition_evidence,
     artifact,
     attested_credential,
     closed_review,
@@ -188,7 +189,14 @@ def configured_production(
         event_occurred_at_us=1_700_000_000_000_007,
     )
     production.pull_events()
-    content = seal_content(policy_ref=policy.ref, gate_set_ref=gates.ref)
+    # Release content must seal the derived digest of the evidence the
+    # evaluator will later be handed, or the snapshot refuses it.
+    content = seal_content(
+        policy_ref=policy.ref,
+        gate_set_ref=gates.ref,
+        provenance_input_digests=(default_edition_evidence().semantic_digest,),
+        integrity_input_digests=(),
+    )
     return production, policy, content
 
 

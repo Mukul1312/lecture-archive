@@ -6,6 +6,7 @@ from copy import copy
 import unittest
 
 from heritage_production.domain.production import (
+    gate_is_satisfied_by,
     ExternalGateRequirement,
     ExternalGateSet,
     ExternalSignOff,
@@ -588,10 +589,10 @@ class GateSatisfactionTests(unittest.TestCase):
         requirement = rights_holder_requirement()
         sign_off = verified_sign_off()
 
-        self.assertTrue(requirement.is_satisfied_by(sign_off))
-        self.assertFalse(requirement.is_satisfied_by(attested_sign_off()))
+        self.assertTrue(gate_is_satisfied_by(requirement, sign_off))
+        self.assertFalse(gate_is_satisfied_by(requirement, attested_sign_off()))
         self.assertFalse(
-            requirement.is_satisfied_by(verified_sign_off(decision=SignOffDecision.DECLINED))
+            gate_is_satisfied_by(requirement, verified_sign_off(decision=SignOffDecision.DECLINED))
         )
 
     def test_verified_signature_satisfies_an_attested_minimum(self) -> None:
@@ -604,7 +605,7 @@ class GateSatisfactionTests(unittest.TestCase):
             SignOffTargetRule(SignOffTargetKind.RELEASE_CONTENT),
         )
 
-        self.assertTrue(requirement.is_satisfied_by(verified_sign_off()))
+        self.assertTrue(gate_is_satisfied_by(requirement, verified_sign_off()))
 
     def test_attested_evidence_never_satisfies_a_verified_minimum(self) -> None:
         requirement = ExternalGateRequirement(
@@ -616,7 +617,7 @@ class GateSatisfactionTests(unittest.TestCase):
             SignOffTargetRule(SignOffTargetKind.RELEASE_CONTENT),
         )
 
-        self.assertTrue(requirement.is_satisfied_by(attested_sign_off()))
+        self.assertTrue(gate_is_satisfied_by(requirement, attested_sign_off()))
 
         stricter = ExternalGateRequirement(
             GateCode("archivist-approval"),
@@ -627,7 +628,7 @@ class GateSatisfactionTests(unittest.TestCase):
             SignOffTargetRule(SignOffTargetKind.RELEASE_CONTENT),
         )
 
-        self.assertFalse(stricter.is_satisfied_by(attested_sign_off()))
+        self.assertFalse(gate_is_satisfied_by(stricter, attested_sign_off()))
 
 
 if __name__ == "__main__":

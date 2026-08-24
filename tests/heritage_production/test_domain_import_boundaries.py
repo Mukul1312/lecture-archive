@@ -23,14 +23,37 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = PROJECT_ROOT / "src" / "heritage_production"
 
 
+def module_name_for(source_file: Path) -> str:
+    """The absolute dotted name of one module inside the package."""
+    parts = source_file.relative_to(PACKAGE_ROOT).with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(("heritage_production", *parts))
+
+
 def imported_module_names(source_file: Path) -> list[str]:
+    """Every module this file imports, with relative imports resolved.
+
+    Relative imports must be resolved or the cycle check is blind to exactly
+    the intra-package edges it exists to find.
+    """
     tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+    own = module_name_for(source_file).split(".")
+    # A package __init__ is its own package; a plain module lives inside its parent.
+    package = own if source_file.name == "__init__.py" else own[:-1]
     names: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            names.append(node.module)
-        elif isinstance(node, ast.Import):
+        if isinstance(node, ast.Import):
             names.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if not node.level:
+                if node.module:
+                    names.append(node.module)
+                continue
+            if node.level > len(package):
+                continue
+            base = package[: len(package) - node.level + 1]
+            names.append(".".join((*base, *(node.module.split(".") if node.module else ()))))
     return names
 
 
@@ -101,12 +124,7 @@ class DomainImportBoundaryTests(unittest.TestCase):
         """Walk the real intra-domain import graph and prove it is acyclic."""
         graph: dict[str, set[str]] = {}
         for source_file in (PACKAGE_ROOT / "domain").rglob("*.py"):
-            relative = source_file.relative_to(PACKAGE_ROOT).with_suffix("")
-            parts = relative.parts
-            module = "heritage_production.domain." + ".".join(
-                parts[1:-1] if parts[-1] == "__init__" else parts[1:]
-            )
-            module = module.rstrip(".")
+            module = module_name_for(source_file)
             targets = {
                 name
                 for name in imported_module_names(source_file)
@@ -122,7 +140,9 @@ class DomainImportBoundaryTests(unittest.TestCase):
             if node in done:
                 return
             if node in visiting:
-                cycles.append(" -> ".join((*trail, node)))
+                # Report the cycle itself, not the path that reached it.
+                start = trail.index(node)
+                cycles.append(" -> ".join((*trail[start:], node)))
                 return
             visiting.add(node)
             for target in sorted(graph.get(node, ())):
@@ -133,7 +153,32 @@ class DomainImportBoundaryTests(unittest.TestCase):
         for node in sorted(graph):
             walk(node, ())
 
-        self.assertEqual(cycles, [])
+        # review.findings <-> review.rounds is a pre-existing Task 4 cycle. It is
+        # recorded here rather than silently tolerated: this task must add no new
+        # cycle, and untangling Task 4's is out of Task 5 scope.
+        known = {
+            frozenset(
+                {
+                    "heritage_production.domain.review.findings",
+                    "heritage_production.domain.review.rounds",
+                }
+            )
+        }
+        unexpected = [
+            cycle
+            for cycle in cycles
+            if frozenset(cycle.split(" -> ")) not in known
+        ]
+
+        self.assertEqual(unexpected, [], f"new import cycle(s): {unexpected}")
+
+    def test_the_relative_import_resolver_sees_intra_package_edges(self) -> None:
+        """The cycle walk is worthless if relative imports are dropped."""
+        signoffs = PACKAGE_ROOT / "domain" / "release" / "signoffs.py"
+        names = imported_module_names(signoffs)
+
+        self.assertIn("heritage_production.domain.release.canonical", names)
+        self.assertIn("heritage_production.domain.release.gates", names)
 
     def test_both_domain_packages_import_cleanly_in_either_order(self) -> None:
         for first, second in (

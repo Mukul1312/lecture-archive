@@ -6,6 +6,7 @@ from copy import copy
 import unittest
 
 from heritage_production.domain.release import (
+    SUPPORTED_EVALUATOR_REF,
     BlockingFindingRule,
     IntegrityCheckCode,
     ReleasePolicyRules,
@@ -38,12 +39,9 @@ from tests.heritage_production.heritage_release_fixtures import (
 )
 
 
-EVALUATOR = PolicyEvaluatorRef(
-    "heritage-transcript-evaluator",
-    "1.0.0",
-    "heritage-transcript-policy-v1",
-    ContentDigest("sha256", "a" * 64),
-)
+# The single evaluator this build ships; a policy pinning any other build
+# cannot be loaded (design 13.2), so tests bind the real one.
+EVALUATOR = SUPPORTED_EVALUATOR_REF
 
 
 def empty_rules() -> ReleasePolicyRules:
@@ -281,12 +279,14 @@ class ReleasePolicyVersionSealTests(unittest.TestCase):
                 "policy_schema_version": 1,
                 "policy_schema_code": "heritage-transcript-policy-v1",
                 "evaluator_ref": {
-                    "evaluator_name": "heritage-transcript-evaluator",
-                    "semantic_version": "1.0.0",
-                    "supported_policy_schema": "heritage-transcript-policy-v1",
+                    "evaluator_name": EVALUATOR.evaluator_name,
+                    "semantic_version": EVALUATOR.semantic_version,
+                    "supported_policy_schema": EVALUATOR.supported_policy_schema,
                     "implementation_build_digest": {
                         "algorithm": "sha256",
-                        "hex_digest": "a" * 64,
+                        "hex_digest": (
+                            EVALUATOR.implementation_build_digest.hex_digest
+                        ),
                     },
                 },
                 "rules": {

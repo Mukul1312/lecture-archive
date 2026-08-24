@@ -16,6 +16,7 @@ from heritage_production.domain.release.signoffs import (
     ExternalSignOffTarget,
     external_signoff_context_digest,
     external_signoff_intent_digest,
+    gate_is_satisfied_by,
 )
 
 from .sources import AttachedSource, EditionSelection
@@ -35,4 +36,5 @@ __all__ = [
     "ReleaseApproval",
     "external_signoff_context_digest",
     "external_signoff_intent_digest",
+    "gate_is_satisfied_by",
 ]
