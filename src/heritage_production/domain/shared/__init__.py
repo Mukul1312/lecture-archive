@@ -59,10 +59,20 @@ from .refs import (
 )
 from .transcript import TranscriptText
 from .time import DecimalTimeConversion, decimal_seconds_to_microseconds
+from .trust import (
+    ActorAssuranceEvidence,
+    ActorAssuranceKind,
+    RoleCode,
+    SignOffDecision,
+    SignOffTargetKind,
+    SignatureProof,
+)
 
 __all__ = [
     "ActorId",
     "ActorCredentialRef",
+    "ActorAssuranceEvidence",
+    "ActorAssuranceKind",
     "ActorRef",
     "AggregateEventRecorder",
     "ArtifactId",
@@ -102,6 +112,10 @@ __all__ = [
     "ReviewRoundId",
     "ReviewSubmissionId",
     "ReviewTargetManifestRef",
+    "RoleCode",
+    "SignOffDecision",
+    "SignOffTargetKind",
+    "SignatureProof",
     "RubricId",
     "RubricRef",
     "SegmentId",
