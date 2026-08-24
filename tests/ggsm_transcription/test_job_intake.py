@@ -395,3 +395,13 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         self.assertEqual(staging.read_bytes(), b"bytes")
         self.assertEqual(metadata["codec"], "mp3")
         self.assertEqual(metadata["tool_versions"]["ffprobe"], "ffprobe version 7.0")
+
+    def test_crash_safe_creation_staging_is_git_ignored(self) -> None:
+        # Break caught: temporary construction data could be accidentally committed after a crash.
+        repository = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", "data/transcribe/.creating/interrupted-job/job.json"],
+            cwd=repository,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
