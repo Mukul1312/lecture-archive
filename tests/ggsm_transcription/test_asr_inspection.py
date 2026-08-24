@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
@@ -102,7 +103,12 @@ class ASRContractTests(unittest.TestCase):
         self.media = FakeMediaAdapter()
         self.service = ASRService(self.store, self.model, self.media)
 
-    def _register_direct_full_asr_candidate(self, job_id: str, runtime: dict[str, str]) -> None:
+    def _register_direct_full_asr_candidate(
+        self,
+        job_id: str,
+        runtime: dict[str, str],
+        metadata_extra: dict[str, object] | None = None,
+    ) -> None:
         state = self.store.load_job(job_id)
         root = self.store.job_root(job_id)
         metadata = {
@@ -110,6 +116,8 @@ class ASRContractTests(unittest.TestCase):
             "configuration": dict(DEFAULT_ASR_CONFIGURATION),
             "runtime": runtime,
         }
+        if metadata_extra is not None:
+            metadata.update(metadata_extra)
         (root / "asr" / "full.jsonl").write_text(
             '{"end": 1.0, "id": 0, "start": 0.0, "text": "direct candidate"}\n',
             encoding="utf-8",
@@ -121,6 +129,16 @@ class ASRContractTests(unittest.TestCase):
             transaction.register_artifact("asr/full.jsonl")
             transaction.register_artifact("asr/metadata.json")
             transaction.record_asr_metadata(metadata)
+
+    @staticmethod
+    def _replace_retained_intent_payload(intent_path: Path, relative: str, payload: bytes) -> None:
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        intent["outputs"][relative] = {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "byte_size": len(payload),
+            "payload_base64": base64.b64encode(payload).decode("ascii"),
+        }
+        intent_path.write_text(json.dumps(intent, sort_keys=True) + "\n", encoding="utf-8")
 
     def test_full_run_uses_the_fixed_configuration_and_records_runtime_metadata(self) -> None:
         # Break caught: a quiet model/configuration change makes a future draft irreproducible.
@@ -148,6 +166,25 @@ class ASRContractTests(unittest.TestCase):
                     f"https://archive.example/provenance-{name.replace(' ', '-')}"
                 )
                 self._register_direct_full_asr_candidate(job["job_id"], runtime)
+                with self.assertRaises(ArtifactValidationError):
+                    with self.store.transaction(job["job_id"]) as transaction:
+                        transaction.complete_asr()
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
+    def test_typed_asr_completion_rejects_top_level_remote_provenance_claims(self) -> None:
+        # Break caught: a local-looking nested runtime let an explicit remote backend claim escape the public typed completion boundary.
+        cases = (
+            {"backend": "runpod"},
+            {"remote_endpoint": "https://runpod.example/asr"},
+        )
+        for metadata_extra in cases:
+            with self.subTest(metadata_extra=metadata_extra):
+                job = IntakeService(self.store, FakeSourceAdapter(repr(metadata_extra).encode())).intake(
+                    f"https://archive.example/top-level-{next(iter(metadata_extra))}"
+                )
+                self._register_direct_full_asr_candidate(
+                    job["job_id"], local_runtime_metadata(), metadata_extra
+                )
                 with self.assertRaises(ArtifactValidationError):
                     with self.store.transaction(job["job_id"]) as transaction:
                         transaction.complete_asr()
@@ -599,6 +636,43 @@ class ASRContractTests(unittest.TestCase):
             "C:/fake/snapshot-1",
         )
 
+    def test_full_asr_recovery_rejects_semantically_poisoned_retained_metadata_before_missing_final_write(self) -> None:
+        # Break caught: a hash-consistent but semantically invalid retained metadata payload was written to the missing immutable final before validation.
+        original_atomic = asr_module._atomic_text
+        job = IntakeService(self.store, FakeSourceAdapter(b"poisoned-full")).intake(
+            "https://archive.example/poisoned-full"
+        )
+        first = ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter())
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.name == "full.jsonl":
+                raise OSError("full JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                first.transcribe(job["job_id"])
+
+        root = self.store.job_root(job["job_id"])
+        full_path = root / "asr" / "full.jsonl"
+        metadata_path = root / "asr" / "metadata.json"
+        original_full = full_path.read_bytes()
+        self.assertFalse(metadata_path.exists())
+        self._replace_retained_intent_payload(root / "asr" / ".full-publication.json", "asr/metadata.json", b"{}\n")
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("full recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("full recovery called a runtime adapter")
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, PoisonRetryModel(), FakeMediaAdapter()).transcribe(job["job_id"])
+        self.assertEqual(full_path.read_bytes(), original_full)
+        self.assertFalse(metadata_path.exists())
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+
     def test_full_asr_recovery_refuses_stale_malformed_legacy_or_partially_registered_intents_without_retrying(self) -> None:
         # Break caught: a compromised or insufficient interrupted-publication state could silently rerun ASR or overwrite immutable evidence.
         original_atomic = asr_module._atomic_text
@@ -705,6 +779,123 @@ class ASRContractTests(unittest.TestCase):
         self.assertEqual(model.runtime_calls, 1)
         self.assertEqual(len(media.calls), 1)
         self.assertIn("rerun-1", recovered["jsonl_path"].read_text(encoding="utf-8"))
+
+    def test_rerun_recovery_rejects_semantically_poisoned_retained_metadata_before_missing_final_write(self) -> None:
+        # Break caught: rerun recovery wrote a hash-consistent but invalid retained metadata payload before semantic validation.
+        ready = self.service.transcribe(self.job["job_id"])
+        first = ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter())
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.parent.name == "reruns" and path.name.endswith(".jsonl"):
+                raise OSError("rerun JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                first.rerun_span(ready["job_id"], 1.0, 2.0)
+
+        root = self.store.job_root(ready["job_id"])
+        intent_path = next((root / "asr" / "reruns").glob(".*.publication.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        jsonl_relative = next(relative for relative in intent["outputs"] if relative.endswith(".jsonl"))
+        metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
+        jsonl_path = root / Path(jsonl_relative)
+        metadata_path = root / Path(metadata_relative)
+        original_jsonl = jsonl_path.read_bytes()
+        self.assertFalse(metadata_path.exists())
+        self._replace_retained_intent_payload(intent_path, metadata_relative, b"{}\n")
+
+        class PoisonRetryModel:
+            def transcribe(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
+                raise AssertionError("rerun recovery called a model adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("rerun recovery called a model runtime adapter")
+
+        class PoisonRetryMedia:
+            def extract_span(self, *_args: object, **_kwargs: object) -> None:
+                raise AssertionError("rerun recovery called a media adapter")
+
+            def runtime_metadata(self) -> dict[str, str]:
+                raise AssertionError("rerun recovery called a media runtime adapter")
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, PoisonRetryModel(), PoisonRetryMedia()).rerun_span(ready["job_id"], 1.0, 2.0)
+        self.assertEqual(jsonl_path.read_bytes(), original_jsonl)
+        self.assertFalse(metadata_path.exists())
+        self.assertEqual(self.store.load_job(ready["job_id"])["stage"], "asr_ready")
+
+    def test_rerun_recovery_rejects_boolean_span_bound_before_missing_final_write(self) -> None:
+        # Break caught: Python equality let True stand in for 1.0 in retained rerun metadata.
+        ready = self.service.transcribe(self.job["job_id"])
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_jsonl(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.parent.name == "reruns" and path.name.endswith(".jsonl"):
+                raise OSError("rerun JSONL interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_jsonl):
+            with self.assertRaises(OSError):
+                ASRService(self.store, FakeModelAdapter(), FakeMediaAdapter()).rerun_span(
+                    ready["job_id"], 1.0, 2.0
+                )
+
+        root = self.store.job_root(ready["job_id"])
+        intent_path = next((root / "asr" / "reruns").glob(".*.publication.json"))
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        metadata_relative = next(relative for relative in intent["outputs"] if relative.endswith(".metadata.json"))
+        retained = json.loads(
+            base64.b64decode(intent["outputs"][metadata_relative]["payload_base64"].encode("ascii"))
+        )
+        retained["start_seconds"] = True
+        self._replace_retained_intent_payload(
+            intent_path,
+            metadata_relative,
+            (json.dumps(retained, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        metadata_path = root / Path(metadata_relative)
+        self.assertFalse(metadata_path.exists())
+
+        retry_model, retry_media = FakeModelAdapter(), FakeMediaAdapter()
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, retry_model, retry_media).rerun_span(ready["job_id"], 1.0, 2.0)
+        self.assertEqual(retry_model.calls, [])
+        self.assertEqual(retry_media.calls, [])
+        self.assertFalse(metadata_path.exists())
+
+    def test_inspection_recovery_rejects_semantically_poisoned_retained_markdown_before_missing_final_write(self) -> None:
+        # Break caught: inspection recovery wrote retained non-deterministic Markdown before semantic validation.
+        ready = self.service.transcribe(self.job["job_id"])
+        original_atomic = asr_module._atomic_text
+
+        def fail_after_report_json(path: Path, text: str) -> None:
+            original_atomic(path, text)
+            if path.name == "report.json":
+                raise OSError("inspection JSON interrupted")
+
+        with patch.object(asr_module, "_atomic_text", side_effect=fail_after_report_json):
+            with self.assertRaises(OSError):
+                self.service.inspect(ready["job_id"])
+
+        root = self.store.job_root(ready["job_id"])
+        report_json = root / "inspection" / "report.json"
+        report_markdown = root / "inspection" / "report.md"
+        original_json = report_json.read_bytes()
+        self.assertFalse(report_markdown.exists())
+        self._replace_retained_intent_payload(
+            root / "inspection" / ".publication.json", "inspection/report.md", b"# poisoned inspection\n"
+        )
+
+        retry_model, retry_media = FakeModelAdapter(), FakeMediaAdapter()
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, retry_model, retry_media).inspect(ready["job_id"])
+        self.assertEqual(retry_model.calls, [])
+        self.assertEqual(retry_media.calls, [])
+        self.assertEqual(report_json.read_bytes(), original_json)
+        self.assertFalse(report_markdown.exists())
+        self.assertEqual(self.store.load_job(ready["job_id"])["stage"], "asr_ready")
 
     def test_rerun_and_inspection_publication_recover_exact_partial_evidence_at_each_boundary(self) -> None:
         # Break caught: supplemental and inspection evidence became permanently non-retryable after a two-file interruption.
