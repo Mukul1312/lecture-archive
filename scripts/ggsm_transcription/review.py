@@ -507,6 +507,21 @@ class ReviewDeliveryService:
         chunks = manifest.get("chunks")
         if not isinstance(chunks, list) or len(chunks) != len(expected["chunks"]):  # type: ignore[arg-type]
             raise ArtifactValidationError("final review coverage is incomplete")
+        expected_paths = {
+            "review/manifest.json",
+            *(str(chunk["path"]) for chunk in expected["chunks"]),  # type: ignore[union-attr]
+        }
+        registered_paths = {path for path in state["artifacts"] if path.startswith("review/")}
+        review_root = self.store.job_root(job_id) / "review"
+        try:
+            entries = list(review_root.iterdir())
+        except OSError as error:
+            raise ArtifactValidationError("final review inventory is unreadable") from error
+        actual_paths = {f"review/{entry.name}" for entry in entries}
+        if registered_paths != expected_paths or actual_paths != expected_paths:
+            raise ArtifactValidationError("final review inventory contains missing or unexpected evidence")
+        for relative_path in expected_paths:
+            self.store.validate_output_path(job_id, relative_path)
         bodies: list[str] = []
         global_events: list[tuple[float, float]] = []
         for expected_chunk, final_chunk in zip(expected["chunks"], chunks, strict=True):  # type: ignore[union-attr]

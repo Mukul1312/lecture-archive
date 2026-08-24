@@ -696,6 +696,54 @@ class ReviewDeliveryContractTests(unittest.TestCase):
         self.store.validate_artifact(handoff["job_id"], "delivery/handoff.json")
         self.assertEqual(service.handoff(handoff["job_id"])["stage"], "handed_off")
 
+    def test_review_completion_rejects_extra_inventory_after_publication_boundary(self) -> None:
+        job = self._inspected()
+        service = ReviewDeliveryService(self.store)
+        service.prepare_review(job["job_id"])
+        self._mark_reviewed(
+            job["job_id"],
+            ["[00:00:00] Opening.\n\n[00:05:00] More.\n\n[00:10:00] Closing."],
+        )
+        original_writer = self.store._write_manifest
+        calls = 0
+
+        def fail_completion_manifest(root: Path, state: dict[str, object]) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("completion manifest interrupted")
+            original_writer(root, state)  # type: ignore[arg-type]
+
+        with patch.object(self.store, "_write_manifest", side_effect=fail_completion_manifest):
+            with self.assertRaisesRegex(JobValidationError, "manifest replacement"):
+                service.record_review(job["job_id"])
+
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "inspected")
+        extra = self.store.job_root(job["job_id"]) / "review" / "chunk-999.md"
+        extra.write_text("unregistered extra review evidence", encoding="utf-8")
+
+        with self.assertRaisesRegex(ArtifactValidationError, "unexpected"):
+            with self.store.transaction(job["job_id"]) as transaction:
+                transaction.complete_review()
+        self.assertEqual(self.store.load_job(job["job_id"])["stage"], "inspected")
+
+        extra.unlink()
+        self.assertEqual(service.record_review(job["job_id"])["stage"], "reviewed")
+
+    def test_extra_review_inventory_is_rejected_by_assembly_verify_and_handoff(self) -> None:
+        for operation in ("assemble", "verify", "handoff"):
+            with self.subTest(operation=operation):
+                job, service = self._reviewed()
+                if operation in {"verify", "handoff"}:
+                    service.assemble(job["job_id"])
+                if operation == "handoff":
+                    service.verify(job["job_id"])
+                extra = self.store.job_root(job["job_id"]) / "review" / "chunk-999.md"
+                extra.write_text("unregistered extra review evidence", encoding="utf-8")
+
+                with self.assertRaisesRegex(ArtifactValidationError, "unexpected"):
+                    getattr(service, operation)(job["job_id"])
+
 
 if __name__ == "__main__":
     unittest.main()
