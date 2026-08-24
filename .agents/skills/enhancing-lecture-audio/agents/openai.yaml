@@ -1,0 +1,7 @@
+interface:
+  display_name: "Enhancing Lecture Audio"
+  short_description: "Fast, resumable lecture-audio enhancement"
+  default_prompt: "Use $enhancing-lecture-audio to prepare a blind audition and enhance this lecture audio."
+
+policy:
+  allow_implicit_invocation: false

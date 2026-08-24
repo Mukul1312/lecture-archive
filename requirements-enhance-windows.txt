@@ -1,0 +1,11 @@
+# Windows-compatible enhancement stack. Resemblyzer is installed separately
+# with --no-deps because its legacy `webrtcvad` dependency has no Windows wheel.
+DeepFilterNet==0.5.6
+librosa==0.11.0
+numpy==1.26.4
+praat-parselmouth==0.4.7
+pyloudnorm==0.2.0
+scipy==1.17.1
+soundfile==0.14.0
+torch==2.0.1
+webrtcvad-wheels==2.0.14

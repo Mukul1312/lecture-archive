@@ -1,9 +1,13 @@
 import sys, json, csv, re
 sys.stdout.reconfigure(encoding="utf-8")
+try:
+    from scripts.repo_paths import data_root
+except ModuleNotFoundError:
+    from repo_paths import data_root
 
-BASE = "C:/Users/Mukul/code/personal-projects/voice-cloning/data/out/lecture1"
+BASE = data_root(__file__) / "out" / "lecture1"
 rows = []
-with open(BASE+"/qa_asr_report.tsv", encoding="utf-8") as f:
+with open(BASE / "qa_asr_report.tsv", encoding="utf-8") as f:
     for d in csv.DictReader(f, delimiter="\t"):
         for k in ("dur","align_min","align_mean","cer_raw","cer_core","wer","sanskrit_load","lead","trail"):
             d[k]=float(d[k])
@@ -11,7 +15,7 @@ with open(BASE+"/qa_asr_report.tsv", encoding="utf-8") as f:
 CUTS={1,5,11,15,16,30,35,36,48,49,51,58,66,70,79,80,81,85,93,98,99,100,101,109,115,117,118,123,125}
 for d in rows: d["is_cut"]=d["clip"] in CUTS
 text={}
-with open(BASE+"/train.jsonl",encoding="utf-8") as f:
+with open(BASE / "train.jsonl",encoding="utf-8") as f:
     for i,l in enumerate(f,1): text[i]=json.loads(l)["text"]
 
 # The decisive finding: cer_core has a CLEAN GAP. keeps max=0.849, cuts min=0.862.

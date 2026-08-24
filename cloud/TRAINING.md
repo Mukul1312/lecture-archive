@@ -9,15 +9,19 @@ All numbers are from VoxCPM's own fine-tuning guide (cited in [docs/clip-segment
 - **Config:** `cloud/voxcpm_lora.yaml` — LoRA `r=32`, lr 1e-4, save every 50 steps, max 500.
 - **Setup:** `cloud/pod_train.sh` — makes a torch-2.5 venv, installs VoxCPM, downloads the base model, trains.
 
-## Step 1 — push the dataset to GitHub (you do this)
-The pod gets the data by cloning your (public) repo. ~45 MB of audio.
+## Step 1 — transfer the private dataset outside Git
+Do not add the recordings or manifests under `data/out/` to this repository.
+They may contain identifiable voice data and consent-restricted text. Upload the
+dataset through an approved private artifact store or directly to a persistent
+RunPod volume, then restore it at:
+
 ```
-git add data/out/lecture1/final/clips data/out/lecture1/final/*.jsonl \
-        cloud/voxcpm_lora.yaml cloud/pod_train.sh cloud/TRAINING.md \
-        scripts/recut_segments.py scripts/build_voxcpm_manifest.py docs/clip-segmentation-policy.md
-git commit -m "lecture-1 dataset (140 clips) + VoxCPM2 LoRA training setup"
-git push
+/workspace/voice-cloning/data/out/lecture1/final/
 ```
+
+Only the source code and configuration belong in Git. See
+[`docs/external-audio-assets.md`](../docs/external-audio-assets.md) for the
+repository-wide media policy.
 
 ## Step 2 — start a pod + clone
 - RunPod → **RTX 4090 (24 GB)**, a CUDA-12.4 PyTorch image (the same family as dataprep). SSH on.
