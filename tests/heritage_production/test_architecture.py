@@ -62,6 +62,16 @@ def layer_for(module: tuple[str, ...]) -> str | None:
     return None
 
 
+def is_standard_library_or_internal_domain(
+    imported: tuple[str, ...], standard_library: set[str]
+) -> bool:
+    return not imported or (
+        imported[0] in standard_library
+        or imported[0] == "__future__"
+        or imported[:2] == ("heritage_production", "domain")
+    )
+
+
 def repository_port_names() -> set[str]:
     ports_root = PACKAGE_ROOT / "application" / "ports"
     if not ports_root.exists():
@@ -95,6 +105,18 @@ def presentation_repository_imports(source_file: Path) -> list[str]:
 
 
 class ArchitectureFirewallTests(unittest.TestCase):
+    def test_domain_stdlib_rule_allows_internal_domain_imports_only(self) -> None:
+        standard_library = set(sys.stdlib_module_names)
+
+        self.assertTrue(
+            is_standard_library_or_internal_domain(
+                ("heritage_production", "domain", "shared", "digests"),
+                standard_library,
+            )
+        )
+        self.assertTrue(is_standard_library_or_internal_domain(("json",), standard_library))
+        self.assertFalse(is_standard_library_or_internal_domain(("rfc8785",), standard_library))
+
     def test_domain_uses_only_standard_library_imports(self) -> None:
         standard_library = set(sys.stdlib_module_names)
         violations: list[str] = []
@@ -103,7 +125,7 @@ class ArchitectureFirewallTests(unittest.TestCase):
             if layer_for(module) != "domain":
                 continue
             for imported in imported_modules(source_file, module):
-                if imported and imported[0] not in standard_library and imported[0] != "__future__":
+                if not is_standard_library_or_internal_domain(imported, standard_library):
                     violations.append(f"{source_file.relative_to(PROJECT_ROOT)} -> {'.'.join(imported)}")
 
         self.assertEqual(violations, [])
