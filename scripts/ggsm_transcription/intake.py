@@ -1,34 +1,70 @@
-"""Injectable local-source intake use case for transcription jobs."""
+"""Injectable HTTPS download and ffprobe source intake."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
+import json
 from pathlib import Path
+import shutil
+import subprocess
+from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 from uuid import uuid4
-from typing import Any, Protocol
 
-from .store import ArtifactValidationError, JobStore, JobValidationError, safe_source_slug
+from .store import ArtifactValidationError, JobStore, JobValidationError, RepositoryHealthError, safe_source_slug
 
 
 @dataclass(frozen=True)
 class SourceDownload:
-    """The final URL and filename returned by a source downloader."""
-
     resolved_url: str
     filename: str
+    tool_versions: dict[str, str] = field(default_factory=dict)
 
 
 class SourceAdapter(Protocol):
     def download(self, requested_url: str, staging_path: Path) -> SourceDownload: ...
-
     def probe(self, source_path: Path) -> dict[str, Any]: ...
 
 
+class HttpsFfprobeSourceAdapter:
+    """Production adapter; HTTP and process boundaries remain injectable."""
+
+    def __init__(self, http_open: Callable[..., Any] = urlopen, run_command: Callable[..., Any] = subprocess.run) -> None:
+        self._http_open, self._run = http_open, run_command
+
+    def download(self, requested_url: str, staging_path: Path) -> SourceDownload:
+        request = Request(requested_url, headers={"User-Agent": "ggsm-transcription/1"})
+        with self._http_open(request) as response, staging_path.open("wb") as target:
+            shutil.copyfileobj(response, target)
+            resolved = response.geturl()
+            filename = Path(urlsplit(resolved).path).name or "source.bin"
+        return SourceDownload(resolved, filename, {"downloader": "urllib.request"})
+
+    def probe(self, source_path: Path) -> dict[str, Any]:
+        probe = self._run(
+            ["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(source_path)],
+            capture_output=True, text=True, check=True,
+        )
+        version = self._run(["ffprobe", "-version"], capture_output=True, text=True, check=True)
+        try:
+            payload = json.loads(probe.stdout)
+            streams = payload["streams"]
+            audio = next(stream for stream in streams if stream.get("codec_type") == "audio" and stream.get("codec_name"))
+            duration = float(payload.get("format", {}).get("duration", audio.get("duration")))
+        except (KeyError, StopIteration, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise JobValidationError("ffprobe returned incomplete source metadata") from error
+        return {
+            "duration_seconds": duration,
+            "codec": audio["codec_name"],
+            "streams": streams,
+            "tool_versions": {"ffprobe": version.stdout.splitlines()[0].strip()},
+        }
+
+
 def _sha256_and_size(path: Path) -> tuple[str, int]:
-    digest = hashlib.sha256()
-    size = 0
+    digest, size = hashlib.sha256(), 0
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
@@ -37,102 +73,69 @@ def _sha256_and_size(path: Path) -> tuple[str, int]:
 
 
 def validate_https_url(url: str) -> str:
-    if not isinstance(url, str):
-        raise JobValidationError("source URL must be an HTTPS URL")
-    parsed = urlsplit(url)
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
-        raise JobValidationError("source URL must be an HTTPS URL")
+    JobStore._validate_https_url(url)
     return url
 
 
 class IntakeService:
-    """Coordinates URL/hash matching without coupling job policy to HTTP or ffprobe."""
-
     def __init__(self, store: JobStore, source_adapter: SourceAdapter) -> None:
-        self.store = store
-        self.source_adapter = source_adapter
+        self.store, self.source_adapter = store, source_adapter
+
+    def _validated_hash_identity(self, digest: str) -> list[dict[str, Any]]:
+        candidates = self.store.find_hash_candidates(digest)
+        valid: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if candidate["stage"] != "created":
+                self.store.validate_source(candidate["job_id"])
+            valid.append(candidate)
+        if len(valid) > 1:
+            raise JobValidationError("more than one valid job matches the source hash")
+        return valid
 
     def intake(self, requested_url: str) -> dict[str, Any]:
         requested_url = validate_https_url(requested_url)
-        url_candidates = self.store.find_url_candidates(requested_url)
-        if url_candidates:
-            valid: list[dict[str, Any]] = []
-            invalid: list[str] = []
-            for candidate in url_candidates:
-                try:
-                    self.store.validate_source(candidate["job_id"])
-                except ArtifactValidationError:
-                    invalid.append(candidate["job_id"])
-                else:
-                    valid.append(candidate)
-            if invalid:
-                raise ArtifactValidationError(
-                    "matching source job cannot resume because its source evidence is invalid: " + ", ".join(invalid)
-                )
-            if len(valid) != 1:
-                raise JobValidationError("more than one valid job matches this source URL")
-            return valid[0]
+        with self.store.identity_lock():
+            url_matches = self.store.find_url_candidates(requested_url)
+            if url_matches:
+                if len(url_matches) != 1:
+                    raise JobValidationError("more than one valid job matches this source URL")
+                candidate = url_matches[0]
+                if candidate["stage"] == "created":
+                    raise RepositoryHealthError("created job cannot be selected by URL provenance")
+                self.store.validate_source(candidate["job_id"])
+                if len(self._validated_hash_identity(candidate["source_sha256"])) != 1:
+                    raise JobValidationError("source URL maps to an ambiguous source hash")
+                return candidate
 
-        staging_path = self.store.incoming_root / f"download-{uuid4().hex}.part"
-        try:
-            download = self.source_adapter.download(requested_url, staging_path)
-            resolved_url = validate_https_url(download.resolved_url)
-            if not staging_path.is_file() or staging_path.is_symlink():
-                raise ArtifactValidationError("downloader did not create a regular staging source")
-            source_sha256, byte_size = _sha256_and_size(staging_path)
-            hash_candidates = self.store.find_hash_candidates(source_sha256)
-            matching_jobs = []
-            invalid_hash_candidates = []
-            for candidate in hash_candidates:
+            staging = self.store.incoming_root / f"download-{uuid4().hex}.part"
+            try:
+                download = self.source_adapter.download(requested_url, staging)
+                resolved = validate_https_url(download.resolved_url)
+                if not staging.is_file() or staging.is_symlink():
+                    raise ArtifactValidationError("downloader did not create a regular staging source")
+                digest, size = _sha256_and_size(staging)
+                probe = self.source_adapter.probe(staging)
                 try:
-                    self.store.validate_source(candidate["job_id"])
-                except ArtifactValidationError:
-                    invalid_hash_candidates.append(candidate["job_id"])
+                    source = {
+                        "requested_url": requested_url, "resolved_url": resolved, "sha256": digest,
+                        "byte_size": size, "duration_seconds": probe["duration_seconds"],
+                        "codec": probe["codec"], "streams": probe["streams"],
+                    }
+                    versions = {**download.tool_versions, **probe["tool_versions"]}
+                except (KeyError, TypeError) as error:
+                    raise JobValidationError("source adapter returned incomplete metadata") from error
+                self.store._validate_source_metadata(source, versions)
+                matches = self._validated_hash_identity(digest)
+                if matches:
+                    job_id = matches[0]["job_id"]
                 else:
-                    matching_jobs.append(candidate)
-            if invalid_hash_candidates:
-                raise ArtifactValidationError(
-                    "matching source hash cannot create a duplicate while existing evidence is invalid: "
-                    + ", ".join(invalid_hash_candidates)
-                )
-            if len(matching_jobs) > 1:
-                raise JobValidationError("more than one valid job matches the downloaded source hash")
-            if matching_jobs:
-                return matching_jobs[0]
-            probe = self.source_adapter.probe(staging_path)
-            try:
-                duration_seconds = probe["duration_seconds"]
-                codec = probe["codec"]
-                streams = probe["streams"]
-                tool_versions = probe["tool_versions"]
-            except KeyError as error:
-                raise JobValidationError(f"source probe metadata is missing {error.args[0]!r}") from error
-            if not isinstance(duration_seconds, (int, float)) or duration_seconds < 0:
-                raise JobValidationError("source probe duration must be a non-negative number")
-            if not isinstance(codec, str) or not codec or not isinstance(streams, list) or not isinstance(tool_versions, dict):
-                raise JobValidationError("source probe returned invalid metadata")
-            source_slug = safe_source_slug(Path(download.filename).stem or urlsplit(resolved_url).path.rsplit("/", 1)[-1])
-            job = self.store.create_job(source_slug, source_sha256)
-            job_id = job["job_id"]
-            source_path = self.store.job_root(job_id) / "source" / "source.bin"
-            staging_path.replace(source_path)
-            source_metadata = {
-                "requested_url": requested_url,
-                "resolved_url": resolved_url,
-                "sha256": source_sha256,
-                "byte_size": byte_size,
-                "duration_seconds": duration_seconds,
-                "codec": codec,
-                "streams": streams,
-            }
-            self.store.update_job(
-                job_id,
-                lambda state: state.update({"source": source_metadata, "tool_versions": dict(tool_versions)}),
-            )
-            self.store.register_artifact(job_id, "source/source.bin")
-            return self.store.advance_stage(job_id, "source_ready")
-        finally:
-            try:
-                staging_path.unlink()
-            except FileNotFoundError:
-                pass
+                    slug = safe_source_slug(Path(download.filename).stem or urlsplit(resolved).path.rsplit("/", 1)[-1])
+                    job_id = self.store.create_job(slug, digest)["job_id"]
+                with self.store.transaction(job_id) as transaction:
+                    transaction.complete_source_intake(staging, source, versions)
+                return self.store.load_job(job_id)
+            finally:
+                try:
+                    staging.unlink()
+                except FileNotFoundError:
+                    pass
