@@ -22,6 +22,8 @@ DEFAULT_ASR_CONFIGURATION: dict[str, object] = {
     "beam_size": 5, "word_timestamps": True, "vad_filter": False,
     "condition_on_previous_text": False,
 }
+_REQUIRED_RUNTIME_KEYS = {"model_snapshot", "faster_whisper", "python", "ffmpeg", "ffprobe"}
+_REQUIRED_MEDIA_RUNTIME_KEYS = {"ffmpeg", "ffprobe"}
 
 
 class ASRAdapter(Protocol):
@@ -87,10 +89,13 @@ class LocalFasterWhisperAdapter:
 
 
 class FfmpegMediaAdapter:
+    def __init__(self, run_command: Callable[..., Any] = subprocess.run) -> None:
+        self._run = run_command
+
     def extract_span(self, source: Path, target: Path, start: float, end: float) -> None:
         try:
-            subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", str(start), "-to", str(end), "-i", str(source),
-                            "-c", "copy", str(target)], capture_output=True, text=True, check=True)
+            self._run(["ffmpeg", "-y", "-v", "error", "-ss", str(start), "-i", str(source), "-t", str(end - start),
+                       "-c", "copy", str(target)], capture_output=True, text=True, check=True)
         except (OSError, subprocess.SubprocessError) as error:
             raise JobValidationError("ffmpeg failed to extract requested ASR span") from error
 
@@ -137,6 +142,14 @@ def _finite_number(value: object, label: str) -> float:
     return float(value)
 
 
+def _validate_runtime(runtime: object, required_keys: set[str], label: str) -> dict[str, str]:
+    if not isinstance(runtime, dict) or not required_keys.issubset(runtime):
+        raise JobValidationError(f"{label} runtime metadata is incomplete")
+    if any(not isinstance(runtime[key], str) or not runtime[key].strip() for key in required_keys):
+        raise JobValidationError(f"{label} runtime metadata must have non-empty strings")
+    return dict(runtime)
+
+
 def _validate_record(record: object, previous_start: float | None = None) -> dict[str, object]:
     if not isinstance(record, dict) or not isinstance(record.get("id"), int) or isinstance(record["id"], bool) or not isinstance(record.get("text"), str):
         raise JobValidationError("raw ASR JSONL segment is malformed")
@@ -162,6 +175,23 @@ def _validate_record(record: object, previous_start: float | None = None) -> dic
     return dict(record)
 
 
+def _validate_sequence(records: list[dict[str, object]], duration: float) -> list[dict[str, object]]:
+    validated: list[dict[str, object]] = []
+    previous_start: float | None = None
+    for record in records:
+        candidate = _validate_record(record, previous_start)
+        if float(candidate["end"]) > duration:
+            raise JobValidationError("raw ASR segment extends beyond measured source duration")
+        previous_start = float(candidate["start"])
+        validated.append(candidate)
+    return validated
+
+
+def _span_component(value: float) -> str:
+    """A valid finite float has one lossless canonical hexadecimal representation."""
+    return value.hex().replace("-", "neg").replace("+", "plus")
+
+
 class ASRService:
     def __init__(self, store: JobStore, model_adapter: ASRAdapter, media_adapter: MediaAdapter | None = None) -> None:
         self.store, self.model_adapter, self.media_adapter = store, model_adapter, media_adapter
@@ -172,14 +202,15 @@ class ASRService:
             if state["stage"] != "source_ready":
                 raise StageTransitionError("full ASR requires a source_ready job")
             source = self.store.validate_source(job_id)
+            duration = _finite_number(state["source"]["duration_seconds"], "source duration")
             root = self.store.job_root(job_id)
             full_path, metadata_path = root / "asr" / "full.jsonl", root / "asr" / "metadata.json"
             if full_path.exists() or metadata_path.exists():
                 raise ArtifactValidationError("full ASR evidence already exists and is immutable")
-            records = [_validate_record(record) for record in self.model_adapter.transcribe(source, dict(DEFAULT_ASR_CONFIGURATION))]
-            runtime = self.model_adapter.runtime_metadata()
-            if not isinstance(runtime, dict) or any(not isinstance(value, str) or not value for value in runtime.values()):
-                raise JobValidationError("ASR runtime metadata must be non-empty strings")
+            records = _validate_sequence(self.model_adapter.transcribe(source, dict(DEFAULT_ASR_CONFIGURATION)), duration)
+            self.store.validate_source(job_id)
+            runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
+            self.store.validate_source(job_id)
             metadata: dict[str, object] = {"source_sha256": state["source_sha256"], "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": dict(runtime)}
             _atomic_text(full_path, _jsonl(records))
             _atomic_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
@@ -201,23 +232,28 @@ class ASRService:
             if start_value < 0 or end_value <= start_value or end_value > duration:
                 raise JobValidationError("rerun span must be ordered and inside measured source duration")
             source, root = self.store.validate_source(job_id), self.store.job_root(job_id)
-            stem = f"span-{round(start_value * 1000):012d}-{round(end_value * 1000):012d}"
+            self._validate_primary_asr_evidence(job_id, state)
+            stem = f"span-{_span_component(start_value)}-{_span_component(end_value)}"
             jsonl_path, metadata_path = root / "asr" / "reruns" / f"{stem}.jsonl", root / "asr" / "reruns" / f"{stem}.metadata.json"
             if jsonl_path.exists() or metadata_path.exists():
                 raise ArtifactValidationError("deterministic rerun evidence already exists and is immutable")
-            temporary = root / "asr" / "reruns" / f".{stem}.media.tmp"
+            temporary = root / "asr" / "reruns" / f".{stem}.media.mka"
             try:
                 self.media_adapter.extract_span(source, temporary, start_value, end_value)
                 if not temporary.is_file():
                     raise ArtifactValidationError("media adapter did not produce a requested span")
-                records = [_validate_record(record) for record in self.model_adapter.transcribe(temporary, dict(DEFAULT_ASR_CONFIGURATION))]
+                records = _validate_sequence(self.model_adapter.transcribe(temporary, dict(DEFAULT_ASR_CONFIGURATION)), end_value - start_value)
             finally:
                 try:
                     temporary.unlink()
                 except FileNotFoundError:
                     pass
+            runtime = _validate_runtime(self.model_adapter.runtime_metadata(), _REQUIRED_RUNTIME_KEYS, "ASR")
+            media_runtime = _validate_runtime(self.media_adapter.runtime_metadata(), _REQUIRED_MEDIA_RUNTIME_KEYS, "media")
+            self.store.validate_source(job_id)
+            self._validate_primary_asr_evidence(job_id, state)
             metadata = {"source_sha256": state["source_sha256"], "start_seconds": start_value, "end_seconds": end_value,
-                        "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": self.model_adapter.runtime_metadata(), "media_runtime": self.media_adapter.runtime_metadata()}
+                        "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": runtime, "media_runtime": media_runtime}
             _atomic_text(jsonl_path, _jsonl(records))
             _atomic_text(metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
             transaction.register_artifact(f"asr/reruns/{jsonl_path.name}")
@@ -229,6 +265,8 @@ class ASRService:
             state = transaction.state
             if state["stage"] != "asr_ready":
                 raise StageTransitionError("inspection requires an asr_ready job")
+            self.store.validate_source(job_id)
+            self._validate_primary_asr_evidence(job_id, state)
             raw_path = self.store.validate_artifact(job_id, "asr/full.jsonl")
             self.store.validate_artifact(job_id, "asr/metadata.json")
             records = _read_raw_segments(raw_path)
@@ -237,12 +275,28 @@ class ASRService:
             report_json, report_markdown = root / "inspection" / "report.json", root / "inspection" / "report.md"
             if report_json.exists() or report_markdown.exists():
                 raise ArtifactValidationError("inspection evidence already exists and is immutable")
+            self.store.validate_source(job_id)
+            self._validate_primary_asr_evidence(job_id, state)
             _atomic_text(report_json, json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False) + "\n")
             _atomic_text(report_markdown, _inspection_markdown(report))
             transaction.register_artifact("inspection/report.json")
             transaction.register_artifact("inspection/report.md")
             transaction.advance_stage("inspected")
         return self.store.load_job(job_id)
+
+    def _validate_primary_asr_evidence(self, job_id: str, state: dict[str, Any]) -> None:
+        self.store.validate_artifact(job_id, "asr/full.jsonl")
+        metadata_path = self.store.validate_artifact(job_id, "asr/metadata.json")
+        asr = state.get("asr")
+        if not isinstance(asr, dict):
+            raise ArtifactValidationError("job has no bound full ASR provenance")
+        _validate_runtime(asr.get("runtime"), _REQUIRED_RUNTIME_KEYS, "ASR")
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ArtifactValidationError("full ASR metadata is unreadable") from error
+        if metadata != asr or metadata.get("source_sha256") != state["source_sha256"]:
+            raise ArtifactValidationError("full ASR metadata does not match bound provenance")
 
 
 def _read_raw_segments(path: Path) -> list[dict[str, object]]:

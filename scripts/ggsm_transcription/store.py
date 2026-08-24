@@ -45,6 +45,8 @@ _NEXT_STAGE = {
     "inspected": "reviewed", "reviewed": "draft_ready", "draft_ready": "handed_off",
 }
 _LAYOUT = ("source", "asr/reruns", "inspection", "review", "reference", "delivery")
+_ASR_AND_LATER_STAGES = {"asr_ready", "inspected", "reviewed", "draft_ready", "handed_off"}
+_ASR_RUNTIME_KEYS = {"model_snapshot", "faster_whisper", "python", "ffmpeg", "ffprobe"}
 
 
 def _utcnow() -> str:
@@ -507,8 +509,14 @@ class JobStore:
                 raise RepositoryHealthError("job ASR provenance is invalid")
             if not {"source_sha256", "configuration", "runtime"}.issubset(asr):
                 raise RepositoryHealthError("job ASR provenance is incomplete")
-            if asr["source_sha256"] != state["source_sha256"] or not isinstance(asr["configuration"], dict) or not isinstance(asr["runtime"], dict):
-                raise RepositoryHealthError("job ASR provenance is not source-bound")
+            runtime = asr.get("runtime")
+            if (asr["source_sha256"] != state["source_sha256"] or not isinstance(asr["configuration"], dict)
+                    or not isinstance(runtime, dict) or not _ASR_RUNTIME_KEYS.issubset(runtime)
+                    or any(not isinstance(runtime[key], str) or not runtime[key].strip() for key in _ASR_RUNTIME_KEYS)):
+                raise RepositoryHealthError("job ASR provenance is not source-bound or complete")
+        if state["stage"] in _ASR_AND_LATER_STAGES:
+            if asr is None or not {"asr/full.jsonl", "asr/metadata.json"}.issubset(state["artifacts"]):
+                raise RepositoryHealthError("ASR-stage job lacks immutable full ASR evidence")
 
     @staticmethod
     def _write_manifest(root: Path, state: dict[str, Any]) -> None:

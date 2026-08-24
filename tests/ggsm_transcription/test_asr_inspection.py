@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.ggsm_transcription.asr import ASRService, DEFAULT_ASR_CONFIGURATION, LocalFasterWhisperAdapter
+from scripts.ggsm_transcription.asr import ASRService, DEFAULT_ASR_CONFIGURATION, FfmpegMediaAdapter, LocalFasterWhisperAdapter
 from scripts.ggsm_transcription.intake import IntakeService, SourceDownload
-from scripts.ggsm_transcription.store import ArtifactValidationError, JobStore, JobValidationError
+from scripts.ggsm_transcription.store import ArtifactValidationError, JobStore, JobValidationError, RepositoryHealthError
 
 
 class FakeSourceAdapter:
@@ -42,6 +43,8 @@ class FakeModelAdapter:
 
     def transcribe(self, source_path: Path, configuration: dict[str, object]) -> list[dict[str, object]]:
         self.calls.append((source_path, dict(configuration)))
+        if source_path.suffix == ".mka":
+            return [{"id": 0, "start": 0.0, "end": 0.5, "text": " Span rerun."}]
         return self.segments
 
     def runtime_metadata(self) -> dict[str, str]:
@@ -142,6 +145,7 @@ class ASRContractTests(unittest.TestCase):
         self.assertEqual(self.store.validate_artifact(ready["job_id"], "asr/full.jsonl").read_bytes(), raw)
         self.assertTrue(span["jsonl_path"].is_file())
         self.assertTrue(span["metadata_path"].is_file())
+        self.assertEqual(self.media.calls[0][1].suffix, ".mka")
         self.assertEqual(self.media.calls[0][2:], (6.0, 9.0))
         with self.assertRaises(JobValidationError):
             self.service.rerun_span(ready["job_id"], -1, 2)
@@ -149,6 +153,90 @@ class ASRContractTests(unittest.TestCase):
             self.service.rerun_span(ready["job_id"], 9, 9)
         with self.assertRaises(JobValidationError):
             self.service.rerun_span(ready["job_id"], 0, 31)
+
+    def test_ffmpeg_rerun_boundary_uses_a_known_output_format_and_duration_not_ambiguous_to(self) -> None:
+        # Break caught: a `.tmp` stream-copy target made every production rerun fail before ASR started.
+        commands: list[list[str]] = []
+
+        def runner(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        target = Path(self.tmp.name) / "span.mka"
+        FfmpegMediaAdapter(run_command=runner).extract_span(Path("source.mp3"), target, 2.25, 5.5)
+        command = commands[0]
+        self.assertEqual(command[command.index("-t") + 1], "3.25")
+        self.assertNotIn("-to", command)
+        self.assertEqual(command[-1], str(target))
+        self.assertEqual(target.suffix, ".mka")
+
+    def test_rerun_refuses_changed_full_evidence_before_creating_any_supplemental_file(self) -> None:
+        # Break caught: supplemental evidence could be added to a job whose immutable primary evidence was damaged.
+        ready = self.service.transcribe(self.job["job_id"])
+        raw = self.store.job_root(ready["job_id"]) / "asr" / "full.jsonl"
+        raw.write_text("changed", encoding="utf-8")
+        with self.assertRaises(ArtifactValidationError):
+            self.service.rerun_span(ready["job_id"], 1, 2)
+        self.assertEqual(list((self.store.job_root(ready["job_id"]) / "asr" / "reruns").iterdir()), [])
+
+    def test_distinct_submillisecond_spans_have_distinct_deterministic_evidence_paths(self) -> None:
+        # Break caught: millisecond rounding caused different valid spans to collide under one evidence identifier.
+        ready = self.service.transcribe(self.job["job_id"])
+        first = self.service.rerun_span(ready["job_id"], 0.0001, 1.0001)
+        second = self.service.rerun_span(ready["job_id"], 0.0002, 1.0002)
+        self.assertNotEqual(first["jsonl_path"], second["jsonl_path"])
+
+    def test_invalid_full_model_output_leaves_source_ready_without_immutable_asr_files(self) -> None:
+        # Break caught: invalid decoder output used to become a permanent full-evidence artifact before inspection rejected it.
+        for segments in (
+            [{"id": 1, "start": 10.0, "end": 11.0, "text": "later"}, {"id": 0, "start": 2.0, "end": 3.0, "text": "earlier"}],
+            [{"id": 0, "start": 29.0, "end": 31.0, "text": "outside duration"}],
+        ):
+            with self.subTest(segments=segments):
+                job = IntakeService(self.store, FakeSourceAdapter(repr(segments).encode())).intake(f"https://archive.example/{len(segments)}-{segments[0]['id']}")
+                service = ASRService(self.store, FakeModelAdapter(segments), FakeMediaAdapter())
+                with self.assertRaises(JobValidationError):
+                    service.transcribe(job["job_id"])
+                root = self.store.job_root(job["job_id"])
+                self.assertEqual(self.store.load_job(job["job_id"])["stage"], "source_ready")
+                self.assertFalse((root / "asr" / "full.jsonl").exists())
+                self.assertFalse((root / "asr" / "metadata.json").exists())
+
+    def test_source_change_during_asr_is_rejected_before_publication(self) -> None:
+        # Break caught: a long model run could produce a transcript for bytes different from the job's source hash.
+        source = self.store.job_root(self.job["job_id"]) / "source" / "source.bin"
+
+        class MutatingModel(FakeModelAdapter):
+            def transcribe(self, source_path: Path, configuration: dict[str, object]) -> list[dict[str, object]]:
+                result = super().transcribe(source_path, configuration)
+                source.write_bytes(b"changed during asr")
+                return result
+
+        with self.assertRaises(ArtifactValidationError):
+            ASRService(self.store, MutatingModel(), self.media).transcribe(self.job["job_id"])
+        self.assertFalse((self.store.job_root(self.job["job_id"]) / "asr" / "full.jsonl").exists())
+
+    def test_missing_runtime_provenance_cannot_advance_to_asr_ready(self) -> None:
+        # Break caught: a nominally complete run could omit the model/tool identity needed to reproduce it.
+        class IncompleteRuntimeModel(FakeModelAdapter):
+            def runtime_metadata(self) -> dict[str, str]:
+                return {"model_snapshot": "/fake/snapshot", "python": "fake-python"}
+
+        with self.assertRaisesRegex(JobValidationError, "runtime metadata"):
+            ASRService(self.store, IncompleteRuntimeModel(), self.media).transcribe(self.job["job_id"])
+        self.assertEqual(self.store.load_job(self.job["job_id"])["stage"], "source_ready")
+
+    def test_incomplete_media_provenance_refuses_a_rerun_before_evidence_is_published(self) -> None:
+        # Break caught: a span result without FFmpeg identity cannot be reproduced or audited later.
+        ready = self.service.transcribe(self.job["job_id"])
+
+        class IncompleteMedia(FakeMediaAdapter):
+            def runtime_metadata(self) -> dict[str, str]:
+                return {"ffmpeg": "fake-ffmpeg"}
+
+        with self.assertRaisesRegex(JobValidationError, "media runtime metadata"):
+            ASRService(self.store, self.model, IncompleteMedia()).rerun_span(ready["job_id"], 1, 2)
+        self.assertEqual(list((self.store.job_root(ready["job_id"]) / "asr" / "reruns").iterdir()), [])
 
 
 class InspectionContractTests(unittest.TestCase):
@@ -173,6 +261,23 @@ class InspectionContractTests(unittest.TestCase):
         self.assertNotIn("recording silence", markdown)
         self.assertEqual(result["stage"], "inspected")
 
+    def test_inspection_revalidates_the_bound_source(self) -> None:
+        # Break caught: inspection could advance even after the source no longer matched the hash-bound job.
+        source = self.store.job_root(self.job["job_id"]) / "source" / "source.bin"
+        source.write_bytes(b"changed before inspect")
+        with self.assertRaises(ArtifactValidationError):
+            self.service.inspect(self.job["job_id"])
+        self.assertEqual(self.store.load_job(self.job["job_id"])["stage"], "asr_ready")
+
+    def test_asr_ready_manifest_without_primary_evidence_or_provenance_is_invalid(self) -> None:
+        # Break caught: a structurally incomplete primary evidence record could still accept later reruns.
+        manifest = self.store.job_root(self.job["job_id"]) / "job.json"
+        state = json.loads(manifest.read_text(encoding="utf-8"))
+        state.pop("asr")
+        manifest.write_text(json.dumps(state), encoding="utf-8")
+        with self.assertRaises(RepositoryHealthError):
+            self.store.load_job(self.job["job_id"])
+
     def test_inspection_rejects_out_of_order_raw_evidence_and_reports_confidence_and_repetition(self) -> None:
         # Break caught: corrupted raw JSONL could make coverage/diagnostics look trustworthy.
         invalid_job = IntakeService(self.store, FakeSourceAdapter(b"second source")).intake("https://archive.example/second")
@@ -180,9 +285,8 @@ class InspectionContractTests(unittest.TestCase):
             {"id": 1, "start": 10.0, "end": 12.0, "text": " Later."},
             {"id": 0, "start": 5.0, "end": 9.0, "text": " Earlier.", "avg_logprob": -2.0},
         ]), FakeMediaAdapter())
-        invalid.transcribe(invalid_job["job_id"])
         with self.assertRaisesRegex(JobValidationError, "out of order"):
-            invalid.inspect(invalid_job["job_id"])
+            invalid.transcribe(invalid_job["job_id"])
 
         diagnostic_job = IntakeService(self.store, FakeSourceAdapter(b"third source")).intake("https://archive.example/third")
         diagnostic = ASRService(self.store, FakeModelAdapter([

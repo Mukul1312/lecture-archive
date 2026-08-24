@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from scripts.ggsm_transcription.asr import ASRService
 from scripts.ggsm_transcription.intake import HttpsFfprobeSourceAdapter, IntakeService, SourceDownload
 from scripts.ggsm_transcription.store import (
     ArtifactValidationError,
@@ -50,6 +51,17 @@ class FakeSourceAdapter:
         }
 
 
+class FakeASRAdapter:
+    """Minimal complete provenance for tests that need a legitimate ASR stage."""
+
+    def transcribe(self, _source_path: Path, _configuration: dict[str, object]) -> list[dict[str, object]]:
+        return [{"id": 0, "start": 0.0, "end": 1.0, "text": " ASR evidence."}]
+
+    def runtime_metadata(self) -> dict[str, str]:
+        return {"model_snapshot": "/fake/snapshot", "faster_whisper": "fake-1.2.1", "python": "fake-python",
+                "ffmpeg": "fake-ffmpeg", "ffprobe": "fake-ffprobe"}
+
+
 class JobStoreContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -75,7 +87,7 @@ class JobStoreContractTests(unittest.TestCase):
     def test_only_the_declared_forward_stage_transition_is_legal(self) -> None:
         # Break caught: skipping an evidence-producing stage would make later output untrustworthy.
         job = IntakeService(self.store, FakeSourceAdapter()).intake("https://archive.example/stages")
-        self.store.advance_stage(job["job_id"], "asr_ready")
+        ASRService(self.store, FakeASRAdapter()).transcribe(job["job_id"])
         self.assertEqual(self.store.load_job(job["job_id"])["stage"], "asr_ready")
         with self.assertRaises(StageTransitionError):
             self.store.advance_stage(job["job_id"], "reviewed")
@@ -275,7 +287,7 @@ class IntakeContractTests(unittest.TestCase):
                 isolated = JobStore(Path(self.tmp.name) / target_stage / "data" / "transcribe")
                 first_adapter = FakeSourceAdapter()
                 first = IntakeService(isolated, first_adapter).intake("https://archive.example/original")
-                isolated.advance_stage(first["job_id"], "asr_ready")
+                ASRService(isolated, FakeASRAdapter()).transcribe(first["job_id"])
                 if target_stage == "inspected":
                     isolated.advance_stage(first["job_id"], "inspected")
                 class NoProbeAdapter(FakeSourceAdapter):
@@ -337,14 +349,15 @@ class AdapterAndTransactionRegressionTests(unittest.TestCase):
         with self.assertRaises(JobValidationError):
             self.store.update_job(job["job_id"], lambda state: state.update({"stage": "handed_off"}))
         root = self.store.job_root(job["job_id"])
+        ASRService(self.store, FakeASRAdapter()).transcribe(job["job_id"])
         (root / "inspection" / "report.json").write_text("{}", encoding="utf-8")
         before = self.store.load_job(job["job_id"])["revision"]
         with self.store.transaction(job["job_id"]) as transaction:
             transaction.register_artifact("inspection/report.json")
-            transaction.advance_stage("asr_ready")
+            transaction.advance_stage("inspected")
         after = self.store.load_job(job["job_id"])
         self.assertEqual(after["revision"], before + 1)
-        self.assertEqual(after["stage"], "asr_ready")
+        self.assertEqual(after["stage"], "inspected")
 
     def test_ads_paths_are_rejected(self) -> None:
         # Break caught: NTFS alternate streams are not safe registered artifact files.
