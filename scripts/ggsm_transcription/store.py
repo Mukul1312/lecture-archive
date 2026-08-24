@@ -47,6 +47,8 @@ _NEXT_STAGE = {
 _LAYOUT = ("source", "asr/reruns", "inspection", "review", "reference", "delivery")
 _ASR_AND_LATER_STAGES = {"asr_ready", "inspected", "reviewed", "draft_ready", "handed_off"}
 _INSPECTION_AND_LATER_STAGES = {"inspected", "reviewed", "draft_ready", "handed_off"}
+_REVIEW_AND_LATER_STAGES = {"reviewed", "draft_ready", "handed_off"}
+_DRAFT_AND_LATER_STAGES = {"draft_ready", "handed_off"}
 _ASR_RUNTIME_KEYS = {"model_snapshot", "faster_whisper", "python", "ffmpeg", "ffprobe"}
 
 
@@ -521,6 +523,15 @@ class JobStore:
         if state["stage"] in _INSPECTION_AND_LATER_STAGES:
             if not {"inspection/report.json", "inspection/report.md"}.issubset(state["artifacts"]):
                 raise RepositoryHealthError("inspection-stage job lacks immutable inspection evidence")
+        if state["stage"] in _REVIEW_AND_LATER_STAGES:
+            review_paths = [path for path in state["artifacts"] if re.fullmatch(r"review/chunk-[0-9]{3}\.md", path)]
+            if "review/manifest.json" not in state["artifacts"] or not review_paths:
+                raise RepositoryHealthError("reviewed-stage job lacks immutable whole-review evidence")
+        if state["stage"] in _DRAFT_AND_LATER_STAGES:
+            if not {"delivery/onenote-transcript.md", "delivery/verification.json"}.issubset(state["artifacts"]):
+                raise RepositoryHealthError("draft-ready job lacks immutable delivery verification")
+        if state["stage"] == "handed_off" and "delivery/handoff.json" not in state["artifacts"]:
+            raise RepositoryHealthError("handed-off job lacks its local handoff receipt")
 
     @staticmethod
     def _write_manifest(root: Path, state: dict[str, Any]) -> None:
