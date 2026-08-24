@@ -271,6 +271,45 @@ def reconstitute_open(
 
 
 class ReviewSubmissionTests(unittest.TestCase):
+    def test_reconstitution_rejects_forged_verified_assurance_without_proof_context(self) -> None:
+        round_, assignment, attested = assigned_round()
+        baseline = zero_finding_summary(round_, assignment, attested)
+        fingerprint = ContentDigest("sha256", "e" * 64)
+        credential = ActorCredentialRef(
+            assignment.actor_id,
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            credential_fingerprint=fingerprint,
+            public_key_artifact=artifact(48, "e"),
+        )
+        verified = ActorAssuranceEvidence.verified_signature(
+            credential=credential,
+            signed_context_digest=review_submission_context_digest(
+                actor_id=assignment.actor_id,
+                role=assignment.role,
+                target_ref=round_.target_manifest.ref,
+                submission_digest=baseline.submission_digest,
+                schema_version=baseline.submission_schema_version,
+            ),
+            proof=SignatureProof("ed25519", fingerprint, artifact(49, "f")),
+        )
+        forged_assurance = forged(
+            verified,
+            signed_context_digest=None,
+            proof=None,
+        )
+        values = {
+            name: getattr(baseline, name)
+            for name in ReviewSubmissionSummary.__dataclass_fields__
+        }
+        values["assurance"] = forged_assurance
+
+        with self.assertRaises(ValidationError):
+            ReviewSubmissionSummary.reconstitute(
+                target_manifest=round_.target_manifest,
+                **values,
+            )
+
     def test_finalize_revalidates_loaded_finding_root_body_atomically(self) -> None:
         round_, assignment, assurance = assigned_round()
         finding = submit_finding(round_, author_actor_id=assignment.actor_id)

@@ -259,6 +259,37 @@ def _disposition_payload(
     }
 
 
+def _revalidate_disposition_digest(
+    value: object,
+    *,
+    field: str,
+) -> ContentDigest:
+    if type(value) is not ContentDigest:
+        raise ValidationError(f"{field} must be an exact ContentDigest")
+    try:
+        return ContentDigest(value.algorithm, value.hex_digest)
+    except AttributeError as error:
+        raise ValidationError(f"{field} is incomplete") from error
+
+
+def _revalidate_disposition_finding_id(value: object) -> ReviewFindingId:
+    if type(value) is not ReviewFindingId:
+        raise ValidationError("review_finding_id must be an exact ReviewFindingId")
+    try:
+        return ReviewFindingId(value.value)
+    except AttributeError as error:
+        raise ValidationError("review_finding_id is incomplete") from error
+
+
+def _revalidate_disposition_actor_id(value: object) -> ActorId:
+    if type(value) is not ActorId:
+        raise ValidationError("steward_actor_id must be an exact ActorId")
+    try:
+        return ActorId(value.value)
+    except AttributeError as error:
+        raise ValidationError("steward_actor_id is incomplete") from error
+
+
 @dataclass(frozen=True, slots=True)
 class FindingDisposition:
     review_finding_id: ReviewFindingId
@@ -270,6 +301,16 @@ class FindingDisposition:
     disposition_digest: ContentDigest
 
     def __post_init__(self) -> None:
+        _revalidate_disposition_finding_id(self.review_finding_id)
+        _revalidate_disposition_digest(
+            self.finding_payload_digest,
+            field="finding_payload_digest",
+        )
+        _revalidate_disposition_actor_id(self.steward_actor_id)
+        _revalidate_disposition_digest(
+            self.disposition_digest,
+            field="disposition_digest",
+        )
         for field_name, value, expected in (
             ("review_finding_id", self.review_finding_id, ReviewFindingId),
             ("finding_payload_digest", self.finding_payload_digest, ContentDigest),
@@ -298,6 +339,45 @@ class FindingDisposition:
         )
         if expected_digest != self.disposition_digest:
             raise ValidationError("finding-disposition digest does not match its decision")
+
+    @classmethod
+    def reconstitute(
+        cls,
+        *,
+        review_finding_id: ReviewFindingId,
+        finding_payload_digest: ContentDigest,
+        decision: FindingDecision,
+        rationale: str | None,
+        steward_actor_id: ActorId,
+        decided_at_us: int,
+        disposition_digest: ContentDigest,
+    ) -> FindingDisposition:
+        return cls(
+            _revalidate_disposition_finding_id(review_finding_id),
+            _revalidate_disposition_digest(
+                finding_payload_digest,
+                field="finding_payload_digest",
+            ),
+            decision,
+            rationale,
+            _revalidate_disposition_actor_id(steward_actor_id),
+            decided_at_us,
+            _revalidate_disposition_digest(
+                disposition_digest,
+                field="disposition_digest",
+            ),
+        )
+
+    def validated(self) -> FindingDisposition:
+        return type(self).reconstitute(
+            review_finding_id=self.review_finding_id,
+            finding_payload_digest=self.finding_payload_digest,
+            decision=self.decision,
+            rationale=self.rationale,
+            steward_actor_id=self.steward_actor_id,
+            decided_at_us=self.decided_at_us,
+            disposition_digest=self.disposition_digest,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,11 +408,13 @@ class ReviewFindingEvidence:
         if self.disposition is not None:
             if type(self.disposition) is not FindingDisposition:
                 raise ValidationError("disposition must be an exact FindingDisposition")
+            validated_disposition = self.disposition.validated()
             if (
-                self.disposition.review_finding_id != self.review_finding_id
-                or self.disposition.finding_payload_digest != self.finding_payload_digest
+                validated_disposition.review_finding_id != self.review_finding_id
+                or validated_disposition.finding_payload_digest != self.finding_payload_digest
             ):
                 raise ValidationError("finding evidence disposition does not bind its body")
+            object.__setattr__(self, "disposition", validated_disposition)
 
 
 class ReviewFinding(AggregateEventRecorder):
@@ -501,6 +583,7 @@ class ReviewFinding(AggregateEventRecorder):
         if disposition is not None:
             if type(disposition) is not FindingDisposition:
                 raise ValidationError("disposition must be an exact FindingDisposition")
+            disposition = disposition.validated()
             if (
                 disposition.review_finding_id != checked["review_finding_id"]
                 or disposition.finding_payload_digest != checked["finding_payload_digest"]

@@ -7,6 +7,7 @@ from enum import Enum
 
 from heritage_production.domain.shared import (
     ActorAssuranceEvidence,
+    ActorAssuranceKind,
     ActorCredentialRef,
     ActorId,
     AggregateEventRecorder,
@@ -24,6 +25,7 @@ from heritage_production.domain.shared import (
     OperationId,
     RoleCode,
     RubricRef,
+    SignatureProof,
     SignOffTargetKind,
     ValidationError,
     assurance_satisfies,
@@ -327,12 +329,27 @@ class ReviewCoverage:
             type(value) is ReviewSubmissionSummary for value in submission_summaries
         ):
             raise ValidationError("submission_summaries must be a tuple of ReviewSubmissionSummary")
+        validated_summaries: tuple[ReviewSubmissionSummary, ...] = ()
+        for summary in submission_summaries:
+            _validate_submission_attachment(
+                review_round_id=target_manifest.review_round_id,
+                production_id=target_manifest.production_id,
+                edition_ref=target_manifest.edition_ref,
+                rubric_ref=target_manifest.rubric_ref,
+                target_manifest=target_manifest,
+                package_schema_version=summary.submission_schema_version,
+                reviewer_assignments=reviewer_assignments,
+                existing_submissions=validated_summaries,
+                summary=summary,
+                allow_semantic_replay=False,
+            )
+            validated_summaries = (*validated_summaries, summary)
         target_keys = tuple(member.target_key for member in target_manifest.members)
         assignment_values: list[AssignmentCoverage] = []
         for assignment in reviewer_assignments:
             chain = tuple(
                 value
-                for value in submission_summaries
+                for value in validated_summaries
                 if value.assigned_actor_id == assignment.actor_id
                 and value.role == assignment.role
             )
@@ -811,14 +828,24 @@ def _submission_payload(summary: ReviewSubmissionSummary) -> dict[str, object]:
 
 
 def _assurance_replay_identity(evidence: ActorAssuranceEvidence) -> tuple[object, ...]:
-    proof = evidence.proof
+    if evidence.kind is ActorAssuranceKind.VERIFIED_SIGNATURE:
+        proof = evidence.proof
+        if type(proof) is not SignatureProof:
+            raise ValidationError("verified assurance requires an exact SignatureProof")
+        proof_algorithm: object = proof.algorithm
+        proof_fingerprint: object = proof.credential_fingerprint
+    elif evidence.kind is ActorAssuranceKind.STEWARD_ATTESTATION:
+        proof_algorithm = None
+        proof_fingerprint = None
+    else:
+        raise ValidationError("unsupported actor assurance kind")
     return (
         evidence.kind,
         evidence.credential,
         evidence.assurance,
         evidence.signed_context_digest,
-        proof.algorithm if proof is not None else None,
-        proof.credential_fingerprint if proof is not None else None,
+        proof_algorithm,
+        proof_fingerprint,
         evidence.attesting_steward_id,
         evidence.attestation_reason,
         evidence.attested_at_us,
@@ -957,6 +984,7 @@ class ReviewSubmissionSummary:
         for field_name, expected in expected_types:
             if type(values.get(field_name)) is not expected:
                 raise ValidationError(f"{field_name} must be an exact {expected.__name__}")
+        values["assurance"] = values["assurance"].validated()
         if type(values.get("submission_schema_version")) is not int or values["submission_schema_version"] <= 0:
             raise ValidationError("submission_schema_version must be a positive integer")
         if type(values.get("imported_at_us")) is not int or values["imported_at_us"] <= 0:
@@ -1009,7 +1037,7 @@ class ReviewSubmissionSummary:
         expected_digest = semantic_digest("heritage-review-submission-v1", _submission_payload(summary))
         if expected_digest != summary.submission_digest:
             raise ValidationError("review-submission digest does not match its semantic payload")
-        if summary.assurance.proof is not None:
+        if summary.assurance.kind is ActorAssuranceKind.VERIFIED_SIGNATURE:
             expected_context = review_submission_context_digest(
                 actor_id=summary.assigned_actor_id,
                 role=summary.role,

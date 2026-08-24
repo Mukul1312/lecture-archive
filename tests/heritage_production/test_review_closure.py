@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import replace
 import unittest
 
@@ -17,6 +18,7 @@ try:
         ReviewClosureSnapshot,
         ReviewCompleteness,
         ReviewCoverage,
+        ReviewerAssignment,
         ReviewSubmissionSummary,
         ReviewTargetOutcome,
         TargetOutcomeKind,
@@ -26,18 +28,24 @@ except ImportError:
     ReviewClosureSnapshot = None  # type: ignore[assignment,misc]
 
 from heritage_production.domain.shared import (
+    ActorAssuranceEvidence,
+    ActorCredentialRef,
     ActorId,
     ArtifactId,
     ArtifactRef,
+    AssuranceLevel,
     ContentDigest,
+    CredentialVerificationMethod,
     DomainEventId,
     OperationId,
     ReviewPackageId,
     ReviewPackageRef,
     ReviewEvidenceRef,
+    RoleCode,
     SegmentId,
     SegmentRevisionId,
     SegmentRevisionRef,
+    TranscriptEditionId,
     ValidationError,
     semantic_digest,
 )
@@ -45,9 +53,10 @@ from tests.heritage_production.test_review_submissions import (
     assigned_round,
     reconstitute_open,
     summary_for_finding,
+    zero_finding_variant,
 )
 from tests.heritage_production.test_review_findings import submit_finding
-from tests.heritage_production.test_review_rounds import uid
+from tests.heritage_production.test_review_rounds import make_target, uid
 
 
 def forge_closed_evidence(
@@ -64,6 +73,181 @@ def forge_closed_evidence(
 
 
 class ReviewClosureTests(unittest.TestCase):
+    def test_coverage_consumes_every_supplied_historical_summary(self) -> None:
+        round_, assignment, assurance = assigned_round()
+
+        def package(suffix: int, character: str) -> ReviewPackageRef:
+            return ReviewPackageRef(
+                ReviewPackageId(uid(suffix)),
+                ContentDigest("sha256", character * 64),
+                ArtifactRef(
+                    ArtifactId(uid(suffix + 1)),
+                    ContentDigest("sha256", character * 64),
+                    10,
+                    "application/zip",
+                ),
+            )
+
+        unassigned_credential = ActorCredentialRef(
+            ActorId(uid(130)),
+            CredentialVerificationMethod.STEWARD_ATTESTATION,
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+        unassigned_assignment = ReviewerAssignment(
+            unassigned_credential,
+            RoleCode("unassigned-reviewer"),
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+        unassigned_assurance = ActorAssuranceEvidence.steward_attested(
+            credential=unassigned_credential,
+            attesting_steward_id=ActorId(uid(131)),
+            reason="Known but unassigned reviewer",
+            attested_at_us=3,
+        )
+        unassigned = zero_finding_variant(
+            round_,
+            unassigned_assignment,
+            unassigned_assurance,
+            submission_suffix=132,
+            submission_nonce="unassigned",
+            package_ref=package(133, "1"),
+            predecessor=None,
+            raw_artifact=ArtifactRef(
+                ArtifactId(uid(135)), ContentDigest("sha256", "2" * 64), 10, "application/zip"
+            ),
+            imported_at_us=4,
+        )
+
+        foreign_target = make_target(
+            edition_ref=type(round_.edition_ref)(
+                TranscriptEditionId(uid(136)),
+                ContentDigest("sha256", "3" * 64),
+            )
+        )
+        foreign_round = type(round_).open(
+            review_round_id=foreign_target.review_round_id,
+            production_id=foreign_target.production_id,
+            edition_ref=foreign_target.edition_ref,
+            target_manifest=foreign_target,
+            rubric_ref=foreign_target.rubric_ref,
+            package_schema_version=round_.package_schema_version,
+            reviewer_assignments=(assignment,),
+            sign_off_requirements=(),
+            opened_by=round_.opened_by,
+            opened_at_us=round_.opened_at_us,
+            event_id=DomainEventId(uid(137)),
+            event_occurred_at_us=2,
+        )
+        foreign_round.pull_events()
+        foreign_first = zero_finding_variant(
+            foreign_round,
+            assignment,
+            assurance,
+            submission_suffix=138,
+            submission_nonce="foreign-first",
+            package_ref=package(139, "4"),
+            predecessor=None,
+            raw_artifact=ArtifactRef(
+                ArtifactId(uid(141)), ContentDigest("sha256", "5" * 64), 10, "application/zip"
+            ),
+            imported_at_us=5,
+        )
+        head_after_foreign = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=142,
+            submission_nonce="head-after-foreign",
+            package_ref=package(143, "6"),
+            predecessor=foreign_first.submission_digest,
+            raw_artifact=ArtifactRef(
+                ArtifactId(uid(145)), ContentDigest("sha256", "7" * 64), 10, "application/zip"
+            ),
+            imported_at_us=6,
+        )
+
+        valid_first = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=146,
+            submission_nonce="invalid-first",
+            package_ref=package(147, "8"),
+            predecessor=None,
+            raw_artifact=ArtifactRef(
+                ArtifactId(uid(149)), ContentDigest("sha256", "9" * 64), 10, "application/zip"
+            ),
+            imported_at_us=7,
+        )
+        invalid_first = copy(valid_first)
+        object.__setattr__(
+            invalid_first,
+            "submission_digest",
+            ContentDigest("sha256", "a" * 64),
+        )
+        head_after_invalid = zero_finding_variant(
+            round_,
+            assignment,
+            assurance,
+            submission_suffix=150,
+            submission_nonce="head-after-invalid",
+            package_ref=package(151, "b"),
+            predecessor=invalid_first.submission_digest,
+            raw_artifact=ArtifactRef(
+                ArtifactId(uid(153)), ContentDigest("sha256", "c" * 64), 10, "application/zip"
+            ),
+            imported_at_us=8,
+        )
+
+        def supplied_values(active: ReviewSubmissionSummary | None) -> dict[str, object]:
+            if active is None:
+                coverage = ReviewCoverage.seal(
+                    target_manifest=round_.target_manifest,
+                    reviewer_assignments=round_.reviewer_assignments,
+                    submission_summaries=(),
+                )
+                return {
+                    "assignments": coverage.assignments,
+                    "reviewed_target_union": coverage.reviewed_target_union,
+                    "unreviewed_target_union": coverage.unreviewed_target_union,
+                    "target_count": coverage.target_count,
+                    "reviewed_target_count": coverage.reviewed_target_count,
+                }
+            assignment_coverage = AssignmentCoverage.seal(
+                target_manifest=round_.target_manifest,
+                assignment=assignment,
+                active_submission=active,
+            )
+            return {
+                "assignments": (assignment_coverage,),
+                "reviewed_target_union": assignment_coverage.reviewed_target_keys,
+                "unreviewed_target_union": assignment_coverage.unreviewed_target_keys,
+                "target_count": len(round_.target_manifest.members),
+                "reviewed_target_count": len(assignment_coverage.reviewed_target_keys),
+            }
+
+        cases = (
+            ("unassigned", (unassigned,), None),
+            ("foreign-history", (foreign_first, head_after_foreign), head_after_foreign),
+            ("invalid-history", (invalid_first, head_after_invalid), head_after_invalid),
+        )
+        for name, summaries, active in cases:
+            with self.subTest(name=name, ingress="seal"):
+                with self.assertRaises(ValidationError):
+                    ReviewCoverage.seal(
+                        target_manifest=round_.target_manifest,
+                        reviewer_assignments=round_.reviewer_assignments,
+                        submission_summaries=summaries,
+                    )
+            with self.subTest(name=name, ingress="reconstitute"):
+                with self.assertRaises(ValidationError):
+                    ReviewCoverage.reconstitute(
+                        target_manifest=round_.target_manifest,
+                        reviewer_assignments=round_.reviewer_assignments,
+                        submission_summaries=summaries,
+                        **supplied_values(active),
+                    )
+
     def test_closed_graph_rejects_valid_root_authored_by_unassigned_actor(self) -> None:
         round_, assignment, assurance = assigned_round()
         finding = submit_finding(round_, author_actor_id=ActorId(uid(59)))
@@ -371,6 +555,30 @@ class ReviewClosureTests(unittest.TestCase):
                 self.assertIs(round_.state, ReviewRoundState.OPEN)
                 self.assertEqual(round_.pull_events(), ())
 
+        forged = clone_finding()
+        forged_disposition = copy(forged.disposition)
+        object.__setattr__(
+            forged_disposition,
+            "decision",
+            FindingDecision.REJECTED,
+        )
+        object.__setattr__(
+            forged_disposition,
+            "rationale",
+            "Stale digest rejection",
+        )
+        object.__setattr__(forged, "_disposition", forged_disposition)
+        with self.assertRaises(ValidationError):
+            round_.close(
+                closure_snapshot=ReviewClosureSnapshot((forged,), ()),
+                closed_by=ActorId(uid(82)),
+                closed_at_us=100,
+                event_id=DomainEventId(uid(83)),
+                event_occurred_at_us=101,
+            )
+        self.assertIs(round_.state, ReviewRoundState.OPEN)
+        self.assertEqual(round_.pull_events(), ())
+
     def test_closed_reconstitution_rederives_projection_from_exact_roots(self) -> None:
         round_, assignment, assurance = assigned_round()
         finding = submit_finding(round_, author_actor_id=assignment.actor_id)
@@ -446,6 +654,49 @@ class ReviewClosureTests(unittest.TestCase):
         }
 
         projection = evidence.findings[0]
+        stale_disposition = copy(projection.disposition)
+        object.__setattr__(
+            stale_disposition,
+            "rationale",
+            "Nonprojected persisted tamper",
+        )
+        stale_root = type(finding).reconstitute(
+            target_manifest=round_.target_manifest,
+            disposition=finding.disposition,
+            review_finding_id=finding.review_finding_id,
+            review_round_id=finding.review_round_id,
+            review_submission_id=finding.review_submission_id,
+            client_finding_nonce=finding.client_finding_nonce,
+            edition_ref=finding.edition_ref,
+            rubric_ref=finding.rubric_ref,
+            target_key=finding.target_key,
+            segment_revision_ref=finding.segment_revision_ref,
+            character_span=finding.character_span,
+            source_subspan=finding.source_subspan,
+            category_code=finding.category_code,
+            severity_code=finding.severity_code,
+            observation=finding.observation,
+            proposed_change=finding.proposed_change,
+            author_actor_id=finding.author_actor_id,
+            finding_payload_digest=finding.finding_payload_digest,
+        )
+        object.__setattr__(stale_root, "_disposition", stale_disposition)
+        stale_projection = copy(projection)
+        object.__setattr__(stale_projection, "disposition", stale_disposition)
+        with self.assertRaises(ValidationError):
+            type(round_).reconstitute(
+                **(
+                    values
+                    | {
+                        "closure_snapshot": ReviewClosureSnapshot((stale_root,), ()),
+                        "closed_evidence": forge_closed_evidence(
+                            evidence,
+                            findings=(stale_projection,),
+                        ),
+                    }
+                )
+            )
+
         stale_projection_tampers = (
             replace(projection, category_code=FindingCategoryCode("forged")),
             replace(projection, severity_code=FindingSeverityCode("forged")),
@@ -746,3 +997,4 @@ class ReviewClosureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    AssuranceLevel,

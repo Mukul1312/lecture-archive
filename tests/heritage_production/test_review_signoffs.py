@@ -20,6 +20,7 @@ except ImportError:
 from heritage_production.domain.review import ReviewRound
 from heritage_production.domain.shared import (
     ActorAssuranceEvidence,
+    ActorAssuranceKind,
     ActorCredentialRef,
     ActorId,
     ArtifactId,
@@ -28,6 +29,7 @@ from heritage_production.domain.shared import (
     ContentDigest,
     CredentialVerificationMethod,
     DomainEventId,
+    ReviewRoundId,
     RoleCode,
     SignOffDecision,
     SignatureProof,
@@ -46,6 +48,90 @@ def artifact(suffix: int, character: str) -> ArtifactRef:
 
 
 class ReviewSignOffTests(unittest.TestCase):
+    def test_recomputed_signoff_digest_rejects_forged_proof_identity(self) -> None:
+        target = make_target()
+        role = RoleCode("rights-holder")
+        fingerprint = ContentDigest("sha256", "1" * 64)
+        credential = ActorCredentialRef(
+            ActorId(uid(50)),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            fingerprint,
+            artifact(51, "2"),
+        )
+        signed_at_us = 10
+        context = review_signoff_context_digest(
+            sign_off_intent_digest=review_domain.review_signoff_intent_digest(
+                credential=credential,
+                role=role,
+                target_ref=target.ref,
+                decision=SignOffDecision.APPROVED,
+                signed_at_us=signed_at_us,
+            ),
+            actor_id=credential.actor_id,
+            role=role,
+            target_ref=target.ref,
+        )
+        valid = ActorAssuranceEvidence.verified_signature(
+            credential=credential,
+            signed_context_digest=context,
+            proof=SignatureProof("ed25519", fingerprint, artifact(52, "3")),
+        )
+
+        for field, replacement in (
+            ("algorithm", "rsa"),
+            ("credential_fingerprint", ContentDigest("sha256", "9" * 64)),
+        ):
+            with self.subTest(field=field):
+                forged_proof = copy(valid.proof)
+                object.__setattr__(forged_proof, field, replacement)
+                forged_assurance = copy(valid)
+                object.__setattr__(forged_assurance, "proof", forged_proof)
+                with self.assertRaises(ValidationError):
+                    ReviewSignOff.seal(
+                        credential=credential,
+                        assurance=forged_assurance,
+                        role=role,
+                        target_ref=target.ref,
+                        decision=SignOffDecision.APPROVED,
+                        signed_at_us=signed_at_us,
+                    )
+
+    def test_signoff_rejects_forged_verified_assurance_without_proof_context(self) -> None:
+        target = make_target()
+        credential = ActorCredentialRef(
+            ActorId(uid(54)),
+            CredentialVerificationMethod.STEWARD_ATTESTATION,
+            AssuranceLevel.STEWARD_ATTESTED,
+        )
+        assurance = ActorAssuranceEvidence.steward_attested(
+            credential=credential,
+            attesting_steward_id=ActorId(uid(55)),
+            reason="Known signer",
+            attested_at_us=3,
+        )
+        forged_assurance = copy(assurance)
+        object.__setattr__(
+            forged_assurance,
+            "kind",
+            ActorAssuranceKind.VERIFIED_SIGNATURE,
+        )
+        object.__setattr__(
+            forged_assurance,
+            "assurance",
+            AssuranceLevel.VERIFIED_SIGNATURE,
+        )
+
+        with self.assertRaises(ValidationError):
+            ReviewSignOff.seal(
+                credential=credential,
+                assurance=forged_assurance,
+                role=RoleCode("rights-holder"),
+                target_ref=target.ref,
+                decision=SignOffDecision.APPROVED,
+                signed_at_us=4,
+            )
+
     def test_reconstitution_reuses_complete_signoff_attachment_invariants(self) -> None:
         target = make_target()
         credential = ActorCredentialRef(
@@ -111,6 +197,29 @@ class ReviewSignOffTests(unittest.TestCase):
         restored = restore((sign_off,))
         self.assertEqual(restored.sign_offs, (sign_off,))
         self.assertEqual(restored.pull_events(), ())
+
+        forged_verified_assurance = copy(sign_off.assurance)
+        object.__setattr__(
+            forged_verified_assurance,
+            "assurance",
+            AssuranceLevel.VERIFIED_SIGNATURE,
+        )
+        forged_verified_sign_off = copy(sign_off)
+        object.__setattr__(
+            forged_verified_sign_off,
+            "assurance",
+            forged_verified_assurance,
+        )
+        with self.assertRaises(ValidationError):
+            round_.record_sign_off(
+                sign_off=forged_verified_sign_off,
+                event_id=DomainEventId(uid(59)),
+                event_occurred_at_us=5,
+            )
+        self.assertEqual(round_.sign_offs, ())
+        self.assertEqual(round_.pull_events(), ())
+        with self.assertRaises(ValidationError):
+            restore((forged_verified_sign_off,))
 
         weak_assurance = copy(sign_off.assurance)
         object.__setattr__(
@@ -352,6 +461,53 @@ class ReviewSignOffTests(unittest.TestCase):
             signed_at_us=20,
         )
         self.assertIs(declined.decision, SignOffDecision.DECLINED)
+
+    def test_verified_proof_cannot_replay_to_a_different_review_target(self) -> None:
+        target = make_target()
+        role = RoleCode("rights-holder")
+        credential = ActorCredentialRef(
+            ActorId(uid(74)),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            ContentDigest("sha256", "7" * 64),
+            artifact(75, "8"),
+        )
+        foreign_target_ref = type(target.ref)(
+            ReviewRoundId(uid(76)),
+            ContentDigest("sha256", "9" * 64),
+            artifact(77, "a"),
+        )
+        intent = review_domain.review_signoff_intent_digest(
+            credential=credential,
+            role=role,
+            target_ref=foreign_target_ref,
+            decision=SignOffDecision.APPROVED,
+            signed_at_us=20,
+        )
+        replayed = ActorAssuranceEvidence.verified_signature(
+            credential=credential,
+            signed_context_digest=review_signoff_context_digest(
+                sign_off_intent_digest=intent,
+                actor_id=credential.actor_id,
+                role=role,
+                target_ref=foreign_target_ref,
+            ),
+            proof=SignatureProof(
+                "ed25519",
+                credential.credential_fingerprint,
+                artifact(78, "b"),
+            ),
+        )
+
+        with self.assertRaises(ValidationError):
+            ReviewSignOff.seal(
+                credential=credential,
+                assurance=replayed,
+                role=role,
+                target_ref=target.ref,
+                decision=SignOffDecision.APPROVED,
+                signed_at_us=20,
+            )
 
 
 if __name__ == "__main__":

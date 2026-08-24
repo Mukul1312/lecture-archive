@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from heritage_production.domain.shared import (
     ActorAssuranceEvidence,
+    ActorAssuranceKind,
     ActorCredentialRef,
     ActorId,
     AssuranceLevel,
@@ -137,7 +138,7 @@ def review_signoff_intent_digest(
 
 
 def _assurance_value(value: ActorAssuranceEvidence) -> dict[str, object]:
-    if value.proof is not None:
+    if value.kind is ActorAssuranceKind.VERIFIED_SIGNATURE:
         return {
             "kind": value.kind.value,
             "signed_context_digest": _digest_value(value.signed_context_digest),
@@ -205,9 +206,12 @@ class ReviewSignOff:
             raise ValidationError("ReviewSignOff only permits REVIEW_TARGET")
         if type(self.signed_at_us) is not int or self.signed_at_us <= 0:
             raise ValidationError("signed_at_us must be a positive integer")
-        if self.assurance.credential != self.credential:
+        validated_assurance = self.assurance.validated()
+        if validated_assurance.credential != self.credential:
             raise ValidationError("sign-off assurance does not match its credential")
-        if self.assurance.proof is not None:
+        object.__setattr__(self, "credential", validated_assurance.credential)
+        object.__setattr__(self, "assurance", validated_assurance)
+        if self.assurance.kind is ActorAssuranceKind.VERIFIED_SIGNATURE:
             intent_digest = review_signoff_intent_digest(
                 credential=self.credential,
                 role=self.role,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 import unittest
 
 try:
@@ -109,6 +110,84 @@ def submit_finding(
 
 
 class ReviewFindingSubmissionTests(unittest.TestCase):
+    def test_root_reconstitution_deeply_revalidates_disposition_semantics(self) -> None:
+        from heritage_production.domain.review import FindingDecision
+
+        round_ = open_round()
+        round_.pull_events()
+        finding = submit_finding(round_)
+        finding.pull_events()
+        disposition = finding.record_disposition(
+            context=round_.open_context(),
+            decision=FindingDecision.ACCEPTED,
+            rationale="Apply correction",
+            steward_actor_id=ActorId(uid(40)),
+            decided_at_us=50,
+            disposition_digest=ContentDigest(
+                "sha256",
+                "7af70c5b45779f7a472bf2ffe352ecb0698f652d9c54525a77547d4227053696",
+            ),
+            event_id=DomainEventId(uid(41)),
+            event_occurred_at_us=51,
+        )
+
+        def restore(forged_disposition: object) -> ReviewFinding:
+            return ReviewFinding.reconstitute(
+                target_manifest=round_.target_manifest,
+                disposition=forged_disposition,
+                review_finding_id=finding.review_finding_id,
+                review_round_id=finding.review_round_id,
+                review_submission_id=finding.review_submission_id,
+                client_finding_nonce=finding.client_finding_nonce,
+                edition_ref=finding.edition_ref,
+                rubric_ref=finding.rubric_ref,
+                target_key=finding.target_key,
+                segment_revision_ref=finding.segment_revision_ref,
+                character_span=finding.character_span,
+                source_subspan=finding.source_subspan,
+                category_code=finding.category_code,
+                severity_code=finding.severity_code,
+                observation=finding.observation,
+                proposed_change=finding.proposed_change,
+                author_actor_id=finding.author_actor_id,
+                finding_payload_digest=finding.finding_payload_digest,
+            )
+
+        for name, rationale in (
+            ("stale-digest", "Reject on review"),
+            ("missing-rejection-rationale", None),
+        ):
+            with self.subTest(name=name):
+                forged_disposition = copy(disposition)
+                object.__setattr__(
+                    forged_disposition,
+                    "decision",
+                    FindingDecision.REJECTED,
+                )
+                object.__setattr__(forged_disposition, "rationale", rationale)
+                with self.assertRaises(ValidationError):
+                    restore(forged_disposition)
+
+        forged_disposition = copy(disposition)
+        object.__setattr__(
+            forged_disposition,
+            "rationale",
+            "Nonprojected tamper",
+        )
+        evidence = finding.evidence
+        with self.assertRaises(ValidationError):
+            type(evidence)(
+                evidence.review_finding_id,
+                evidence.review_round_id,
+                evidence.review_submission_id,
+                evidence.target_key,
+                evidence.segment_revision_ref,
+                evidence.category_code,
+                evidence.severity_code,
+                evidence.finding_payload_digest,
+                forged_disposition,
+            )
+
     def test_submit_has_literal_payload_digest_immutable_body_and_stable_event(self) -> None:
         self.assertIsNotNone(ReviewFinding, "the ReviewFinding aggregate must exist")
         self.assertTrue(
