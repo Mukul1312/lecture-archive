@@ -19,3 +19,7 @@ class StaleReferenceError(DomainError):
 
 class PolicyRefusalError(DomainError):
     """A policy explicitly refuses an otherwise well-formed operation."""
+
+
+class EvaluatorUnavailableError(DomainError):
+    """The exact pinned policy evaluator required by an assessment is not available."""

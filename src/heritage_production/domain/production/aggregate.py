@@ -1,0 +1,772 @@
+"""The mutable `Production` aggregate root and its terminal approval invariant.
+
+Production owns deliverable intent, exact source and selection references,
+append-only gate sets, external sign-offs, candidate snapshots, and at most one
+release approval. It never holds transcript text, proposal rows, review
+findings, or policy rules.
+"""
+
+from __future__ import annotations
+
+from heritage_production.domain.release.content import (
+    ReleaseCandidateSnapshot,
+    ReleaseContentBinding,
+)
+from heritage_production.domain.release.policy import ReleasePolicyVersion
+from heritage_production.domain.shared import (
+    ActorId,
+    AggregateEventRecorder,
+    DomainEvent,
+    DomainEventId,
+    EditionRef,
+    ExternalGateSetRef,
+    InvariantError,
+    JsonValue,
+    OperationId,
+    PolicyRef,
+    ProductionId,
+    ReleaseCandidateRef,
+    SignOffDecision,
+    StaleReferenceError,
+    ValidationError,
+)
+from heritage_production.domain.shared.text import require_canonical_text
+
+from .approval import ApprovalEvidence, ReleaseApproval
+from .gates import ExternalGateSet
+from .signoffs import ExternalSignOff
+from .sources import AttachedSource, EditionSelection
+
+
+def _require_exact(value: object, expected: type[object], field: str) -> None:
+    if type(value) is not expected:
+        raise ValidationError(f"{field} must be an exact {expected.__name__}")
+
+
+def _require_event_inputs(event_id: object, event_occurred_at_us: object) -> None:
+    _require_exact(event_id, DomainEventId, "event_id")
+    if type(event_occurred_at_us) is not int or event_occurred_at_us <= 0:
+        raise ValidationError("event_occurred_at_us must be a positive integer")
+
+
+class Production(AggregateEventRecorder):
+    """One intended deliverable with at most one terminal release approval."""
+
+    __slots__ = (
+        "production_id",
+        "intended_deliverable",
+        "steward_actor_id",
+        "created_at_us",
+        "sources",
+        "selected_edition_ref",
+        "selected_policy_ref",
+        "gate_sets",
+        "active_gate_set_ref",
+        "external_sign_offs",
+        "candidates",
+        "active_candidate_ref",
+        "approval",
+        "_sealed",
+    )
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("Production state is behavior-only")
+        object.__setattr__(self, name, value)
+
+    def _write(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _build(cls, **values: object) -> Production:
+        production = object.__new__(cls)
+        AggregateEventRecorder.__init__(production)
+        for name, value in values.items():
+            object.__setattr__(production, name, value)
+        object.__setattr__(production, "_sealed", True)
+        return production
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        production_id: ProductionId,
+        intended_deliverable: str,
+        steward_actor_id: ActorId,
+        created_at_us: int,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> Production:
+        _require_exact(production_id, ProductionId, "production_id")
+        _require_exact(steward_actor_id, ActorId, "steward_actor_id")
+        require_canonical_text(
+            intended_deliverable, field="intended_deliverable", nonempty=True
+        )
+        if type(created_at_us) is not int or created_at_us <= 0:
+            raise ValidationError("created_at_us must be a positive integer")
+        _require_event_inputs(event_id, event_occurred_at_us)
+
+        production = cls._build(
+            production_id=production_id,
+            intended_deliverable=intended_deliverable,
+            steward_actor_id=steward_actor_id,
+            created_at_us=created_at_us,
+            sources=(),
+            selected_edition_ref=None,
+            selected_policy_ref=None,
+            gate_sets=(),
+            active_gate_set_ref=None,
+            external_sign_offs=(),
+            candidates=(),
+            active_candidate_ref=None,
+            approval=None,
+        )
+        production._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "ProductionCreated",
+                {
+                    "production_id": production_id.value,
+                    "steward_actor_id": steward_actor_id.value,
+                },
+            )
+        )
+        return production
+
+    @classmethod
+    def reconstitute(
+        cls,
+        *,
+        production_id: ProductionId,
+        intended_deliverable: str,
+        steward_actor_id: ActorId,
+        created_at_us: int,
+        sources: tuple[AttachedSource, ...],
+        selected_edition_ref: EditionRef | None,
+        selected_policy_ref: PolicyRef | None,
+        gate_sets: tuple[ExternalGateSet, ...],
+        active_gate_set_ref: ExternalGateSetRef | None,
+        external_sign_offs: tuple[ExternalSignOff, ...],
+        candidates: tuple[ReleaseCandidateSnapshot, ...],
+        active_candidate_ref: ReleaseCandidateRef | None,
+        approval: ReleaseApproval | None,
+    ) -> Production:
+        _require_exact(production_id, ProductionId, "production_id")
+        _require_exact(steward_actor_id, ActorId, "steward_actor_id")
+        require_canonical_text(
+            intended_deliverable, field="intended_deliverable", nonempty=True
+        )
+        if type(created_at_us) is not int or created_at_us <= 0:
+            raise ValidationError("created_at_us must be a positive integer")
+
+        for field_name, values, expected in (
+            ("sources", sources, AttachedSource),
+            ("gate_sets", gate_sets, ExternalGateSet),
+            ("external_sign_offs", external_sign_offs, ExternalSignOff),
+            ("candidates", candidates, ReleaseCandidateSnapshot),
+        ):
+            if type(values) is not tuple or not all(
+                type(value) is expected for value in values
+            ):
+                raise ValidationError(
+                    f"{field_name} must be an immutable tuple of {expected.__name__}"
+                )
+        for field_name, value, expected in (
+            ("selected_edition_ref", selected_edition_ref, EditionRef),
+            ("selected_policy_ref", selected_policy_ref, PolicyRef),
+            ("active_gate_set_ref", active_gate_set_ref, ExternalGateSetRef),
+            ("active_candidate_ref", active_candidate_ref, ReleaseCandidateRef),
+            ("approval", approval, ReleaseApproval),
+        ):
+            if value is not None:
+                _require_exact(value, expected, field_name)
+
+        # Every reachable immutable child revalidates its own digests.
+        for gate_set in gate_sets:
+            gate_set.validated()
+            if gate_set.production_id != production_id:
+                raise ValidationError("a stored gate set names a different Production")
+        for sign_off in external_sign_offs:
+            sign_off.validated()
+            if sign_off.production_id != production_id:
+                raise ValidationError("a stored sign-off names a different Production")
+        for candidate in candidates:
+            candidate.validated()
+            if candidate.production_id != production_id:
+                raise ValidationError("a stored candidate names a different Production")
+
+        for label, keys in (
+            ("source", tuple(value.identity for value in sources)),
+            (
+                "gate set",
+                tuple(value.external_gate_set_id.value for value in gate_sets),
+            ),
+            (
+                "sign-off",
+                tuple(value.sign_off_digest.hex_digest for value in external_sign_offs),
+            ),
+            (
+                "candidate",
+                tuple(value.release_candidate_id.value for value in candidates),
+            ),
+        ):
+            if len(set(keys)) != len(keys):
+                raise ValidationError(f"{label} identities must be unique")
+
+        if active_gate_set_ref is not None and not any(
+            value.ref == active_gate_set_ref for value in gate_sets
+        ):
+            raise ValidationError("the active gate-set ref has no stored gate set")
+        if active_candidate_ref is not None and not any(
+            value.ref == active_candidate_ref for value in candidates
+        ):
+            raise ValidationError("the active candidate ref has no stored snapshot")
+        if active_gate_set_ref is None and gate_sets:
+            raise ValidationError("stored gate sets require an active selection")
+
+        attached_versions = {value.source_version_ref for value in sources}
+        for candidate in candidates:
+            if candidate.included_sign_off_digests and not all(
+                digest in {value.sign_off_digest for value in external_sign_offs}
+                for digest in candidate.included_sign_off_digests
+            ):
+                raise ValidationError(
+                    "a stored candidate includes a sign-off this Production never recorded"
+                )
+
+        if approval is not None:
+            approval.validated()
+            if active_candidate_ref is None or approval.release_candidate_ref != (
+                active_candidate_ref
+            ):
+                raise ValidationError("approval does not bind the active candidate")
+            if approval.steward_actor_id != steward_actor_id:
+                raise ValidationError("approval was not recorded by this Production's steward")
+            if selected_edition_ref is None or approval.edition_ref != selected_edition_ref:
+                raise ValidationError("approval does not bind the selected edition")
+            if selected_policy_ref is None or approval.policy_ref != selected_policy_ref:
+                raise ValidationError("approval does not bind the selected policy")
+            if active_gate_set_ref is None or approval.external_gate_set_ref != (
+                active_gate_set_ref
+            ):
+                raise ValidationError("approval does not bind the active gate set")
+
+        if selected_edition_ref is None and active_candidate_ref is not None:
+            raise ValidationError("an active candidate requires a selected edition")
+        if attached_versions and selected_edition_ref is None and active_candidate_ref:
+            raise ValidationError("an active candidate requires a selected edition")
+
+        production = cls._build(
+            production_id=production_id,
+            intended_deliverable=intended_deliverable,
+            steward_actor_id=steward_actor_id,
+            created_at_us=created_at_us,
+            sources=sources,
+            selected_edition_ref=selected_edition_ref,
+            selected_policy_ref=selected_policy_ref,
+            gate_sets=gate_sets,
+            active_gate_set_ref=active_gate_set_ref,
+            external_sign_offs=external_sign_offs,
+            candidates=candidates,
+            active_candidate_ref=active_candidate_ref,
+            approval=approval,
+        )
+        production.pull_events()
+        return production
+
+    # ------------------------------------------------------------------
+    # Guards
+    # ------------------------------------------------------------------
+
+    def _require_open(self) -> None:
+        if self.approval is not None:
+            raise InvariantError("approval is terminal; this Production cannot change")
+
+    # ------------------------------------------------------------------
+    # Behaviour
+    # ------------------------------------------------------------------
+
+    def attach_source(
+        self,
+        *,
+        attached_source: AttachedSource,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> AttachedSource:
+        self._require_open()
+        _require_exact(attached_source, AttachedSource, "attached_source")
+        _require_event_inputs(event_id, event_occurred_at_us)
+
+        for existing in self.sources:
+            if existing.identity != attached_source.identity:
+                continue
+            if existing.content != attached_source.content:
+                raise ValidationError(
+                    "this source identity is already attached with different content"
+                )
+            return existing
+
+        self._write("sources", (*self.sources, attached_source))
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "SourceRecordingAttached",
+                {
+                    "production_id": self.production_id.value,
+                    "source_recording_id": attached_source.source_recording_id.value,
+                    "source_version_id": attached_source.source_version_id.value,
+                    "artifact_digest": (
+                        attached_source.artifact.content_digest.hex_digest
+                    ),
+                },
+            )
+        )
+        return attached_source
+
+    def select_candidate_edition(
+        self,
+        *,
+        selection: EditionSelection,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> EditionRef:
+        self._require_open()
+        _require_exact(selection, EditionSelection, "selection")
+        _require_event_inputs(event_id, event_occurred_at_us)
+
+        if selection.production_id != self.production_id:
+            raise ValidationError("edition selection names a different Production")
+        attached = {value.source_version_ref for value in self.sources}
+        if not all(value in attached for value in selection.source_version_refs):
+            raise ValidationError(
+                "edition selection uses a source version this Production never attached"
+            )
+
+        current = self.selected_edition_ref
+        if current is not None:
+            if current == selection.edition_ref:
+                return current
+            if (
+                current.transcript_edition_id
+                == selection.edition_ref.transcript_edition_id
+            ):
+                raise ValidationError(
+                    "this edition ID is already selected with a different digest"
+                )
+
+        self._write("selected_edition_ref", selection.edition_ref)
+        self._write("active_candidate_ref", None)
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "CandidateEditionSelected",
+                {
+                    "production_id": self.production_id.value,
+                    "transcript_edition_id": (
+                        selection.edition_ref.transcript_edition_id.value
+                    ),
+                    "edition_digest": selection.edition_ref.content_digest.hex_digest,
+                },
+            )
+        )
+        return selection.edition_ref
+
+    def select_release_policy(
+        self,
+        *,
+        policy: ReleasePolicyVersion,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> PolicyRef:
+        self._require_open()
+        _require_exact(policy, ReleasePolicyVersion, "policy")
+        _require_event_inputs(event_id, event_occurred_at_us)
+        checked = policy.validated()
+
+        current = self.selected_policy_ref
+        if current is not None:
+            if current == checked.ref:
+                return current
+            if (
+                current.release_policy_version_id
+                == checked.ref.release_policy_version_id
+            ):
+                raise ValidationError(
+                    "this policy ID is already selected with a different digest"
+                )
+
+        self._write("selected_policy_ref", checked.ref)
+        self._write("active_candidate_ref", None)
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "ReleasePolicyVersionSelected",
+                {
+                    "production_id": self.production_id.value,
+                    "release_policy_version_id": (
+                        checked.ref.release_policy_version_id.value
+                    ),
+                    "policy_digest": checked.ref.policy_digest.hex_digest,
+                },
+            )
+        )
+        return checked.ref
+
+    def configure_external_gates(
+        self,
+        *,
+        gate_set: ExternalGateSet,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> ExternalGateSetRef:
+        self._require_open()
+        _require_exact(gate_set, ExternalGateSet, "gate_set")
+        _require_event_inputs(event_id, event_occurred_at_us)
+        checked = gate_set.validated()
+
+        if checked.production_id != self.production_id:
+            raise ValidationError("gate set names a different Production")
+        for existing in self.gate_sets:
+            if existing.external_gate_set_id != checked.external_gate_set_id:
+                continue
+            if existing.content_digest != checked.content_digest:
+                raise ValidationError(
+                    "this gate-set ID already exists with a different digest"
+                )
+            if self.active_gate_set_ref == existing.ref:
+                return existing.ref
+            self._write("active_gate_set_ref", existing.ref)
+            self._write("active_candidate_ref", None)
+            self._record_event(
+                self._gate_event(event_id, event_occurred_at_us, existing)
+            )
+            return existing.ref
+
+        self._write("gate_sets", (*self.gate_sets, checked))
+        self._write("active_gate_set_ref", checked.ref)
+        self._write("active_candidate_ref", None)
+        self._record_event(self._gate_event(event_id, event_occurred_at_us, checked))
+        return checked.ref
+
+    def _gate_event(
+        self,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+        gate_set: ExternalGateSet,
+    ) -> DomainEvent:
+        return DomainEvent(
+            event_id,
+            event_occurred_at_us,
+            "ExternalGateSetConfigured",
+            {
+                "production_id": self.production_id.value,
+                "external_gate_set_id": gate_set.external_gate_set_id.value,
+                "gate_set_digest": gate_set.content_digest.hex_digest,
+                "requirement_count": len(gate_set.requirements),
+            },
+        )
+
+    def record_external_sign_off(
+        self,
+        *,
+        sign_off: ExternalSignOff,
+        content: ReleaseContentBinding,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> ExternalSignOff:
+        self._require_open()
+        _require_exact(sign_off, ExternalSignOff, "sign_off")
+        _require_exact(content, ReleaseContentBinding, "content")
+        _require_event_inputs(event_id, event_occurred_at_us)
+        checked = sign_off.validated()
+        content.validated()
+
+        if checked.production_id != self.production_id:
+            raise ValidationError("sign-off names a different Production")
+        gate_set = self.active_gate_set
+        if gate_set is None:
+            raise InvariantError(
+                "an explicit active gate set is required before recording sign-offs"
+            )
+        self._require_content_matches_selection(content)
+        if checked.target.content_manifest_ref != content.content_manifest_ref:
+            raise ValidationError(
+                "sign-off does not target this exact sealed release content"
+            )
+
+        requirement = next(
+            (
+                value
+                for value in gate_set.requirements
+                if value.gate_code == checked.gate_code
+            ),
+            None,
+        )
+        if requirement is None:
+            raise ValidationError(
+                "sign-off names a gate the active gate set does not declare"
+            )
+        if (
+            requirement.role != checked.role
+            or requirement.actor_id != checked.credential.actor_id
+            or requirement.target_rule.target_kind is not checked.target.target_kind
+        ):
+            raise ValidationError("sign-off does not match its declared gate")
+        required_member = requirement.target_rule.required_member_role
+        if required_member is not None:
+            expected_digest = content.member_digest(required_member)
+            if (
+                checked.target.member_role != required_member
+                or expected_digest is None
+                or checked.target.member_digest != expected_digest
+            ):
+                raise ValidationError(
+                    "sign-off does not bind the exact manifest member its gate requires"
+                )
+        if checked.decision is SignOffDecision.APPROVED and not (
+            requirement.is_satisfied_by(checked)
+        ):
+            raise ValidationError("sign-off assurance is below its gate minimum")
+
+        for existing in self.external_sign_offs:
+            if existing.sign_off_digest == checked.sign_off_digest:
+                return existing
+
+        self._write("external_sign_offs", (*self.external_sign_offs, checked))
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "ExternalSignOffRecorded",
+                {
+                    "production_id": self.production_id.value,
+                    "gate_code": checked.gate_code.value,
+                    "actor_id": checked.credential.actor_id.value,
+                    "role": checked.role.value,
+                    "decision": checked.decision.value,
+                    "sign_off_digest": checked.sign_off_digest.hex_digest,
+                },
+            )
+        )
+        return checked
+
+    def _require_content_matches_selection(
+        self, content: ReleaseContentBinding
+    ) -> None:
+        if self.selected_edition_ref is None:
+            raise InvariantError("no candidate edition is selected")
+        if self.selected_policy_ref is None:
+            raise InvariantError("no release policy is selected")
+        if self.active_gate_set_ref is None:
+            raise InvariantError("no explicit external gate set is selected")
+        if content.production_id != self.production_id:
+            raise ValidationError("release content names a different Production")
+        if content.edition_ref != self.selected_edition_ref:
+            raise StaleReferenceError(
+                "release content does not bind the selected edition"
+            )
+        if content.policy_ref != self.selected_policy_ref:
+            raise StaleReferenceError("release content does not bind the selected policy")
+        if content.external_gate_set_ref != self.active_gate_set_ref:
+            raise StaleReferenceError(
+                "release content does not bind the active gate set"
+            )
+
+    def assemble_candidate(
+        self,
+        *,
+        candidate: ReleaseCandidateSnapshot,
+        content: ReleaseContentBinding,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> ReleaseCandidateSnapshot:
+        self._require_open()
+        _require_exact(candidate, ReleaseCandidateSnapshot, "candidate")
+        _require_exact(content, ReleaseContentBinding, "content")
+        _require_event_inputs(event_id, event_occurred_at_us)
+        checked = candidate.validated()
+        content.validated()
+
+        if checked.production_id != self.production_id:
+            raise ValidationError("candidate names a different Production")
+        self._require_content_matches_selection(content)
+        checked.bind(content)
+
+        recorded = {value.sign_off_digest: value for value in self.external_sign_offs}
+        for digest in checked.included_sign_off_digests:
+            sign_off = recorded.get(digest)
+            if sign_off is None:
+                raise ValidationError(
+                    "candidate includes a sign-off this Production never recorded"
+                )
+            if sign_off.target.content_manifest_ref != content.content_manifest_ref:
+                raise ValidationError(
+                    "candidate includes a sign-off for other release content"
+                )
+
+        for existing in self.candidates:
+            if existing.semantic_digest == checked.semantic_digest:
+                if self.active_candidate_ref != existing.ref:
+                    self._write("active_candidate_ref", existing.ref)
+                return existing
+            if existing.release_candidate_id == checked.release_candidate_id:
+                raise ValidationError(
+                    "this candidate ID already exists with a different digest"
+                )
+
+        self._write("candidates", (*self.candidates, checked))
+        self._write("active_candidate_ref", checked.ref)
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "ReleaseCandidateAssembled",
+                {
+                    "production_id": self.production_id.value,
+                    "release_candidate_id": checked.release_candidate_id.value,
+                    "candidate_digest": checked.semantic_digest.hex_digest,
+                    "release_content_manifest_id": (
+                        checked.content_manifest_ref.release_content_manifest_id.value
+                    ),
+                    "sign_off_count": len(checked.included_sign_off_digests),
+                },
+            )
+        )
+        return checked
+
+    def approve_candidate(
+        self,
+        *,
+        evidence: ApprovalEvidence,
+        steward_actor_id: ActorId,
+        approved_at_us: int,
+        operation_id: OperationId,
+        event_id: DomainEventId,
+        event_occurred_at_us: int,
+    ) -> ReleaseApproval:
+        if self.approval is not None:
+            raise InvariantError("this Production already has a release approval")
+        _require_exact(evidence, ApprovalEvidence, "evidence")
+        _require_exact(steward_actor_id, ActorId, "steward_actor_id")
+        _require_exact(operation_id, OperationId, "operation_id")
+        if type(approved_at_us) is not int or approved_at_us <= 0:
+            raise ValidationError("approved_at_us must be a positive integer")
+        _require_event_inputs(event_id, event_occurred_at_us)
+
+        if steward_actor_id != self.steward_actor_id:
+            raise ValidationError("only this Production's steward can approve a release")
+        if self.active_candidate_ref is None:
+            raise InvariantError("no active release candidate is selected")
+        if evidence.candidate.ref != self.active_candidate_ref:
+            raise StaleReferenceError(
+                "approval evidence does not name the active candidate"
+            )
+        if not any(
+            value.semantic_digest == evidence.candidate.semantic_digest
+            for value in self.candidates
+        ):
+            raise StaleReferenceError("the approved candidate is not a stored snapshot")
+
+        self._require_content_matches_selection(evidence.content)
+        if evidence.policy.ref != self.selected_policy_ref:
+            raise StaleReferenceError("approval policy is not the selected policy")
+        if evidence.gate_set.ref != self.active_gate_set_ref:
+            raise StaleReferenceError("approval gate set is not the active gate set")
+
+        recorded = {value.sign_off_digest for value in self.external_sign_offs}
+        if not all(
+            value.sign_off_digest in recorded for value in evidence.accepted_sign_offs
+        ):
+            raise StaleReferenceError(
+                "approval names a sign-off this Production never recorded"
+            )
+
+        if not evidence.eligible:
+            raise InvariantError(
+                "an ineligible candidate can never be approved"
+            )
+
+        approval = ReleaseApproval.seal(
+            evidence=evidence,
+            steward_actor_id=steward_actor_id,
+            approved_at_us=approved_at_us,
+            operation_id=operation_id,
+        )
+        self._write("approval", approval)
+        self._record_event(
+            DomainEvent(
+                event_id,
+                event_occurred_at_us,
+                "ReleaseCandidateApproved",
+                {
+                    "production_id": self.production_id.value,
+                    "release_candidate_id": (
+                        approval.release_candidate_ref.release_candidate_id.value
+                    ),
+                    "candidate_digest": (
+                        approval.release_candidate_ref.semantic_digest.hex_digest
+                    ),
+                    "release_content_manifest_id": (
+                        approval.content_manifest_ref.release_content_manifest_id.value
+                    ),
+                    "release_content_digest": (
+                        approval.content_manifest_ref.semantic_digest.hex_digest
+                    ),
+                    "eligibility_assessment_id": (
+                        approval.assessment_ref.eligibility_assessment_id.value
+                    ),
+                    "eligibility_digest": (
+                        approval.assessment_ref.semantic_digest.hex_digest
+                    ),
+                    "approval_digest": approval.approval_digest.hex_digest,
+                    "steward_actor_id": steward_actor_id.value,
+                },
+            )
+        )
+        return approval
+
+    # ------------------------------------------------------------------
+    # Read-only projections
+    # ------------------------------------------------------------------
+
+    @property
+    def active_gate_set(self) -> ExternalGateSet | None:
+        if self.active_gate_set_ref is None:
+            return None
+        return next(
+            value for value in self.gate_sets if value.ref == self.active_gate_set_ref
+        )
+
+    @property
+    def active_candidate(self) -> ReleaseCandidateSnapshot | None:
+        if self.active_candidate_ref is None:
+            return None
+        return next(
+            value for value in self.candidates if value.ref == self.active_candidate_ref
+        )
+
+    @property
+    def lifecycle_phase(self) -> str:
+        """The display phase this aggregate alone can honestly derive.
+
+        The cross-module read model adds `CONTENT_SEALED`, `REVIEWED`, and
+        `IN_REVIEW`, which require review and release-content facts Production
+        does not own. These labels are projections, never command guards.
+        """
+        if self.approval is not None:
+            return "APPROVED"
+        if self.active_candidate_ref is not None:
+            return "CANDIDATE_ASSEMBLED"
+        if self.selected_edition_ref is not None:
+            return "TRANSCRIPT_SELECTED"
+        if self.sources:
+            return "SOURCED"
+        return "DRAFT"

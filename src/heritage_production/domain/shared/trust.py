@@ -34,6 +34,66 @@ class SignOffDecision(str, Enum):
     DECLINED = "declined"
 
 
+class GateScope(str, Enum):
+    """Separates review sign-off gates from external release/rights-holder gates."""
+
+    REVIEW = "review"
+    EXTERNAL_RELEASE = "external_release"
+
+
+@dataclass(frozen=True, slots=True)
+class GateCode:
+    value: str
+
+    def __post_init__(self) -> None:
+        require_canonical_text(self.value, field="gate code", nonempty=True)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestMemberRole:
+    value: str
+
+    def __post_init__(self) -> None:
+        require_canonical_text(self.value, field="manifest member role", nonempty=True)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True, slots=True)
+class SignOffTargetRule:
+    """The typed artifact a gate's sign-off must bind."""
+
+    target_kind: SignOffTargetKind
+    required_member_role: ManifestMemberRole | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.target_kind) is not SignOffTargetKind:
+            raise ValidationError("target_kind must be an exact SignOffTargetKind")
+        if self.target_kind is SignOffTargetKind.MANIFEST_MEMBER:
+            if type(self.required_member_role) is not ManifestMemberRole:
+                raise ValidationError(
+                    "a manifest-member target rule requires its exact member role"
+                )
+        elif self.required_member_role is not None:
+            raise ValidationError(
+                "only a manifest-member target rule may name a member role"
+            )
+
+    def permits_scope(self, scope: GateScope) -> bool:
+        if type(scope) is not GateScope:
+            raise ValidationError("scope must be an exact GateScope")
+        if scope is GateScope.REVIEW:
+            return self.target_kind is SignOffTargetKind.REVIEW_TARGET
+        return self.target_kind in (
+            SignOffTargetKind.RELEASE_CONTENT,
+            SignOffTargetKind.MANIFEST_MEMBER,
+        )
+
+
 class ActorAssuranceKind(str, Enum):
     VERIFIED_SIGNATURE = "verified_signature"
     STEWARD_ATTESTATION = "steward_attestation"
