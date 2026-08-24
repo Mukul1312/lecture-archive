@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 import unittest
+from unittest.mock import patch
 
 from hypothesis import given, settings, strategies as st
+from hypothesis.internal.conjecture import providers as _hypothesis_providers
 import rfc8785
 
 from heritage_production.domain.shared import (
@@ -15,6 +17,18 @@ from heritage_production.domain.shared import (
 
 
 SAFE_MAX = 9_007_199_254_740_991
+
+
+# Hypothesis 6.165.10 compares module paths with POSIX separators when deciding
+# whether to scan local constants.  Under Windows full-suite discovery, foreign
+# site-packages paths therefore look local and make it scan Torch and NumPy.
+# Normalize only while this oracle runs; remove this workaround when the pinned
+# Hypothesis classifier handles Windows separators itself.
+_HYPOTHESIS_IS_LOCAL_MODULE_FILE = _hypothesis_providers.is_local_module_file
+
+
+def _windows_safe_is_local_module_file(path: str) -> bool:
+    return _HYPOTHESIS_IS_LOCAL_MODULE_FILE(path.replace("\\", "/"))
 
 
 class StrictJsonParsingTests(unittest.TestCase):
@@ -117,6 +131,11 @@ _JSON_VALUES = st.recursive(
 
 
 class CanonicalJsonOracleTests(unittest.TestCase):
+    @patch.object(
+        _hypothesis_providers,
+        "is_local_module_file",
+        new=_windows_safe_is_local_module_file,
+    )
     @settings(deadline=None)
     @given(_JSON_VALUES)
     def test_supported_subset_matches_rfc8785_oracle(self, value: object) -> None:
