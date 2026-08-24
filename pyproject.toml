@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "heritage-production"
+version = "0.0.0"
+description = "Heritage Production modular monolith"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography==50.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis==6.165.10",
+    "rfc8785==0.1.4",
+    "build==1.5.0",
+]
+
+[project.scripts]
+heritage-production = "heritage_production.presentation.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

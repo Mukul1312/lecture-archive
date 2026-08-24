@@ -1,0 +1,11 @@
+# Heritage Production resolved dependencies. Legacy requirements remain separate.
+build==1.5.0
+cffi==2.1.1
+colorama==0.4.6
+cryptography==50.0.0
+hypothesis==6.165.10
+packaging==26.3
+pycparser==3.0
+pyproject_hooks==1.2.0
+rfc8785==0.1.4
+sortedcontainers==2.4.0
