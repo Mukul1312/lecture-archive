@@ -80,12 +80,15 @@ class LocalFasterWhisperAdapter:
         snapshot = self._snapshot()
         try:
             faster_whisper = self._import_module("faster_whisper")
-        except ModuleNotFoundError as error:
+        except ImportError as error:
             raise JobValidationError("faster-whisper is unavailable; activate .venv-transcribe before transcribing") from error
-        model = faster_whisper.WhisperModel(str(snapshot), device="cpu", compute_type="int8")
-        segments, _info = model.transcribe(str(source_path), language="en", beam_size=5, word_timestamps=True,
-                                          vad_filter=False, condition_on_previous_text=False)
-        return [_segment_to_record(index, segment) for index, segment in enumerate(segments)]
+        try:
+            model = faster_whisper.WhisperModel(str(snapshot), device="cpu", compute_type="int8")
+            segments, _info = model.transcribe(str(source_path), language="en", beam_size=5, word_timestamps=True,
+                                              vad_filter=False, condition_on_previous_text=False)
+            return [_segment_to_record(index, segment) for index, segment in enumerate(segments)]
+        except (OSError, RuntimeError) as error:
+            raise JobValidationError("local faster-whisper backend failed during transcription") from error
 
 
 class FfmpegMediaAdapter:

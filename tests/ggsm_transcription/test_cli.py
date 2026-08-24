@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from urllib.error import URLError
 
 from scripts.ggsm_transcription import cli
-from scripts.ggsm_transcription.asr import ASRService
-from scripts.ggsm_transcription.intake import SourceDownload
-from scripts.ggsm_transcription.store import JobStore
+from scripts.ggsm_transcription.asr import LocalFasterWhisperAdapter
+from scripts.ggsm_transcription.intake import HttpsFfprobeSourceAdapter, IntakeService, SourceDownload
+from scripts.ggsm_transcription.store import JobStore, JobValidationError
 
 
 class FakeSourceAdapter:
@@ -58,6 +60,15 @@ class FakeMediaAdapter:
 
     def runtime_metadata(self) -> dict[str, str]:
         return {"ffmpeg": "fake", "ffprobe": "fake"}
+
+
+class FakeHttpResponse(BytesIO):
+    def __init__(self, payload: bytes, resolved_url: str) -> None:
+        super().__init__(payload)
+        self._resolved_url = resolved_url
+
+    def geturl(self) -> str:
+        return self._resolved_url
 
 
 class RecordingCommands:
@@ -302,3 +313,88 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("finite number", stderr)
         self.assertEqual(commands.calls, [])
+
+
+class CliExternalFailureContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.data_root = Path(self.tmp.name) / "data" / "transcribe"
+
+    def _run(self, arguments: list[str], builder) -> tuple[int, str, str]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = cli.main(arguments, command_builder=builder)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_https_adapter_normalizes_a_download_operational_error(self) -> None:
+        def offline(_request: object) -> object:
+            raise URLError("offline")
+
+        adapter = HttpsFfprobeSourceAdapter(http_open=offline)
+
+        with self.assertRaisesRegex(JobValidationError, "HTTPS source download failed"):
+            adapter.download("https://archive.example/lecture.mp3", Path(self.tmp.name) / "source.part")
+
+    def test_cli_normalizes_the_production_ffprobe_nonzero_boundary_without_creating_a_job(self) -> None:
+        def failing_ffprobe(command: list[str], **_kwargs: object) -> object:
+            raise subprocess.CalledProcessError(1, command, stderr="ffprobe failed")
+
+        adapter = HttpsFfprobeSourceAdapter(
+            http_open=lambda _request: FakeHttpResponse(b"source bytes", "https://archive.example/final/lecture.mp3"),
+            run_command=failing_ffprobe,
+        )
+        store = JobStore(self.data_root)
+
+        code, stdout, stderr = self._run(
+            ["intake", "--url", "https://archive.example/lecture.mp3"],
+            lambda _data_root: cli.WorkflowCommands(store, source_adapter_factory=lambda: adapter),
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("ffprobe failed to inspect the downloaded source", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual(store.list_jobs(), [])
+
+    def test_cli_normalizes_local_backend_runtime_failure_without_advancing_the_job(self) -> None:
+        class FailingBackend:
+            @staticmethod
+            def WhisperModel(*_args: object, **_kwargs: object) -> object:
+                raise RuntimeError("backend initialization failed")
+
+        store = JobStore(self.data_root)
+        job = IntakeService(store, FakeSourceAdapter()).intake("https://archive.example/lecture.mp3")
+        snapshot = Path(self.tmp.name) / "small-snapshot"
+        snapshot.mkdir()
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        adapter = LocalFasterWhisperAdapter(
+            snapshot_path=snapshot,
+            module_importer=lambda _name: FailingBackend,
+        )
+
+        code, stdout, stderr = self._run(
+            ["transcribe", "--job", job["job_id"]],
+            lambda _data_root: cli.WorkflowCommands(store, model_adapter_factory=lambda: adapter),
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout, "")
+        self.assertIn("local faster-whisper backend failed during transcription", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual(store.load_job(job["job_id"])["stage"], "source_ready")
+        self.assertFalse((store.job_root(job["job_id"]) / "asr" / "full.jsonl").exists())
+
+    def test_local_adapter_does_not_hide_an_unexpected_programmer_type_error(self) -> None:
+        class ProgrammerFailure:
+            @staticmethod
+            def WhisperModel(*_args: object, **_kwargs: object) -> object:
+                raise TypeError("unexpected adapter contract")
+
+        snapshot = Path(self.tmp.name) / "type-error-snapshot"
+        snapshot.mkdir()
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+        adapter = LocalFasterWhisperAdapter(snapshot_path=snapshot, module_importer=lambda _name: ProgrammerFailure)
+
+        with self.assertRaisesRegex(TypeError, "unexpected adapter contract"):
+            adapter.transcribe(Path(self.tmp.name) / "source.bin", {})

@@ -36,18 +36,24 @@ class HttpsFfprobeSourceAdapter:
 
     def download(self, requested_url: str, staging_path: Path) -> SourceDownload:
         request = Request(requested_url, headers={"User-Agent": "ggsm-transcription/1"})
-        with self._http_open(request) as response, staging_path.open("wb") as target:
-            shutil.copyfileobj(response, target)
-            resolved = response.geturl()
-            filename = Path(urlsplit(resolved).path).name or "source.bin"
+        try:
+            with self._http_open(request) as response, staging_path.open("wb") as target:
+                shutil.copyfileobj(response, target)
+                resolved = response.geturl()
+                filename = Path(urlsplit(resolved).path).name or "source.bin"
+        except OSError as error:
+            raise JobValidationError("HTTPS source download failed") from error
         return SourceDownload(resolved, filename, {"downloader": "urllib.request"})
 
     def probe(self, source_path: Path) -> dict[str, Any]:
-        probe = self._run(
-            ["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(source_path)],
-            capture_output=True, text=True, check=True,
-        )
-        version = self._run(["ffprobe", "-version"], capture_output=True, text=True, check=True)
+        try:
+            probe = self._run(
+                ["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", str(source_path)],
+                capture_output=True, text=True, check=True,
+            )
+            version = self._run(["ffprobe", "-version"], capture_output=True, text=True, check=True)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise JobValidationError("ffprobe failed to inspect the downloaded source") from error
         try:
             payload = json.loads(probe.stdout)
             streams = payload["streams"]
