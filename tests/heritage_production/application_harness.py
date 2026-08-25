@@ -12,11 +12,14 @@ from __future__ import annotations
 from heritage_production.application import commands
 from heritage_production.application.handlers import ProductionCommandHandlers
 from heritage_production.domain.production import AttachedSource, EditionSelection
+from heritage_production.domain.release import ReleasePolicyRules
 from heritage_production.domain.shared import (
     ArtifactId,
     ArtifactRef,
+    ExternalGateSetId,
     OperationId,
     ProductionId,
+    ReleasePolicyVersionId,
     SourceRecordingRef,
     SourceVersionRef,
 )
@@ -36,6 +39,20 @@ from tests.heritage_production.heritage_release_fixtures import actor, uid
 
 
 STEWARD = actor(20)
+
+
+def empty_rules() -> ReleasePolicyRules:
+    """The explicitly empty rule set design 9.2 calls a valid configuration."""
+    return ReleasePolicyRules(
+        required_integrity_checks=(),
+        uncertainty_allowances=(),
+        blocking_finding_rules=(),
+        review_coverage_requirements=(),
+        review_signoff_requirements=(),
+        external_signoff_requirements=(),
+        required_release_members=(),
+        maximum_unresolved_findings=0,
+    )
 
 
 def attached_for(version: SourceVersionRef, *, artifact_suffix: int = 200) -> AttachedSource:
@@ -153,6 +170,49 @@ class ApplicationHarness:
                 production_id=production_id,
                 edition_selection=selection,
                 expected_version=expected_version,
+            )
+        )
+
+    def configure_gates(
+        self,
+        production_id: ProductionId,
+        requirements: tuple,
+        *,
+        gate_set_suffix: int = 700,
+        suffix: int = 6,
+        expected_version: int = 3,
+    ):
+        return self.handlers.configure_external_gates(
+            commands.ConfigureExternalGates(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                production_id=production_id,
+                external_gate_set_id=ExternalGateSetId(uid(gate_set_suffix)),
+                requirements=requirements,
+                expected_version=expected_version,
+            )
+        )
+
+    def create_policy(
+        self,
+        *,
+        policy_suffix: int = 720,
+        suffix: int = 7,
+        rules=None,
+        semantic_label: str = "pilot-transcript-policy",
+    ):
+        from heritage_production.domain.release import SUPPORTED_EVALUATOR_REF
+
+        return self.handlers.create_release_policy_version(
+            commands.CreateReleasePolicyVersion(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                release_policy_version_id=ReleasePolicyVersionId(uid(policy_suffix)),
+                semantic_label=semantic_label,
+                policy_schema_version=1,
+                policy_schema_code="heritage-transcript-policy-v1",
+                evaluator_ref=SUPPORTED_EVALUATOR_REF,
+                rules=rules if rules is not None else empty_rules(),
             )
         )
 

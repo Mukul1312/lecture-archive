@@ -19,18 +19,22 @@ new one.
 from __future__ import annotations
 
 from heritage_production.domain.production import Production
+from heritage_production.domain.release import ExternalGateSet, ReleasePolicyVersion
 from heritage_production.domain.shared import (
     DomainEventId,
     ProductionId,
+    ReleasePolicyVersionId,
     StaleReferenceError,
 )
 
 from ..commands.production import (
     AttachSourceRecording,
+    ConfigureExternalGates,
     CreateProduction,
     SelectCandidateEdition,
     SelectReleasePolicyVersion,
 )
+from ..commands.release import CreateReleasePolicyVersion
 from ..execution import CompletedOperation, OperationResult, run_operation
 
 
@@ -46,6 +50,15 @@ def _production_payload(production: Production, version: int) -> dict:
         "version": version,
         "lifecycle_phase": production.lifecycle_phase,
         "source_count": len(production.sources),
+    }
+
+
+def _policy_payload(policy: ReleasePolicyVersion) -> dict:
+    """A sealed root has no version, so the digest is what a replay pins."""
+    return {
+        "release_policy_version_id": policy.release_policy_version_id.value,
+        "policy_digest": policy.policy_digest.hex_digest,
+        "semantic_label": policy.semantic_label,
     }
 
 
@@ -237,6 +250,76 @@ class ProductionCommandHandlers:
             return OperationResult(
                 value=reloaded.value.selected_policy_ref, payload=reloaded.payload
             )
+
+        return self._run(command, execute=execute, rederive=rederive)
+
+
+    def configure_external_gates(
+        self, command: ConfigureExternalGates
+    ) -> CompletedOperation:
+        def execute() -> OperationResult:
+            loaded = self._open_production(command)
+            # The gate set is sealed here rather than supplied. Its digest
+            # covers the Production and the requirements, so a caller cannot
+            # hand over a set whose digest disagrees with its own contents.
+            gate_set = ExternalGateSet.seal(
+                external_gate_set_id=command.external_gate_set_id,
+                production_id=command.production_id,
+                requirements=command.requirements,
+                configured_by=command.actor.actor_id,
+                configured_at_us=self._clock.now_us(),
+            )
+            active = loaded.root.configure_external_gates(
+                gate_set=gate_set,
+                event_id=DomainEventId(self._ids.new_id()),
+                event_occurred_at_us=self._clock.now_us(),
+            )
+            version = self._productions.save(
+                loaded.root, expected_version=command.expected_version
+            )
+            self._publish(loaded.root)
+            return OperationResult(
+                value=active, payload=_production_payload(loaded.root, version)
+            )
+
+        def rederive(record) -> OperationResult:
+            reloaded = self._reload(record)
+            return OperationResult(
+                value=reloaded.value.active_gate_set_ref, payload=reloaded.payload
+            )
+
+        return self._run(command, execute=execute, rederive=rederive)
+
+    def create_release_policy_version(
+        self, command: CreateReleasePolicyVersion
+    ) -> CompletedOperation:
+        """The first handler to write a *sealed* root.
+
+        Design 11.6 gives sealed records no update or delete API, so the
+        repository offers only `add` and `get`: a second operation naming an
+        existing policy id is refused rather than overwriting it. Sealed roots
+        emit no domain events, so nothing is published here.
+        """
+
+        def execute() -> OperationResult:
+            policy = ReleasePolicyVersion.seal(
+                release_policy_version_id=command.release_policy_version_id,
+                semantic_label=command.semantic_label,
+                policy_schema_version=command.policy_schema_version,
+                policy_schema_code=command.policy_schema_code,
+                evaluator_ref=command.evaluator_ref,
+                rules=command.rules,
+                author_actor_id=command.actor.actor_id,
+                created_at_us=self._clock.now_us(),
+            )
+            self._policies.add(policy)
+            return OperationResult(value=policy, payload=_policy_payload(policy))
+
+        def rederive(record) -> OperationResult:
+            stored = self._policies.get(
+                ReleasePolicyVersionId(record.result_payload["release_policy_version_id"])
+            )
+            return OperationResult(value=stored, payload=_policy_payload(stored))
 
         return self._run(command, execute=execute, rederive=rederive)
 
