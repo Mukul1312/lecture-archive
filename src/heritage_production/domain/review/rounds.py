@@ -466,9 +466,10 @@ class ClosedReviewEvidence:
     """A frozen, self-identifying projection of one closed review round.
 
     The evidence carries its own Production, target manifest, and reviewer
-    assignments so a downstream consumer can revalidate the complete graph with
-    `validated()` instead of trusting a retained `evidence_ref`. A round closed
-    with zero submissions still names its exact Production.
+    assignments so a downstream consumer can revalidate the digest-bound graph
+    with `validated()` instead of trusting a retained `evidence_ref`. A round
+    closed with zero submissions still names its exact Production. See
+    `validated()` for the one part of a submission summary no digest covers.
     """
 
     evidence_ref: ReviewEvidenceRef
@@ -587,9 +588,18 @@ class ClosedReviewEvidence:
     def validated(self) -> ClosedReviewEvidence:
         """Recompute this evidence from its own stored graph.
 
-        Any child forged behind a retained `evidence_ref` -- stripped findings,
-        replaced coverage, a substituted submission -- fails the recomputed
-        `heritage-review-evidence-v1` digest here.
+        What this catches: anything inside `heritage-review-evidence-v1` --
+        the target digest, the ordered submission `(id, digest)` pairs, the
+        finding payload and disposition digests, coverage, and sign-offs --
+        plus the target manifest and reviewer assignments, which are rebuilt
+        through their own constructors above.
+
+        What it does NOT catch: the reviewer `credential` and
+        `ActorAssuranceEvidence` carried by a finalized submission summary.
+        Design section 8.2 deliberately excludes both from
+        `heritage-review-submission-v1`, so no digest binds them. That trust
+        evidence is established at import time and, from Task 9, by
+        cryptographic signature verification -- not here.
         """
         return type(self).reconstitute(
             target_manifest=self.target_manifest,

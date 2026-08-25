@@ -28,6 +28,7 @@ from heritage_production.domain.release import (
     IntegrityCheckCode,
     ReleaseCandidateSnapshot,
     ReleaseEligibilityEvaluator,
+    GateOutcome,
     IntegrityCheckResult,
     ReleaseMember,
     UncertaintyObservation,
@@ -41,6 +42,7 @@ from heritage_production.domain.shared import (
     ActorCredentialRef,
     AssuranceLevel,
     CredentialVerificationMethod,
+    DomainError,
     EvaluatorUnavailableError,
     GateCode,
     GateScope,
@@ -63,12 +65,14 @@ from tests.heritage_production.heritage_release_fixtures import (
     actor,
     artifact,
     closed_review,
+    default_edition_evidence,
     digest,
     edition_ref,
     production_id,
     source_version,
     successor_edition_ref,
     uid,
+    verified_credential,
 )
 from tests.heritage_production.test_production_aggregate import (
     STEWARD,
@@ -85,7 +89,10 @@ from tests.heritage_production.test_production_approval import (
     OPERATION,
     approve,
 )
-from tests.heritage_production.test_production_gates import verified_sign_off
+from tests.heritage_production.test_production_gates import (
+    FINGERPRINT,
+    verified_sign_off,
+)
 from tests.heritage_production.test_release_content import seal_candidate, seal_content
 from tests.heritage_production.test_release_eligibility import (
     ASSESSED_AT,
@@ -311,6 +318,46 @@ class FabricatedAssessmentTests(unittest.TestCase):
                 event_id=event_id(7),
                 event_occurred_at_us=APPROVED_AT + 1,
             )
+
+        self.assertIsNone(production.approval)
+        self.assertEqual(production.pull_events(), ())
+
+    def test_an_assessment_swapped_after_evidence_construction_is_refused(
+        self,
+    ) -> None:
+        """`approve_candidate` re-runs `evidence.validated()` for this reason.
+
+        ApprovalEvidence is a frozen value, so a caller can swap its assessment
+        after construction. Only the aggregate's own re-validation catches it.
+        """
+        production, snapshot = production_with(blocking_policy())
+        genuine = real_assessment(snapshot)
+        self.assertFalse(genuine.eligible)
+        evidence = ApprovalEvidence(
+            snapshot=snapshot,
+            assessment=genuine,
+            assessment_ref=stored_ref(genuine),
+        )
+
+        # Forge an eligible-looking assessment and swap it in post-construction.
+        forged = EligibilityAssessment.seal(
+            eligibility_assessment_id=genuine.eligibility_assessment_id,
+            assessed_at_us=genuine.assessed_at_us,
+            candidate_ref=genuine.candidate_ref,
+            policy_ref=genuine.policy_ref,
+            evaluator_ref=genuine.evaluator_ref,
+            input_digest=genuine.input_digest,
+            gate_results=tuple(
+                value for value in genuine.gate_results if value.passed
+            ),
+        )
+        self.assertTrue(forged.eligible)
+        object.__setattr__(evidence, "assessment", forged)
+        object.__setattr__(evidence, "assessment_ref", stored_ref(forged))
+        self.assertTrue(evidence.eligible)
+
+        with self.assertRaises(DomainError):
+            approve(production, evidence)
 
         self.assertIsNone(production.approval)
         self.assertEqual(production.pull_events(), ())
@@ -779,6 +826,46 @@ class MutatorChildValidationTests(unittest.TestCase):
 class StoredStateHardeningTests(unittest.TestCase):
     """Fix round 2 — reconstitution refuses history the live path cannot produce."""
 
+    def test_a_sign_off_no_gate_declared_is_rejected(self) -> None:
+        """Stored history must obey the rule the live path enforces.
+
+        With an explicitly empty gate set, `record_external_sign_off` refuses
+        every sign-off. Reconstitution must refuse the same state, or an
+        undeclared sign-off could discharge a policy requirement that pins no
+        credential of its own.
+        """
+        production, _, content = configured_production()
+        self.assertEqual(production.active_gate_set.requirements, ())
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+        undeclared = verified_sign_off(target=target)
+
+        with self.assertRaises(ValidationError):
+            production.record_external_sign_off(
+                sign_off=undeclared,
+                content=content,
+                event_id=event_id(55),
+                event_occurred_at_us=9,
+            )
+
+        with self.assertRaises(ValidationError):
+            Production.reconstitute(
+                production_id=production.production_id,
+                intended_deliverable=production.intended_deliverable,
+                steward_actor_id=production.steward_actor_id,
+                created_at_us=production.created_at_us,
+                sources=production.sources,
+                edition_selection=production.edition_selection,
+                selected_policy_ref=production.selected_policy_ref,
+                gate_sets=production.gate_sets,
+                active_gate_set_ref=production.active_gate_set_ref,
+                external_sign_offs=(undeclared,),
+                candidates=(),
+                active_candidate_ref=None,
+                approval=None,
+            )
+
     def test_a_candidate_sign_off_for_other_content_is_rejected(self) -> None:
         production, _, content = configured_production(
             requirements=(rights_holder_gate(),)
@@ -945,6 +1032,71 @@ class SignerCountingTests(unittest.TestCase):
         self.assertEqual(gate.actual, "1 qualifying signers")
 
 
+class EvaluatorPinnedCredentialTests(unittest.TestCase):
+    """The evaluator must match a Production gate's pinned credential exactly."""
+
+    def assess(self, credential):
+        policy = seal_policy(empty_rules())
+        gates = gate_set((rights_holder_gate(),))
+        content = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=gates.ref,
+            provenance_input_digests=(default_edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+        )
+        target = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+        sign_off = verified_sign_off(target=target, credential=credential)
+        candidate = seal_candidate(
+            content, sign_off_digests=(sign_off.sign_off_digest,)
+        )
+        snapshot = EligibilityInputSnapshot.seal(
+            production_id=content.production_id,
+            candidate=candidate,
+            content=content,
+            edition_evidence=edition_evidence(edition=content.edition_ref),
+            policy=policy,
+            gate_set=gates,
+            sign_offs=(sign_off,),
+            integrity_results=(),
+        )
+        return ReleaseEligibilityEvaluator(SUPPORTED_EVALUATOR_REF).evaluate(
+            snapshot=snapshot,
+            eligibility_assessment_id=ASSESSMENT_ID,
+            assessed_at_us=ASSESSED_AT,
+        )
+
+    def gate_outcome(self, assessment):
+        return next(
+            value.outcome
+            for value in assessment.gate_results
+            if value.gate_code.value == "production-gate:rights-holder-approval"
+        )
+
+    def test_the_pinned_credential_passes_its_own_gate(self) -> None:
+        """Paired with the negative case, so neither can pass vacuously."""
+        assessment = self.assess(verified_credential(40, FINGERPRINT))
+
+        self.assertIs(self.gate_outcome(assessment), GateOutcome.PASS)
+        self.assertTrue(assessment.eligible)
+
+    def test_a_substituted_signing_key_never_discharges_a_pinned_gate(self) -> None:
+        substitute = ActorCredentialRef(
+            actor(40),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            digest("9"),
+            artifact(410, "8", "application/octet-stream"),
+        )
+        self.assertEqual(substitute.actor_id, verified_credential(40, FINGERPRINT).actor_id)
+
+        assessment = self.assess(substitute)
+
+        self.assertIs(self.gate_outcome(assessment), GateOutcome.FAIL)
+        self.assertFalse(assessment.eligible)
+
+
 class UnauthenticatedInputTests(unittest.TestCase):
     """Fix round 2 — evaluator inputs must be named by the signed release content."""
 
@@ -1015,30 +1167,66 @@ class CandidateReplayTests(unittest.TestCase):
     """Fix round 2 — replay rules do not depend on iteration order."""
 
     def test_an_id_conflict_is_rejected_regardless_of_position(self) -> None:
-        production, _, content = configured_production()
-        first = seal_candidate(content, candidate_id=ReleaseCandidateId(uid(60)))
+        """Two stored candidates, so the two loop branches are distinguishable.
+
+        With only one stored candidate the digest-reuse branch and the
+        ID-conflict branch cannot be told apart, and the order-dependent form
+        of this loop passes. The submitted candidate below reuses the digest of
+        the SECOND stored snapshot while reusing the ID of the FIRST, so an
+        implementation that returns on digest reuse before scanning the whole
+        history for an ID conflict silently rolls the active candidate back.
+        """
+        production, policy, content_a = configured_production()
+        content_b = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=production.active_gate_set_ref,
+            provenance_input_digests=(default_edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+            release_members=(
+                ReleaseMember(ManifestMemberRole("transcript-json"), artifact(80, "1")),
+            ),
+        )
+        self.assertNotEqual(
+            content_a.content_manifest_ref, content_b.content_manifest_ref
+        )
+
+        # Order matters: the digest-matching snapshot is stored FIRST and the
+        # ID-conflicting one SECOND, so a loop that returns on digest reuse
+        # before scanning the whole history never sees the conflict.
+        first = seal_candidate(content_b, candidate_id=ReleaseCandidateId(uid(60)))
         production.assemble_candidate(
-            candidate=first, content=content, event_id=event_id(50), event_occurred_at_us=1
+            candidate=first, content=content_b, event_id=event_id(50), event_occurred_at_us=1
+        )
+        second = seal_candidate(content_a, candidate_id=ReleaseCandidateId(uid(62)))
+        production.assemble_candidate(
+            candidate=second, content=content_a, event_id=event_id(54), event_occurred_at_us=2
         )
         production.pull_events()
+        self.assertEqual(production.candidates, (first, second))
+        self.assertEqual(production.active_candidate_ref, second.ref)
+
+        # Reuses the SECOND stored candidate's ID while matching the FIRST
+        # stored candidate's digest.
         conflicting = ReleaseCandidateSnapshot.seal(
-            release_candidate_id=first.release_candidate_id,
+            release_candidate_id=second.release_candidate_id,
             production_id=production.production_id,
-            content_manifest_ref=content.content_manifest_ref,
-            included_sign_off_digests=(digest("2"),),
+            content_manifest_ref=content_b.content_manifest_ref,
+            included_sign_off_digests=(),
             assembled_at_us=1_700_000_000_000_070,
         )
+        self.assertEqual(conflicting.semantic_digest, first.semantic_digest)
+        self.assertNotEqual(conflicting.semantic_digest, second.semantic_digest)
 
-        with self.assertRaises(ValidationError):
+        with self.assertRaisesRegex(ValidationError, "different digest"):
             production.assemble_candidate(
                 candidate=conflicting,
-                content=content,
+                content=content_b,
                 event_id=event_id(51),
-                event_occurred_at_us=2,
+                event_occurred_at_us=3,
             )
 
-        self.assertEqual(production.candidates, (first,))
-        self.assertEqual(production.active_candidate_ref, first.ref)
+        self.assertEqual(production.candidates, (first, second))
+        self.assertEqual(production.active_candidate_ref, second.ref)
         self.assertEqual(production.pull_events(), ())
 
     def test_reselecting_a_stored_candidate_emits_its_fact(self) -> None:

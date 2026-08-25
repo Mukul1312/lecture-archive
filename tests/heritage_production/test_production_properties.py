@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 
 from hypothesis import HealthCheck, given, settings, strategies as st
@@ -78,6 +79,11 @@ def fresh_evidence(production: Production, candidate, content, policy) -> Approv
 
 class ProductionApprovalStateMachine(RuleBasedStateMachine):
     """Approval must stay unreachable until the complete exact graph exists."""
+
+    # Counts successful approvals across every example. The invariant below
+    # early-returns when no approval exists, so without this counter the whole
+    # machine can pass while never once reaching an approval.
+    approvals_reached = 0
 
     def __init__(self) -> None:
         super().__init__()
@@ -177,6 +183,7 @@ class ProductionApprovalStateMachine(RuleBasedStateMachine):
         self.candidate = candidate
         self._drain()
 
+    @precondition(lambda self: self.candidate is not None)
     @rule()
     def attempt_approval(self) -> None:
         identifier, occurred = self._next_event()
@@ -202,6 +209,7 @@ class ProductionApprovalStateMachine(RuleBasedStateMachine):
             assert self._state() == before
             assert self.production.pull_events() == ()
             return
+        type(self).approvals_reached += 1
         self._drain()
 
     def _state(self) -> tuple[object, ...]:
@@ -245,12 +253,31 @@ class ProductionApprovalStateMachine(RuleBasedStateMachine):
 
 
 ProductionApprovalStateMachine.TestCase.settings = settings(
-    max_examples=25,
-    stateful_step_count=12,
+    max_examples=120,
+    stateful_step_count=20,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 ProductionApprovalTests = ProductionApprovalStateMachine.TestCase
+
+
+class StateMachineReachabilityTests(unittest.TestCase):
+    """Guards the state machine against silently proving nothing."""
+
+    def test_the_state_machine_actually_reaches_an_approval(self) -> None:
+        ProductionApprovalStateMachine.approvals_reached = 0
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(
+            ProductionApprovalStateMachine.TestCase
+        )
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            result = unittest.TextTestRunner(verbosity=0, stream=sink).run(suite)
+
+        self.assertTrue(result.wasSuccessful())
+        self.assertGreater(
+            ProductionApprovalStateMachine.approvals_reached,
+            0,
+            "the approval invariant never fired: the machine proved nothing",
+        )
 
 
 class RejectedOperationTests(unittest.TestCase):

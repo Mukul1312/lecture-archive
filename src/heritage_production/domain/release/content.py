@@ -186,9 +186,10 @@ class ReleaseContentBinding:
             self.integrity_input_digests, field="integrity_input_digests"
         )
 
-        # The closed evidence recomputes its whole graph from its own stored
-        # target manifest and assignments, so a child forged behind a retained
-        # evidence_ref cannot survive this reconstruction.
+        # The closed evidence recomputes its digest-bound graph from its own
+        # stored target manifest and assignments. See
+        # ClosedReviewEvidence.validated() for the reviewer trust fields that
+        # design section 8.2 excludes from every preimage.
         checked_evidence = self.review_evidence.validated()
         if checked_evidence != self.review_evidence:
             raise ValidationError("closed review evidence failed reconstruction")

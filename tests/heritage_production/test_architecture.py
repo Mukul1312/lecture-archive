@@ -202,10 +202,14 @@ class ArchitectureFirewallTests(unittest.TestCase):
         }
         self.assertEqual(recording, EVENT_RECORDING_ROOTS)
 
-        for name in SEALED_ROOTS:
-            self.assertIn(name, classes, f"{name} must remain an aggregate root")
+        # Symmetric with the recorder half: a seventh sealed root must break
+        # this test too, so the sealed set is enumerated structurally.
+        sealed = {
+            name for name, bases in classes.items() if "SealedAggregateRoot" in bases
+        }
+        self.assertEqual(sealed, SEALED_ROOTS)
 
-        self.assertEqual(len(EVENT_RECORDING_ROOTS | SEALED_ROOTS), 6)
+        self.assertEqual(len(recording | sealed), 6)
 
     def test_repository_ports_are_empty_until_task_six_then_match_the_allowlist(self) -> None:
         actual_ports = repository_port_names()

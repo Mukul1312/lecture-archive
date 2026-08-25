@@ -17,6 +17,7 @@ from heritage_production.domain.shared import (
     PolicyRef,
     ReleasePolicyVersionId,
     RoleCode,
+    SealedAggregateRoot,
     SignOffTargetKind,
     SignOffTargetRule,
     ValidationError,
@@ -390,7 +391,7 @@ def _policy_payload(
 
 
 @dataclass(frozen=True, slots=True)
-class ReleasePolicyVersion:
+class ReleasePolicyVersion(SealedAggregateRoot):
     """A sealed, immutable policy version bound to one exact evaluator."""
 
     release_policy_version_id: ReleasePolicyVersionId

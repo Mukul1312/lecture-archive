@@ -54,6 +54,36 @@ def _sign_off_gate_key(sign_off: ExternalSignOff) -> tuple[str, ...]:
     )
 
 
+def _gate_authorizes(requirement: object, sign_off: ExternalSignOff) -> bool:
+    """Whether one gate requirement declares this sign-off's exact identity.
+
+    This is the storable half of the check `record_external_sign_off` performs:
+    gate code, role, pinned credential, typed target kind and member role, plus
+    the assurance minimum for an approving decision. The manifest-member digest
+    is deliberately excluded because it needs the release content, which the
+    aggregate does not store.
+    """
+    if requirement.gate_code != sign_off.gate_code:
+        return False
+    if requirement.role != sign_off.role:
+        return False
+    if requirement.credential != sign_off.credential:
+        return False
+    rule = requirement.target_rule
+    if rule.target_kind is not sign_off.target.target_kind:
+        return False
+    if (
+        rule.required_member_role is not None
+        and sign_off.target.member_role != rule.required_member_role
+    ):
+        return False
+    if sign_off.decision is SignOffDecision.APPROVED and not assurance_satisfies(
+        sign_off.assurance.assurance, requirement.minimum_assurance
+    ):
+        return False
+    return True
+
+
 def _require_event_inputs(event_id: object, event_occurred_at_us: object) -> None:
     _require_exact(event_id, DomainEventId, "event_id")
     if type(event_occurred_at_us) is not int or event_occurred_at_us <= 0:
@@ -212,6 +242,17 @@ class Production(AggregateEventRecorder):
                 raise ValidationError("a stored sign-off failed reconstruction")
             if sign_off.production_id != production_id:
                 raise ValidationError("a stored sign-off names a different Production")
+            # The live path refuses a sign-off no gate declares; stored history
+            # must obey the same rule, or an undeclared sign-off could discharge
+            # a policy requirement that pins no credential of its own.
+            if not any(
+                _gate_authorizes(requirement, sign_off)
+                for gate_set in gate_sets
+                for requirement in gate_set.requirements
+            ):
+                raise ValidationError(
+                    "a stored sign-off is authorized by no gate this Production declared"
+                )
         for candidate in candidates:
             if candidate.validated() != candidate:
                 raise ValidationError("a stored candidate failed reconstruction")

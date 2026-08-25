@@ -10,7 +10,7 @@ from .errors import (
     StaleReferenceError,
     ValidationError,
 )
-from .events import AggregateEventRecorder, DomainEvent
+from .events import AggregateEventRecorder, DomainEvent, SealedAggregateRoot
 from .ids import (
     ActorId,
     ArtifactId,
@@ -81,6 +81,7 @@ __all__ = [
     "ActorAssuranceKind",
     "ActorRef",
     "AggregateEventRecorder",
+    "SealedAggregateRoot",
     "ArtifactId",
     "ArtifactRef",
     "ArtifactManifestRef",

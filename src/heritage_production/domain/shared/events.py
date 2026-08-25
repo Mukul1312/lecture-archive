@@ -47,6 +47,17 @@ class DomainEvent:
         return self._canonical_payload
 
 
+class SealedAggregateRoot:
+    """Marker for an aggregate root that is sealed at creation and emits nothing.
+
+    It carries no behaviour: it exists so the architecture test can enumerate
+    the sealed roots structurally, exactly as it enumerates the event-recording
+    roots, rather than trusting a hand-maintained name list.
+    """
+
+    __slots__ = ()
+
+
 class AggregateEventRecorder:
     """Records events emitted by behavior until an application transaction pulls them."""
 

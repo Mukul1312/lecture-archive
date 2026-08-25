@@ -11,11 +11,12 @@ from heritage_production.domain.shared import (
     ContentDigest,
     ProposalItemId,
     ProposalSetId,
+    SealedAggregateRoot,
+    semantic_digest as calculate_semantic_digest,
     SourceSpan,
     SourceVersionRef,
     TranscriptText,
     ValidationError,
-    semantic_digest as calculate_semantic_digest,
 )
 from heritage_production.domain.shared.text import require_canonical_text
 
@@ -217,7 +218,7 @@ def _item_value(value: ProposalItem) -> dict[str, object]:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class ASRProposalSet:
+class ASRProposalSet(SealedAggregateRoot):
     proposal_set_id: ProposalSetId
     source_version: SourceVersionRef
     package_schema_version: int
