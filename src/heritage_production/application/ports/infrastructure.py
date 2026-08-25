@@ -22,6 +22,7 @@ from heritage_production.domain.shared import (
     DomainEventId,
     OperationId,
     SourceSpan,
+    ValidationError,
 )
 
 
@@ -37,13 +38,37 @@ class StagedArtifact:
 
 @dataclass(frozen=True, slots=True)
 class OperationRecord:
-    """The durable result of one completed content-producing command."""
+    """The durable result of one completed content-producing command.
+
+    Design 13.4 stores the operation's *result*, not only a digest of it.
+    That is what makes design 9.4's "an identical replay returns the original
+    result" reachable for a command whose result is a generated identity:
+    `CreateProduction` takes no Production ID and returns one (design 9.1), so
+    without the stored payload a replay would have nothing to reload.
+
+    `result_digest` stays alongside it, so a payload edited in storage is
+    detectable rather than authoritative.
+    """
 
     operation_id: OperationId
     command_name: str
     input_digest: ContentDigest
     result_digest: ContentDigest
+    result_payload: dict
     completed_at_us: int
+
+    def __post_init__(self) -> None:
+        if type(self.operation_id) is not OperationId:
+            raise ValidationError("operation_id must be an exact OperationId")
+        if type(self.command_name) is not str or not self.command_name:
+            raise ValidationError("command_name must be a nonempty string")
+        for field_name in ("input_digest", "result_digest"):
+            if type(getattr(self, field_name)) is not ContentDigest:
+                raise ValidationError(f"{field_name} must be an exact ContentDigest")
+        if type(self.result_payload) is not dict:
+            raise ValidationError("result_payload must be a JSON object")
+        if type(self.completed_at_us) is not int or self.completed_at_us <= 0:
+            raise ValidationError("completed_at_us must be positive epoch microseconds")
 
 
 @runtime_checkable

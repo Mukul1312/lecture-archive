@@ -83,15 +83,16 @@ def run_operation(
         # Withholding the transaction removes the capability rather than
         # detecting its misuse once the damage is already durable.
         produced = _require_operation_result(execute(), source="execute")
-        completed_at_us = clock.now_us()
-        if type(completed_at_us) is not int or completed_at_us <= 0:
-            raise ValidationError("the clock must return positive epoch microseconds")
+        # The clock's value is validated by OperationRecord itself, which is
+        # where it becomes durable; re-checking it here would be a second copy
+        # of one rule that no test could distinguish.
         record = OperationRecord(
             operation_id=command.operation_id,
             command_name=name,
             input_digest=input_digest,
             result_digest=command_result_digest(command, produced.payload),
-            completed_at_us=completed_at_us,
+            result_payload=produced.payload,
+            completed_at_us=clock.now_us(),
         )
         recorder.record(record, transaction=active)
         active.commit()
@@ -119,6 +120,11 @@ def _replay(
         raise OperationConflictError(
             "this operation id was completed with different inputs"
         )
+    # The record must be internally consistent before its payload is used to
+    # find anything: a payload edited in storage would otherwise steer the
+    # rederive to whatever root the editor chose.
+    if command_result_digest(command, existing.result_payload) != existing.result_digest:
+        raise ReplayIntegrityError("the stored operation record is internally inconsistent")
     replayed = _require_operation_result(rederive(existing), source="rederive")
     if command_result_digest(command, replayed.payload) != existing.result_digest:
         raise ReplayIntegrityError(

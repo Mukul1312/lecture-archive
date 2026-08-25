@@ -31,6 +31,7 @@ from heritage_production.domain.release import (
 )
 from heritage_production.domain.review import ReviewFinding, ReviewRound
 from heritage_production.domain.shared import (
+    DomainEvent,
     DomainEventId,
     InvariantError,
     ProductionId,
@@ -326,6 +327,55 @@ class FakeOperationRecorder:
             self.records[record.operation_id] = record
 
         self._database.stage(root=None, validate=validate, apply=apply)
+
+
+class FakeDomainEventOutbox:
+    """Outbox rows are infrastructure, so they are not an aggregate write.
+
+    Design 9.6 inserts the row in the same transaction as the aggregate, so a
+    crash between the two is impossible; staging with `root=None` models that
+    without spending the transaction's one aggregate root.
+    """
+
+    def __init__(self, database: FakeDatabase) -> None:
+        self._database = database
+        self.events: list = []
+        self.delivered: list = []
+
+    def enqueue(self, event) -> None:
+        if type(event) is not DomainEvent:
+            raise ValidationError("enqueue takes exactly one DomainEvent")
+        if any(stored.event_id == event.event_id for stored in self.events):
+            raise InvariantError(f"event {event.event_id!r} is already enqueued")
+
+        def validate() -> None:
+            if any(stored.event_id == event.event_id for stored in self.events):
+                raise InvariantError(f"event {event.event_id!r} was enqueued concurrently")
+
+        def apply() -> None:
+            self.events.append(event)
+
+        self._database.stage(root=None, validate=validate, apply=apply)
+
+    def mark_delivered(self, event_id, *, handler: str) -> None:
+        self.delivered.append((event_id, handler))
+
+    def names(self) -> tuple:
+        return tuple(event.event_type for event in self.events)
+
+
+class FakeIdGenerator:
+    """Deterministic UUIDv4-shaped identity, in issue order."""
+
+    def __init__(self, start: int = 900) -> None:
+        self._next = start
+        self.issued: list = []
+
+    def new_id(self) -> str:
+        value = uid(self._next)
+        self._next += 1
+        self.issued.append(value)
+        return value
 
 
 class FakeClock:

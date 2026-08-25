@@ -251,6 +251,7 @@ class FreshExecutionTests(unittest.TestCase):
             command_name="CreateProduction",
             input_digest=command_input_digest(command),
             result_digest=digest("a"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
 
@@ -317,6 +318,7 @@ class ReplayTests(unittest.TestCase):
             command_name="SelectCandidateEdition",
             input_digest=command_input_digest(command),
             result_digest=digest("a"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
 
@@ -324,14 +326,18 @@ class ReplayTests(unittest.TestCase):
             scenario.run(command, execute=_never_execute)
 
     def test_a_record_stored_under_the_wrong_operation_id_fails_closed(self) -> None:
+        """Everything else about the record is valid and self-consistent, so
+        only the operation-id guard can catch it."""
         scenario = Scenario()
         command = create_production_command(suffix=1)
         foreign = create_production_command(suffix=7)
+        payload = {"production_id": uid(9)}
         scenario.recorder.records[command.operation_id] = OperationRecord(
             operation_id=foreign.operation_id,
             command_name="CreateProduction",
             input_digest=command_input_digest(command),
-            result_digest=digest("a"),
+            result_digest=command_result_digest(command, payload),
+            result_payload=payload,
             completed_at_us=5,
         )
 
@@ -362,6 +368,62 @@ class ReplayTests(unittest.TestCase):
             scenario.run(
                 command, execute=_never_execute, rederive=lambda record: "done"
             )
+
+
+class OperationRecordTests(unittest.TestCase):
+    """The record is durable, so it validates itself rather than trusting
+    whichever adapter constructed it."""
+
+    def fields(self) -> dict:
+        return {
+            "operation_id": OperationId(uid(1)),
+            "command_name": "CreateProduction",
+            "input_digest": digest("b"),
+            "result_digest": digest("c"),
+            "result_payload": {"production_id": uid(9)},
+            "completed_at_us": 5,
+        }
+
+    def test_a_well_formed_record_is_accepted(self) -> None:
+        record = OperationRecord(**self.fields())
+
+        self.assertEqual(record.result_payload, {"production_id": uid(9)})
+
+    def test_every_field_is_checked(self) -> None:
+        for field, bad in (
+            ("operation_id", uid(1)),
+            ("command_name", ""),
+            ("command_name", 7),
+            ("input_digest", "sha256"),
+            ("result_digest", None),
+            ("result_payload", None),
+            ("result_payload", [("a", 1)]),
+            ("completed_at_us", 0),
+            ("completed_at_us", -1),
+            ("completed_at_us", 1.5),
+            ("completed_at_us", True),
+        ):
+            with self.subTest(field=field, value=bad):
+                with self.assertRaises(ValidationError):
+                    OperationRecord(**{**self.fields(), field: bad})
+
+
+class RecordConsistencyTests(unittest.TestCase):
+    def test_a_record_whose_payload_contradicts_its_digest_fails_closed(self) -> None:
+        """A payload edited in storage would otherwise steer the rederive."""
+        scenario = Scenario()
+        command = create_production_command()
+        first = scenario.run(command)
+        tampered = dataclasses.replace(
+            first.record, result_payload={"production_id": uid(404), "version": 1}
+        )
+        scenario.recorder.records[command.operation_id] = tampered
+
+        def rederive(record: OperationRecord) -> OperationResult:
+            raise AssertionError("rederive must not run for an inconsistent record")
+
+        with self.assertRaises(ReplayIntegrityError):
+            scenario.run(command, execute=_never_execute, rederive=rederive)
 
 
 class OperationResultTests(unittest.TestCase):
@@ -435,6 +497,7 @@ class TransactionContractTests(unittest.TestCase):
             command_name="CreateProduction",
             input_digest=digest("b"),
             result_digest=digest("c"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
         with FakeUnitOfWork(self.database) as unit_of_work:
@@ -546,6 +609,7 @@ class TransactionContractTests(unittest.TestCase):
             command_name="CreateProduction",
             input_digest=digest("b"),
             result_digest=digest("c"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
         with FakeUnitOfWork(self.database) as unit_of_work:
@@ -567,6 +631,7 @@ class TransactionContractTests(unittest.TestCase):
             command_name="CreateProduction",
             input_digest=digest("b"),
             result_digest=digest("c"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
         with FakeUnitOfWork(self.database) as unit_of_work:
@@ -584,6 +649,7 @@ class TransactionContractTests(unittest.TestCase):
             command_name="CreateProduction",
             input_digest=digest("b"),
             result_digest=digest("c"),
+            result_payload={"outcome": "recorded"},
             completed_at_us=5,
         )
         twin = dataclasses.replace(record, completed_at_us=6)
