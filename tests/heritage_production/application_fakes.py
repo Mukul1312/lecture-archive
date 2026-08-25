@@ -21,7 +21,10 @@ from heritage_production.application.errors import (
     OperationConflictError,
     TransactionRuleError,
 )
-from heritage_production.application.ports.infrastructure import OperationRecord
+from heritage_production.application.ports.infrastructure import (
+    OperationRecord,
+    StagedArtifact,
+)
 from heritage_production.application.ports.repositories import Versioned
 from heritage_production.domain.production import Production
 from heritage_production.domain.release import (
@@ -31,6 +34,9 @@ from heritage_production.domain.release import (
 )
 from heritage_production.domain.review import ReviewFinding, ReviewRound
 from heritage_production.domain.shared import (
+    ArtifactId,
+    ArtifactRef,
+    ContentDigest,
     DomainEvent,
     DomainEventId,
     InvariantError,
@@ -327,6 +333,73 @@ class FakeOperationRecorder:
             self.records[record.operation_id] = record
 
         self._database.stage(root=None, validate=validate, apply=apply)
+
+
+class FakeArtifactStore:
+    """Content-addressed bytes. The domain never sees a path (design 10.2)."""
+
+    def __init__(self) -> None:
+        self.blobs: dict = {}
+        self.staged: dict = {}
+        self.verifications: list = []
+
+    def seed(
+        self,
+        artifact_id: ArtifactId,
+        data: bytes = b"{}",
+        *,
+        media_type: str = "application/json",
+    ) -> ArtifactRef:
+        """Place bytes as if a previous operation had promoted them.
+
+        The reference is derived from the data rather than supplied, so a
+        fixture cannot accidentally seed a digest that disagrees with its own
+        bytes and then be surprised that `verify` refuses it.
+        """
+        digest = ContentDigest.from_bytes(data)
+        artifact = ArtifactRef(artifact_id, digest, len(data), media_type)
+        self.blobs[artifact_id] = (digest, data)
+        return artifact
+
+    def corrupt(self, artifact: ArtifactRef, data: bytes) -> None:
+        """Leave the reference intact but change the bytes behind it."""
+        self.blobs[artifact.artifact_id] = (artifact.content_digest, data)
+
+    def stage(self, data: bytes, *, media_type: str) -> StagedArtifact:
+        if type(data) is not bytes:
+            raise ValidationError("stage takes bytes")
+        digest = ContentDigest.from_bytes(data)
+        token = digest.hex_digest
+        self.staged[token] = (data, media_type)
+        return StagedArtifact(token, digest, len(data), media_type)
+
+    def promote(self, staged: StagedArtifact, *, operation_id) -> ArtifactRef:
+        if staged.staging_token not in self.staged:
+            raise StaleReferenceError("nothing staged under this token")
+        data, media_type = self.staged.pop(staged.staging_token)
+        artifact = ArtifactRef(
+            ArtifactId(uid(950 + len(self.blobs))),
+            staged.content_digest,
+            len(data),
+            media_type,
+        )
+        self.blobs[artifact.artifact_id] = (staged.content_digest, data)
+        return artifact
+
+    def open(self, artifact_id) -> bytes:
+        try:
+            return self.blobs[artifact_id][1]
+        except KeyError:
+            raise StaleReferenceError(f"no stored artifact {artifact_id!r}") from None
+
+    def verify(self, artifact: ArtifactRef) -> bool:
+        """True only when the stored bytes match the digest claimed."""
+        self.verifications.append(artifact)
+        stored = self.blobs.get(artifact.artifact_id)
+        if stored is None:
+            return False
+        digest, data = stored
+        return digest == artifact.content_digest == ContentDigest.from_bytes(data)
 
 
 class FakeDomainEventOutbox:

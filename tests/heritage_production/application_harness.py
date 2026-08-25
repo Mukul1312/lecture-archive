@@ -10,7 +10,10 @@ event or an orphan record has still broken design 9.4.
 from __future__ import annotations
 
 from heritage_production.application import commands
-from heritage_production.application.handlers import ProductionCommandHandlers
+from heritage_production.application.handlers import (
+    ProductionCommandHandlers,
+    RegistrationCommandHandlers,
+)
 from heritage_production.domain.production import AttachedSource, EditionSelection
 from heritage_production.domain.release import ReleasePolicyRules
 from heritage_production.domain.shared import (
@@ -20,11 +23,13 @@ from heritage_production.domain.shared import (
     OperationId,
     ProductionId,
     ReleasePolicyVersionId,
+    RubricId,
     SourceRecordingRef,
     SourceVersionRef,
 )
 
 from tests.heritage_production.application_fakes import (
+    FakeArtifactStore,
     FakeClock,
     FakeDatabase,
     FakeDomainEventOutbox,
@@ -79,6 +84,7 @@ class ApplicationHarness:
         self.editions = FakeTranscriptEditionRepository(self.database)
         self.policies = FakeReleasePolicyVersionRepository(self.database)
         self.recorder = FakeOperationRecorder(self.database)
+        self.artifacts = FakeArtifactStore()
         self.events = FakeDomainEventOutbox(self.database)
         self.clock = FakeClock()
         self.ids = FakeIdGenerator()
@@ -94,6 +100,12 @@ class ApplicationHarness:
             events=self.events,
             clock=self.clock,
             ids=self.ids,
+        )
+        self.registrations = RegistrationCommandHandlers(
+            artifacts=self.artifacts,
+            transactions=lambda: self.begin(),
+            recorder=self.recorder,
+            clock=self.clock,
         )
 
     def begin(self) -> FakeUnitOfWork:
@@ -213,6 +225,33 @@ class ApplicationHarness:
                 policy_schema_code="heritage-transcript-policy-v1",
                 evaluator_ref=SUPPORTED_EVALUATOR_REF,
                 rules=rules if rules is not None else empty_rules(),
+            )
+        )
+
+    def register_rubric(
+        self,
+        content: ArtifactRef,
+        *,
+        rubric_suffix: int = 740,
+        schema_version: int = 1,
+        suffix: int = 12,
+    ):
+        return self.registrations.register_rubric(
+            commands.RegisterRubric(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                rubric_id=RubricId(uid(rubric_suffix)),
+                schema_version=schema_version,
+                content=content,
+            )
+        )
+
+    def register_credential(self, credential, *, suffix: int = 13):
+        return self.registrations.register_actor_credential(
+            commands.RegisterActorCredential(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                credential=credential,
             )
         )
 

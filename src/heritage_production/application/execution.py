@@ -69,12 +69,20 @@ def run_operation(
     clock,
     execute,
     rederive,
+    prepare=None,
 ) -> CompletedOperation:
     name = command_name(command)
     input_digest = command_input_digest(command)
     existing = recorder.find(command.operation_id)
     if existing is not None:
         return _replay(command, name, input_digest, existing, rederive)
+    if prepare is not None:
+        # Artifact promotion and validation precede the one-root transaction,
+        # so a rejected artifact never opens one and a real adapter never
+        # holds a write lock across file I/O. It runs after the replay check
+        # rather than before it: a completed operation must still return its
+        # original result even if the artifact it validated has since gone.
+        prepare()
     with unit_of_work as active:
         # `execute` deliberately takes no arguments. A handler that could
         # reach the transaction could commit it, making aggregate state
