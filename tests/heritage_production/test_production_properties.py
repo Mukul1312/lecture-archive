@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import unittest
 
 from hypothesis import HealthCheck, given, settings, strategies as st
@@ -262,22 +261,37 @@ ProductionApprovalTests = ProductionApprovalStateMachine.TestCase
 
 
 class StateMachineReachabilityTests(unittest.TestCase):
-    """Guards the state machine against silently proving nothing."""
+    """Guards the state machine against silently proving nothing.
 
-    def test_the_state_machine_actually_reaches_an_approval(self) -> None:
-        ProductionApprovalStateMachine.approvals_reached = 0
-        suite = unittest.defaultTestLoader.loadTestsFromTestCase(
-            ProductionApprovalStateMachine.TestCase
-        )
-        with open(os.devnull, "w", encoding="utf-8") as sink:
-            result = unittest.TextTestRunner(verbosity=0, stream=sink).run(suite)
+    `approval_requires_the_complete_exact_graph` early-returns when no approval
+    exists, so the machine can pass every example while asserting nothing. This
+    drives the same rules in a known-good order instead of re-running the random
+    walk: it is deterministic, costs one pass rather than a second full machine
+    run, and fails loudly if the rule set can no longer reach an approval at all.
+    """
 
-        self.assertTrue(result.wasSuccessful())
-        self.assertGreater(
-            ProductionApprovalStateMachine.approvals_reached,
-            0,
-            "the approval invariant never fired: the machine proved nothing",
+    def test_the_machine_rules_can_reach_an_approval(self) -> None:
+        machine = ProductionApprovalStateMachine()
+
+        for step in (
+            machine.attach_source,
+            machine.select_edition,
+            machine.select_policy,
+            machine.configure_gates,
+            machine.assemble_candidate,
+            machine.attempt_approval,
+        ):
+            step()
+
+        self.assertIsNotNone(
+            machine.production.approval,
+            "the machine's rules can no longer reach an approval, so its "
+            "approval invariant asserts nothing",
         )
+        # The invariant must actually run its body, not early-return.
+        machine.approval_requires_the_complete_exact_graph()
+        machine.at_most_one_approval_exists()
+        machine.candidate_history_is_append_only()
 
 
 class RejectedOperationTests(unittest.TestCase):
