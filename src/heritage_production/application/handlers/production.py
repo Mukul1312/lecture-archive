@@ -25,7 +25,12 @@ from heritage_production.domain.shared import (
     StaleReferenceError,
 )
 
-from ..commands.production import AttachSourceRecording, CreateProduction
+from ..commands.production import (
+    AttachSourceRecording,
+    CreateProduction,
+    SelectCandidateEdition,
+    SelectReleasePolicyVersion,
+)
 from ..execution import CompletedOperation, OperationResult, run_operation
 
 
@@ -51,6 +56,8 @@ class ProductionCommandHandlers:
         self,
         *,
         productions,
+        editions,
+        policies,
         transactions,
         recorder,
         events,
@@ -58,6 +65,8 @@ class ProductionCommandHandlers:
         ids,
     ) -> None:
         self._productions = productions
+        self._editions = editions
+        self._policies = policies
         self._transactions = transactions
         self._recorder = recorder
         self._events = events
@@ -111,18 +120,25 @@ class ProductionCommandHandlers:
 
         return self._run(command, execute=execute, rederive=self._reload)
 
+    def _open_production(self, command):
+        """Load the target and confirm it is where the command expects.
+
+        Checked before the aggregate is touched. Saving would catch the
+        conflict too, but only after an in-memory mutation and a recorded
+        event, and a rejected operation must leave the aggregate unchanged.
+        """
+        loaded = self._productions.load(command.production_id)
+        if loaded.version != command.expected_version:
+            raise StaleReferenceError(
+                "this Production has moved since the expected version"
+            )
+        return loaded
+
     def attach_source_recording(
         self, command: AttachSourceRecording
     ) -> CompletedOperation:
         def execute() -> OperationResult:
-            loaded = self._productions.load(command.production_id)
-            # Checked before the aggregate is touched. Saving would catch the
-            # conflict too, but only after an in-memory mutation that the
-            # caller could mistake for a partial success.
-            if loaded.version != command.expected_version:
-                raise StaleReferenceError(
-                    "this Production has moved since the expected version"
-                )
+            loaded = self._open_production(command)
             attached = loaded.root.attach_source(
                 attached_source=command.attached_source,
                 event_id=DomainEventId(self._ids.new_id()),
@@ -146,6 +162,80 @@ class ProductionCommandHandlers:
                     return OperationResult(value=source, payload=reloaded.payload)
             raise StaleReferenceError(
                 "the recorded attachment is no longer present on this Production"
+            )
+
+        return self._run(command, execute=execute, rederive=rederive)
+
+
+    def select_candidate_edition(
+        self, command: SelectCandidateEdition
+    ) -> CompletedOperation:
+        def execute() -> OperationResult:
+            loaded = self._open_production(command)
+            # Design 9.3 reads an immutable input from another aggregate by
+            # exact ID *and* digest. The command carries only a reference, so
+            # the edition it names is loaded and checked rather than believed.
+            selection = command.edition_selection
+            edition = self._editions.get(selection.edition_ref.transcript_edition_id)
+            if edition.ref != selection.edition_ref:
+                raise StaleReferenceError(
+                    "the stored edition does not match the digest this selection pins"
+                )
+            if edition.production_id != command.production_id:
+                raise StaleReferenceError(
+                    "this edition belongs to a different Production"
+                )
+            selected = loaded.root.select_candidate_edition(
+                selection=selection,
+                event_id=DomainEventId(self._ids.new_id()),
+                event_occurred_at_us=self._clock.now_us(),
+            )
+            version = self._productions.save(
+                loaded.root, expected_version=command.expected_version
+            )
+            self._publish(loaded.root)
+            return OperationResult(
+                value=selected, payload=_production_payload(loaded.root, version)
+            )
+
+        def rederive(record) -> OperationResult:
+            reloaded = self._reload(record)
+            return OperationResult(
+                value=reloaded.value.selected_edition_ref, payload=reloaded.payload
+            )
+
+        return self._run(command, execute=execute, rederive=rederive)
+
+    def select_release_policy_version(
+        self, command: SelectReleasePolicyVersion
+    ) -> CompletedOperation:
+        def execute() -> OperationResult:
+            loaded = self._open_production(command)
+            # The command carries a PolicyRef, never a policy body: a supplied
+            # body could be internally consistent and still never have been
+            # sealed, binding a Production to a version that does not exist.
+            policy = self._policies.get(command.policy_ref.release_policy_version_id)
+            if policy.ref != command.policy_ref:
+                raise StaleReferenceError(
+                    "the stored policy does not match the digest this reference pins"
+                )
+            selected = loaded.root.select_release_policy(
+                policy=policy,
+                event_id=DomainEventId(self._ids.new_id()),
+                event_occurred_at_us=self._clock.now_us(),
+            )
+            version = self._productions.save(
+                loaded.root, expected_version=command.expected_version
+            )
+            self._publish(loaded.root)
+            return OperationResult(
+                value=selected, payload=_production_payload(loaded.root, version)
+            )
+
+        def rederive(record) -> OperationResult:
+            reloaded = self._reload(record)
+            return OperationResult(
+                value=reloaded.value.selected_policy_ref, payload=reloaded.payload
             )
 
         return self._run(command, execute=execute, rederive=rederive)

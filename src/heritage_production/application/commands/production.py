@@ -19,11 +19,11 @@ from heritage_production.domain.release import (
     ExternalGateRequirement,
     ExternalSignOff,
     ReleaseContentBinding,
-    ReleasePolicyVersion,
 )
 from heritage_production.domain.shared import (
     ExternalGateSetId,
     OperationId,
+    PolicyRef,
     ProductionId,
     ReleaseCandidateId,
 )
@@ -81,16 +81,24 @@ class SelectCandidateEdition:
 
 @dataclass(frozen=True, slots=True)
 class SelectReleasePolicyVersion:
+    """Design 9.1 reads an exact `PolicyRef`, never a supplied policy body.
+
+    Carrying the sealed root itself would let a caller pass a fabricated but
+    internally consistent policy that was never stored, and `validated()`
+    would accept it -- binding a Production to a policy version that does not
+    exist. The ref pins identity and digest; the handler loads the real one.
+    """
+
     operation_id: OperationId
     actor: ActorContext
     production_id: ProductionId
-    policy: ReleasePolicyVersion
+    policy_ref: PolicyRef
     expected_version: int
 
     def __post_init__(self) -> None:
         require_envelope(self.operation_id, self.actor)
         require_exact(self.production_id, ProductionId, "production_id")
-        require_exact(self.policy, ReleasePolicyVersion, "policy")
+        require_exact(self.policy_ref, PolicyRef, "policy_ref")
         require_expected_version(self.expected_version)
 
 

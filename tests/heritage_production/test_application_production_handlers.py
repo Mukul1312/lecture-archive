@@ -33,14 +33,9 @@ from heritage_production.domain.shared import (
     ValidationError,
 )
 
-from tests.heritage_production.application_fakes import (
-    FakeClock,
-    FakeDatabase,
-    FakeDomainEventOutbox,
-    FakeIdGenerator,
-    FakeOperationRecorder,
-    FakeProductionRepository,
-    FakeUnitOfWork,
+from tests.heritage_production.application_harness import (
+    STEWARD,
+    ApplicationHarness,
 )
 from tests.heritage_production.heritage_release_fixtures import (
     actor,
@@ -48,73 +43,6 @@ from tests.heritage_production.heritage_release_fixtures import (
     source_version,
     uid,
 )
-
-
-STEWARD = actor(20)
-
-
-class Harness:
-    def __init__(self) -> None:
-        self.database = FakeDatabase()
-        self.productions = FakeProductionRepository(self.database)
-        self.recorder = FakeOperationRecorder(self.database)
-        self.events = FakeDomainEventOutbox(self.database)
-        self.clock = FakeClock()
-        self.ids = FakeIdGenerator()
-        self.units: list = []
-        # Raised instead of committing, to model an I/O failure at commit.
-        self.commit_failure: Exception | None = None
-        self.handlers = ProductionCommandHandlers(
-            productions=self.productions,
-            transactions=lambda: self.begin(),
-            recorder=self.recorder,
-            events=self.events,
-            clock=self.clock,
-            ids=self.ids,
-        )
-
-    def begin(self) -> FakeUnitOfWork:
-        unit = FakeUnitOfWork(self.database)
-        unit.commit_failure = self.commit_failure
-        self.units.append(unit)
-        return unit
-
-    def durable(self) -> tuple:
-        return (
-            dict(self.productions.rows),
-            dict(self.recorder.records),
-            list(self.events.events),
-        )
-
-    def create(self, suffix: int = 1, deliverable: str = "August 21 listening transcript"):
-        return self.handlers.create_production(
-            commands.CreateProduction(
-                operation_id=OperationId(uid(suffix)),
-                actor=commands.ActorContext(STEWARD),
-                intended_deliverable=deliverable,
-            )
-        )
-
-    def attach(
-        self,
-        production_id: ProductionId,
-        *,
-        suffix: int = 2,
-        expected_version: int = 1,
-        attached_source: AttachedSource | None = None,
-        source_suffix: int = 3,
-        media_digest: str = "2",
-    ):
-        return self.handlers.attach_source_recording(
-            commands.AttachSourceRecording(
-                operation_id=OperationId(uid(suffix)),
-                actor=commands.ActorContext(STEWARD),
-                production_id=production_id,
-                attached_source=attached_source
-                or sample_attached_source(source_suffix, media_digest),
-                expected_version=expected_version,
-            )
-        )
 
 
 def sample_attached_source(
@@ -138,7 +66,7 @@ def sample_attached_source(
 
 class CreateProductionTests(unittest.TestCase):
     def test_it_creates_one_production_at_version_one(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
@@ -151,7 +79,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(root.intended_deliverable, "August 21 listening transcript")
 
     def test_the_commanding_actor_becomes_the_steward(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
@@ -160,7 +88,7 @@ class CreateProductionTests(unittest.TestCase):
 
     def test_the_identity_is_generated_not_supplied(self) -> None:
         """Design 9.1: CreateProduction's result *is* the Production ID."""
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
@@ -177,7 +105,7 @@ class CreateProductionTests(unittest.TestCase):
         or source set had drifted replay clean, so the projection is asserted
         exactly rather than loosely.
         """
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
@@ -193,15 +121,15 @@ class CreateProductionTests(unittest.TestCase):
 
     def test_a_replay_whose_stored_state_has_drifted_fails_closed(self) -> None:
         """The behavioural half: the projection must actually do the work."""
-        harness = Harness()
+        harness = ApplicationHarness()
         first = harness.create()
-        harness.attach(first.result.production_id)
+        harness.attach(first.result.production_id, source_version(suffix=3, character='2'))
 
         with self.assertRaises(ReplayIntegrityError):
             harness.create()
 
     def test_two_creations_get_distinct_identities(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         first = harness.create(suffix=1)
         second = harness.create(suffix=2)
@@ -210,7 +138,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(len(harness.productions.rows), 2)
 
     def test_it_enqueues_the_creation_event(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
@@ -222,14 +150,14 @@ class CreateProductionTests(unittest.TestCase):
 
     def test_the_aggregate_keeps_no_unpublished_events(self) -> None:
         """Events left on the root would never reach the outbox."""
-        harness = Harness()
+        harness = ApplicationHarness()
 
         outcome = harness.create()
 
         self.assertEqual(outcome.result.pull_events(), ())
 
     def test_state_record_and_events_commit_in_one_transaction(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         harness.create()
 
@@ -239,7 +167,7 @@ class CreateProductionTests(unittest.TestCase):
 
     def test_a_replay_returns_the_generated_identity(self) -> None:
         """The property the whole design of the record exists to support."""
-        harness = Harness()
+        harness = ApplicationHarness()
         first = harness.create()
 
         again = harness.create()
@@ -251,7 +179,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(harness.events.names(), ("ProductionCreated",))
 
     def test_a_replay_issues_no_new_identity(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
         harness.create()
         issued_after_first = list(harness.ids.issued)
 
@@ -260,7 +188,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(harness.ids.issued, issued_after_first)
 
     def test_a_changed_deliverable_under_one_operation_id_conflicts(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
         harness.create(deliverable="August 21 listening transcript")
 
         with self.assertRaises(OperationConflictError):
@@ -269,7 +197,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(len(harness.productions.rows), 1)
 
     def test_a_rejected_deliverable_leaves_nothing_durable(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
 
         with self.assertRaises(ValidationError):
             harness.create(deliverable="")
@@ -277,7 +205,7 @@ class CreateProductionTests(unittest.TestCase):
         self.assertEqual(harness.durable(), ({}, {}, []))
 
     def test_a_commit_failure_leaves_nothing_durable(self) -> None:
-        harness = Harness()
+        harness = ApplicationHarness()
         harness.commit_failure = RuntimeError("disk full")
 
         with self.assertRaises(RuntimeError):
@@ -288,14 +216,14 @@ class CreateProductionTests(unittest.TestCase):
 
 class AttachSourceRecordingTests(unittest.TestCase):
     def created(self) -> tuple[Harness, ProductionId]:
-        harness = Harness()
+        harness = ApplicationHarness()
         outcome = harness.create()
         return harness, outcome.result.production_id
 
     def test_it_attaches_the_exact_source_and_bumps_the_version(self) -> None:
         harness, production_id = self.created()
 
-        outcome = harness.attach(production_id)
+        outcome = harness.attach(production_id, source_version(suffix=3, character='2'))
 
         (root, version) = harness.productions.rows[production_id]
         self.assertEqual(version, 2)
@@ -305,7 +233,7 @@ class AttachSourceRecordingTests(unittest.TestCase):
     def test_it_enqueues_the_attachment_event(self) -> None:
         harness, production_id = self.created()
 
-        harness.attach(production_id)
+        harness.attach(production_id, source_version(suffix=3, character='2'))
 
         self.assertEqual(
             harness.events.names(), ("ProductionCreated", "SourceRecordingAttached")
@@ -313,9 +241,9 @@ class AttachSourceRecordingTests(unittest.TestCase):
 
     def test_a_replay_returns_the_original_attachment(self) -> None:
         harness, production_id = self.created()
-        first = harness.attach(production_id)
+        first = harness.attach(production_id, source_version(suffix=3, character='2'))
 
-        again = harness.attach(production_id)
+        again = harness.attach(production_id, source_version(suffix=3, character='2'))
 
         self.assertTrue(again.replayed)
         self.assertEqual(again.result, first.result)
@@ -327,7 +255,7 @@ class AttachSourceRecordingTests(unittest.TestCase):
         before = harness.durable()
 
         with self.assertRaises(StaleReferenceError):
-            harness.attach(production_id, expected_version=99)
+            harness.attach(production_id, source_version(suffix=3, character='2'), expected_version=99)
 
         self.assertEqual(harness.durable(), before)
 
@@ -341,7 +269,7 @@ class AttachSourceRecordingTests(unittest.TestCase):
         harness, production_id = self.created()
 
         with self.assertRaises(StaleReferenceError):
-            harness.attach(production_id, expected_version=99)
+            harness.attach(production_id, source_version(suffix=3, character='2'), expected_version=99)
 
         (root, version) = harness.productions.rows[production_id]
         self.assertEqual(version, 1)
@@ -351,13 +279,19 @@ class AttachSourceRecordingTests(unittest.TestCase):
     def test_a_replay_returns_the_source_the_command_named(self) -> None:
         """With several attached, replaying must not return merely the first."""
         harness, production_id = self.created()
-        harness.attach(production_id, suffix=2, expected_version=1, source_suffix=3)
+        harness.attach(production_id, source_version(suffix=3, character='2'), suffix=2, expected_version=1)
         second = harness.attach(
-            production_id, suffix=3, expected_version=2, source_suffix=4
+            production_id,
+            source_version(suffix=4, character="3"),
+            suffix=3,
+            expected_version=2,
         )
 
         again = harness.attach(
-            production_id, suffix=3, expected_version=2, source_suffix=4
+            production_id,
+            source_version(suffix=4, character="3"),
+            suffix=3,
+            expected_version=2,
         )
 
         self.assertTrue(again.replayed)
@@ -367,7 +301,7 @@ class AttachSourceRecordingTests(unittest.TestCase):
     def test_a_replay_missing_its_recorded_attachment_fails_closed(self) -> None:
         """Storage that lost the attachment must not quietly return the root."""
         harness, production_id = self.created()
-        harness.attach(production_id)
+        harness.attach(production_id, source_version(suffix=3, character='2'))
         stripped = Production.create(
             production_id=production_id,
             intended_deliverable="August 21 listening transcript",
@@ -380,20 +314,20 @@ class AttachSourceRecordingTests(unittest.TestCase):
         harness.productions.rows[production_id] = (stripped, 2)
 
         with self.assertRaises(StaleReferenceError):
-            harness.attach(production_id)
+            harness.attach(production_id, source_version(suffix=3, character='2'))
 
     def test_an_unknown_production_changes_nothing(self) -> None:
         harness, _ = self.created()
         before = harness.durable()
 
         with self.assertRaises(StaleReferenceError):
-            harness.attach(ProductionId(uid(404)))
+            harness.attach(ProductionId(uid(404)), source_version(suffix=3, character='2'))
 
         self.assertEqual(harness.durable(), before)
 
     def test_the_same_identity_with_different_content_is_refused(self) -> None:
         harness, production_id = self.created()
-        harness.attach(production_id, suffix=2, expected_version=1)
+        harness.attach(production_id, source_version(suffix=3, character='2'), suffix=2, expected_version=1)
         before = harness.durable()
         # Same identity, different content: one source version cannot claim
         # two different sets of bytes.
@@ -402,6 +336,7 @@ class AttachSourceRecordingTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             harness.attach(
                 production_id,
+                source_version(suffix=3, character="3"),
                 suffix=3,
                 expected_version=2,
                 attached_source=conflicting,
@@ -411,9 +346,9 @@ class AttachSourceRecordingTests(unittest.TestCase):
 
     def test_a_second_distinct_source_attaches_at_the_next_version(self) -> None:
         harness, production_id = self.created()
-        harness.attach(production_id, suffix=2, expected_version=1, source_suffix=3)
+        harness.attach(production_id, source_version(suffix=3, character='2'), suffix=2, expected_version=1)
 
-        harness.attach(production_id, suffix=3, expected_version=2, source_suffix=4)
+        harness.attach(production_id, source_version(suffix=4, character='3'), suffix=3, expected_version=2)
 
         (root, version) = harness.productions.rows[production_id]
         self.assertEqual(version, 3)
