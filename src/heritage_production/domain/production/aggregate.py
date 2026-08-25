@@ -58,10 +58,11 @@ def _gate_authorizes(requirement: object, sign_off: ExternalSignOff) -> bool:
     """Whether one gate requirement declares this sign-off's exact identity.
 
     This is the storable half of the check `record_external_sign_off` performs:
-    gate code, role, pinned credential, typed target kind and member role, plus
-    the assurance minimum for an approving decision. The manifest-member digest
-    is deliberately excluded because it needs the release content, which the
-    aggregate does not store.
+    gate code, role, pinned credential, and typed target kind and member role.
+    The manifest-member digest is deliberately excluded because verifying it
+    needs the release content, which the aggregate does not store; the evaluator
+    recomputes that digest from the sealed content rather than trusting the
+    stored sign-off, so a wrong stored digest can only weaken a sign-off.
     """
     if requirement.gate_code != sign_off.gate_code:
         return False
@@ -72,11 +73,16 @@ def _gate_authorizes(requirement: object, sign_off: ExternalSignOff) -> bool:
     rule = requirement.target_rule
     if rule.target_kind is not sign_off.target.target_kind:
         return False
-    if (
-        rule.required_member_role is not None
-        and sign_off.target.member_role != rule.required_member_role
-    ):
+    # `SignOffTargetRule` and `ExternalSignOffTarget` both tie a member role to
+    # MANIFEST_MEMBER, so comparing the roles directly covers both the present
+    # and absent cases.
+    if sign_off.target.member_role != rule.required_member_role:
         return False
+    # Retained as defence in depth. It cannot currently fail: credential
+    # equality above plus `ActorCredentialRef` pinning assurance to its
+    # verification method, and `ExternalGateRequirement` already requiring the
+    # pinned credential to reach the minimum, together imply it. It stays so the
+    # rule survives any future loosening of those invariants.
     if sign_off.decision is SignOffDecision.APPROVED and not assurance_satisfies(
         sign_off.assurance.assurance, requirement.minimum_assurance
     ):

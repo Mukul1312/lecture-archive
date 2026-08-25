@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import copy
 import unittest
 
+from heritage_production.domain.production.aggregate import _gate_authorizes
 from heritage_production.domain.production import (
     gate_is_satisfied_by,
     ApprovalEvidence,
@@ -356,7 +357,7 @@ class FabricatedAssessmentTests(unittest.TestCase):
         object.__setattr__(evidence, "assessment_ref", stored_ref(forged))
         self.assertTrue(evidence.eligible)
 
-        with self.assertRaises(DomainError):
+        with self.assertRaisesRegex(StaleReferenceError, "pinned evaluator derives"):
             approve(production, evidence)
 
         self.assertIsNone(production.approval)
@@ -866,6 +867,88 @@ class StoredStateHardeningTests(unittest.TestCase):
                 approval=None,
             )
 
+    def _reconstitute_with(self, production, sign_offs):
+        return Production.reconstitute(
+            production_id=production.production_id,
+            intended_deliverable=production.intended_deliverable,
+            steward_actor_id=production.steward_actor_id,
+            created_at_us=production.created_at_us,
+            sources=production.sources,
+            edition_selection=production.edition_selection,
+            selected_policy_ref=production.selected_policy_ref,
+            gate_sets=production.gate_sets,
+            active_gate_set_ref=production.active_gate_set_ref,
+            external_sign_offs=sign_offs,
+            candidates=(),
+            active_candidate_ref=None,
+            approval=None,
+        )
+
+    def test_every_rejecting_branch_of_gate_authorization_is_enforced(self) -> None:
+        """A NON-empty gate set, so each case enters the predicate itself.
+
+        The empty-gate-set case above is short-circuited by `any()` over an
+        empty sequence and never reaches `_gate_authorizes`, so without these
+        cases the predicate could be replaced by `lambda *_: True` unnoticed.
+        """
+        production, _, content = configured_production(
+            requirements=(rights_holder_gate(),)
+        )
+        declared = rights_holder_gate()
+        release_target_for = ExternalSignOffTarget(
+            SignOffTargetKind.RELEASE_CONTENT, content.content_manifest_ref, None, None
+        )
+
+        # The matching sign-off reconstitutes, so the negatives cannot pass
+        # vacuously.
+        authorized = verified_sign_off(target=release_target_for)
+        restored = self._reconstitute_with(production, (authorized,))
+        self.assertEqual(restored.external_sign_offs, (authorized,))
+
+        substitute = ActorCredentialRef(
+            actor(40),
+            CredentialVerificationMethod.ED25519,
+            AssuranceLevel.VERIFIED_SIGNATURE,
+            digest("9"),
+            artifact(410, "8", "application/octet-stream"),
+        )
+        member_target = ExternalSignOffTarget(
+            SignOffTargetKind.MANIFEST_MEMBER,
+            content.content_manifest_ref,
+            ManifestMemberRole("transcript-json"),
+            digest("1"),
+        )
+
+        for label, sign_off in (
+            (
+                "gate code no gate declares",
+                verified_sign_off(
+                    target=release_target_for, gate_code=GateCode("undeclared-gate")
+                ),
+            ),
+            (
+                "role the gate does not pin",
+                verified_sign_off(
+                    target=release_target_for, role=RoleCode("subject-matter-expert")
+                ),
+            ),
+            (
+                "credential the gate does not pin",
+                verified_sign_off(target=release_target_for, credential=substitute),
+            ),
+            (
+                "target kind the gate does not declare",
+                verified_sign_off(target=member_target),
+            ),
+        ):
+            with self.subTest(rejected=label):
+                self.assertFalse(
+                    _gate_authorizes(declared, sign_off),
+                    f"the predicate should reject a {label}",
+                )
+                with self.assertRaises(ValidationError):
+                    self._reconstitute_with(production, (sign_off,))
+
     def test_a_candidate_sign_off_for_other_content_is_rejected(self) -> None:
         production, _, content = configured_production(
             requirements=(rights_holder_gate(),)
@@ -1227,6 +1310,48 @@ class CandidateReplayTests(unittest.TestCase):
 
         self.assertEqual(production.candidates, (first, second))
         self.assertEqual(production.active_candidate_ref, second.ref)
+        self.assertEqual(production.pull_events(), ())
+
+    def test_an_id_conflict_is_rejected_in_the_mirrored_arrangement(self) -> None:
+        """The other order: ID-conflicting snapshot FIRST, digest match SECOND."""
+        production, policy, content_a = configured_production()
+        content_b = seal_content(
+            policy_ref=policy.ref,
+            gate_set_ref=production.active_gate_set_ref,
+            provenance_input_digests=(default_edition_evidence().semantic_digest,),
+            integrity_input_digests=(),
+            release_members=(
+                ReleaseMember(ManifestMemberRole("transcript-json"), artifact(80, "1")),
+            ),
+        )
+        first = seal_candidate(content_a, candidate_id=ReleaseCandidateId(uid(63)))
+        production.assemble_candidate(
+            candidate=first, content=content_a, event_id=event_id(56), event_occurred_at_us=1
+        )
+        second = seal_candidate(content_b, candidate_id=ReleaseCandidateId(uid(64)))
+        production.assemble_candidate(
+            candidate=second, content=content_b, event_id=event_id(57), event_occurred_at_us=2
+        )
+        production.pull_events()
+
+        conflicting = ReleaseCandidateSnapshot.seal(
+            release_candidate_id=first.release_candidate_id,
+            production_id=production.production_id,
+            content_manifest_ref=content_b.content_manifest_ref,
+            included_sign_off_digests=(),
+            assembled_at_us=1_700_000_000_000_071,
+        )
+        self.assertEqual(conflicting.semantic_digest, second.semantic_digest)
+
+        with self.assertRaisesRegex(ValidationError, "different digest"):
+            production.assemble_candidate(
+                candidate=conflicting,
+                content=content_b,
+                event_id=event_id(58),
+                event_occurred_at_us=3,
+            )
+
+        self.assertEqual(production.candidates, (first, second))
         self.assertEqual(production.pull_events(), ())
 
     def test_reselecting_a_stored_candidate_emits_its_fact(self) -> None:
