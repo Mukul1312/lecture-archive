@@ -7,9 +7,20 @@ and expected version included — so the key covers every domain-semantic
 input rather than a convenient subset: an "identical replay" is an identical
 command, and any difference at all under a reused operation id is a conflict.
 
-The walk is strict and fails closed. Exact primitive types, tuples, enums,
-and dataclass instances are the whole vocabulary; a float, list, dict, set,
-or arbitrary object in a command field is a bug, not something to coerce.
+The walk is strict and fails closed. Exact primitive types, bytes, tuples,
+enums, and dataclass instances are the whole vocabulary; a float, list, dict,
+set, or arbitrary object in a command field is a bug, not something to
+coerce.
+
+Known limit: a handful of domain values are annotated `object` and hold
+whatever the domain validated into them. `ReviewClosureSnapshot.findings`
+holds `ReviewFinding` aggregate roots, which are not dataclasses, so
+`CloseReviewRound` digests only while that snapshot is empty -- the case the
+current fixtures happen to use. Design 9.4 wants closure keyed on the
+canonical digest of the write-side evidence set rather than on the roots
+themselves, so the review-handler checkpoint owes that command an explicit
+evidence digest. `CommandTypeReachabilityTests` pins the full list of
+`object`-annotated fields so none is added unnoticed.
 Encoded enums and dataclasses carry their type name, so two values with the
 same shape but different meanings can never collide. Nothing here hashes
 itself: the manifest never contains its own digest (stored digests of *other*
@@ -66,9 +77,16 @@ def manifest_value(value: object) -> JsonValue:
 
     Exact-type checks matter: `bool` must never collapse into `int`, and a
     str-backed enum member must never collapse into its string value.
+
+    `bytes` is encoded as tagged hex rather than decoded text. Canonical JSON
+    has no byte string, `SourceRecordingRef` stores its descriptive metadata
+    as real bytes, and a lossy or untagged encoding would let `b"\\xab"` and
+    the string `"ab"` share a key.
     """
     if value is None or type(value) in (bool, int, str):
         return value
+    if type(value) is bytes:
+        return {"kind": "bytes", "hex": value.hex()}
     if type(value) is tuple:
         return [manifest_value(member) for member in value]
     if isinstance(value, Enum):

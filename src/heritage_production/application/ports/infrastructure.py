@@ -110,11 +110,17 @@ class OperationRecorder(Protocol):
 
     Repeating an operation ID with different inputs is a conflict, never a
     silent overwrite (design section 9.4).
+
+    `record` takes the transaction explicitly. Design 9.4 requires the record
+    and the aggregate change to become durable together, and an adapter that
+    held its own connection would satisfy this signature only by ignoring the
+    argument -- which is visible in review, unlike a shared connection that is
+    merely assumed.
     """
 
     def find(self, operation_id: OperationId) -> OperationRecord | None: ...
 
-    def record(self, record: OperationRecord) -> None: ...
+    def record(self, record: OperationRecord, *, transaction: object) -> None: ...
 
 
 @runtime_checkable

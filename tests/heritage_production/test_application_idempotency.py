@@ -9,8 +9,10 @@ field (however deeply nested) reaches the digest.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import enum
+import typing
 import unittest
 
 from heritage_production.application import commands
@@ -32,6 +34,7 @@ from heritage_production.domain.shared import (
     ReviewFindingId,
     ValidationError,
     canonical_json,
+    semantic_digest,
 )
 from heritage_production.domain.release import SUPPORTED_EVALUATOR_REF
 
@@ -241,10 +244,53 @@ class ManifestValueEncodingTests(unittest.TestCase):
         self.assertEqual(value["fields"]["suit"]["member"], "SPADES")
 
     def test_unsupported_values_are_rejected(self) -> None:
-        for bad in (1.5, [1], {"a": 1}, {1, 2}, b"raw", object()):
+        for bad in (1.5, [1], {"a": 1}, {1, 2}, object()):
             with self.subTest(value=bad):
                 with self.assertRaises(ValidationError):
                     manifest_value(bad)
+
+    def test_bytes_encode_losslessly(self) -> None:
+        """SourceRecordingRef stores canonical JSON bytes as a real field."""
+        self.assertEqual(
+            manifest_value(b"\x00\xffab"),
+            {"kind": "bytes", "hex": "00ff6162"},
+        )
+
+    def test_different_bytes_never_collide(self) -> None:
+        self.assertNotEqual(encoded(b"ab"), encoded(b"ba"))
+        self.assertNotEqual(encoded(b""), encoded(b"\x00"))
+
+    def test_bytes_never_collide_with_their_own_hex_text(self) -> None:
+        """Tagging keeps b'\\xab' distinct from the string 'ab'."""
+        self.assertNotEqual(encoded(b"\xab"), encoded("ab"))
+
+    def test_a_tuple_subclass_is_not_treated_as_a_tuple(self) -> None:
+        """A NamedTuple encoded as a bare list would lose its type identity."""
+        Pair = collections.namedtuple("Pair", "x y")
+
+        with self.assertRaises(ValidationError):
+            manifest_value(Pair(1, 2))
+
+    def test_a_dataclass_class_is_not_a_dataclass_value(self) -> None:
+        """Nested, not just at the top level: a class carries no field values.
+
+        `_Point` is slotted, so its class exposes slot descriptors and would
+        be refused even without the type check -- passing for the wrong
+        reason. An unslotted class with defaults encodes cleanly under a
+        missing type check, so it is what actually pins the guard.
+        """
+
+        @dataclasses.dataclass(frozen=True)
+        class DefaultedPoint:
+            x: int = 1
+            y: int = 2
+
+        for candidate in (_Point, DefaultedPoint):
+            with self.subTest(candidate=candidate.__name__):
+                with self.assertRaises(ValidationError):
+                    manifest_value(candidate)
+                with self.assertRaises(ValidationError):
+                    manifest_value((candidate,))
 
 
 class CommandInputManifestTests(unittest.TestCase):
@@ -389,6 +435,36 @@ class CommandInputManifestTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             command_input_digest(commands.CreateProduction)
 
+    def test_an_operation_id_subclass_is_not_an_exact_operation_id(self) -> None:
+        """`isinstance` here would let a subclass with extra state through."""
+
+        class SubtleOperationId(OperationId):
+            __slots__ = ()
+
+        @dataclasses.dataclass(frozen=True, slots=True)
+        class SubclassEnvelopeCommand:
+            operation_id: OperationId
+            actor: commands.ActorContext
+
+        with self.assertRaises(ValidationError):
+            command_input_digest(
+                SubclassEnvelopeCommand(SubtleOperationId(uid(1)), steward_context())
+            )
+
+    def test_an_actor_context_subclass_is_not_an_exact_actor_context(self) -> None:
+        class SubtleContext(commands.ActorContext):
+            __slots__ = ()
+
+        @dataclasses.dataclass(frozen=True, slots=True)
+        class SubclassActorCommand:
+            operation_id: OperationId
+            actor: commands.ActorContext
+
+        with self.assertRaises(ValidationError):
+            command_input_digest(
+                SubclassActorCommand(OperationId(uid(1)), SubtleContext(actor(20)))
+            )
+
     def test_a_class_whose_defaults_form_a_valid_envelope_is_rejected(self) -> None:
         """Class-level defaults must never stand in for a real command.
 
@@ -406,6 +482,100 @@ class CommandInputManifestTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             command_input_digest(DefaultedCommand)
+
+
+class CommandTypeReachabilityTests(unittest.TestCase):
+    """Every type reachable from a command field must be encodable.
+
+    `command_input_digest` runs before anything else in `run_operation`, so a
+    command whose field graph contains a type the encoder rejects cannot enter
+    the idempotent path at all -- it is unusable, not merely unhashable. This
+    walks the annotations statically, so a command or domain value that grows
+    an unencodable field fails here rather than at the first real call.
+    """
+
+    # Fields annotated exactly `object` hold validated domain values whose
+    # concrete type the annotation does not name, so static walking cannot
+    # clear them. Each is listed deliberately; a NEW one must be added here
+    # only after checking the runtime value is encodable.
+    KNOWN_OBJECT_FIELDS = {
+        ("ClosedReviewEvidence", "findings"),
+        ("ImportedFindingRef", "client_finding_nonce"),
+        ("ImportedFindingRef", "review_finding_id"),
+        ("ReviewClosureSnapshot", "findings"),
+        ("ReviewSubmissionSummary", "raw_result_artifact"),
+    }
+
+    ENCODABLE_SCALARS = {bool, int, str, bytes, type(None)}
+
+    def concrete_types(self, annotation) -> set:
+        origin = typing.get_origin(annotation)
+        if origin is None:
+            return {annotation} if isinstance(annotation, type) else set()
+        found: set = set()
+        for arg in typing.get_args(annotation):
+            if arg is not Ellipsis:
+                found |= self.concrete_types(arg)
+        return found
+
+    def walk(self, tp: type, seen: dict, object_fields: set) -> None:
+        if tp in seen:
+            return
+        if tp in self.ENCODABLE_SCALARS:
+            seen[tp] = "scalar"
+            return
+        if isinstance(tp, type) and issubclass(tp, enum.Enum):
+            seen[tp] = "enum"
+            return
+        if tp is object:
+            seen[tp] = "object"
+            return
+        if not dataclasses.is_dataclass(tp):
+            seen[tp] = "UNENCODABLE"
+            return
+        seen[tp] = "dataclass"
+        hints = typing.get_type_hints(tp)
+        for field in dataclasses.fields(tp):
+            annotation = hints.get(field.name, field.type)
+            concrete = self.concrete_types(annotation)
+            if object in concrete:
+                object_fields.add((tp.__name__, field.name))
+            for member in concrete:
+                self.walk(member, seen, object_fields)
+
+    def analyse(self) -> tuple[dict, set]:
+        seen: dict = {}
+        object_fields: set = set()
+        for name in EXPECTED_LABELS:
+            command = getattr(commands, name)
+            hints = typing.get_type_hints(command)
+            for field in dataclasses.fields(command):
+                annotation = hints.get(field.name, field.type)
+                for member in self.concrete_types(annotation):
+                    self.walk(member, seen, object_fields)
+        return seen, object_fields
+
+    def test_no_command_reaches_an_unencodable_type(self) -> None:
+        seen, _ = self.analyse()
+        unencodable = sorted(
+            f"{tp.__module__}.{tp.__name__}"
+            for tp, kind in seen.items()
+            if kind == "UNENCODABLE"
+        )
+
+        self.assertEqual(unencodable, [], f"unencodable types reachable: {unencodable}")
+
+    def test_the_reachable_graph_is_actually_walked(self) -> None:
+        """Guards the guard: a walk that reached nothing would pass vacuously."""
+        seen, _ = self.analyse()
+
+        self.assertGreater(len(seen), 100)
+        self.assertIn(bytes, seen)
+
+    def test_object_annotated_fields_are_the_known_set(self) -> None:
+        _, object_fields = self.analyse()
+
+        self.assertEqual(object_fields, self.KNOWN_OBJECT_FIELDS)
 
 
 class CommandResultDigestTests(unittest.TestCase):
@@ -434,6 +604,42 @@ class CommandResultDigestTests(unittest.TestCase):
     def test_a_result_payload_never_carries_a_self_digest(self) -> None:
         with self.assertRaises(ValidationError):
             command_result_digest(commands.CreateProduction, {"digest": "sha256"})
+
+
+class LabelDomainSeparationTests(unittest.TestCase):
+    """The digest functions must use their own label, not merely define one.
+
+    Asserting `command_label()` and `result_label()` as pure functions leaves
+    which label each digest actually *uses* untested -- so an input digest
+    computed under the result label, or the reverse, would go unnoticed and
+    collapse the separation that keeps a result from replaying as an input.
+    """
+
+    def test_the_input_digest_is_computed_under_the_input_label(self) -> None:
+        command = create_production_command()
+
+        self.assertEqual(
+            command_input_digest(command),
+            semantic_digest(command_label(command), command_input_manifest(command)),
+        )
+
+    def test_the_result_digest_is_computed_under_the_result_label(self) -> None:
+        payload = {"production_id": uid(9)}
+
+        self.assertEqual(
+            command_result_digest(commands.CreateProduction, payload),
+            semantic_digest(result_label(commands.CreateProduction), payload),
+        )
+
+    def test_a_result_payload_shaped_like_an_input_manifest_never_collides(self) -> None:
+        """The one property the labels exist to guarantee."""
+        command = create_production_command()
+        manifest = command_input_manifest(command)
+
+        self.assertNotEqual(
+            command_result_digest(command, manifest),
+            command_input_digest(command),
+        )
 
 
 if __name__ == "__main__":

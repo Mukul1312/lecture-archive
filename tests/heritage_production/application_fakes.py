@@ -58,10 +58,10 @@ class FakeDatabase:
         if self.active is unit_of_work:
             self.active = None
 
-    def stage(self, *, root: tuple[str, object] | None, validate, apply) -> None:
+    def stage(self, *, root: tuple[str, object] | None, validate, apply, cleanup=None) -> None:
         if self.active is None:
             raise TransactionRuleError("a write requires an active transaction")
-        self.active.stage(root=root, validate=validate, apply=apply)
+        self.active.stage(root=root, validate=validate, apply=apply, cleanup=cleanup)
 
 
 class FakeUnitOfWork:
@@ -70,6 +70,7 @@ class FakeUnitOfWork:
     def __init__(self, database: FakeDatabase) -> None:
         self._database = database
         self._staged: list[tuple[object, object]] = []
+        self._cleanups: list[object] = []
         self._root_writes: set[tuple[str, object]] = set()
         self._state = "new"
         self.commits = 0
@@ -93,7 +94,7 @@ class FakeUnitOfWork:
             self.rollback()
         return False
 
-    def stage(self, *, root: tuple[str, object] | None, validate, apply) -> None:
+    def stage(self, *, root: tuple[str, object] | None, validate, apply, cleanup=None) -> None:
         if self._state != "active":
             raise TransactionRuleError("no active transaction to write in")
         if root is not None:
@@ -103,6 +104,8 @@ class FakeUnitOfWork:
                 )
             self._root_writes.add(root)
         self._staged.append((validate, apply))
+        if cleanup is not None:
+            self._cleanups.append(cleanup)
 
     def commit(self) -> None:
         if self._state != "active":
@@ -119,24 +122,36 @@ class FakeUnitOfWork:
             raise
         for _, apply in self._staged:
             apply()
-        self._staged.clear()
-        self._root_writes.clear()
+        self._finish()
         self._state = "committed"
         self.commits += 1
         self._database.end(self)
 
+    def _finish(self) -> None:
+        for cleanup in self._cleanups:
+            cleanup()
+        self._cleanups.clear()
+        self._staged.clear()
+        self._root_writes.clear()
+
     def rollback(self) -> None:
         if self._state != "active":
             raise TransactionRuleError("no active transaction to roll back")
-        self._staged.clear()
-        self._root_writes.clear()
+        self._finish()
         self._state = "rolled-back"
         self.rollbacks += 1
         self._database.end(self)
 
 
 class _MutableRootRepository:
-    """Load with the row version; save against the version you expect."""
+    """Load with the row version; save against the version you expect.
+
+    `_pending` models what a real `UPDATE ... WHERE version = ?` would see.
+    Without it a handler could save the same root twice at one
+    `expected_version` and both calls would succeed here, while the second
+    matches zero rows against SQLite -- a fake more permissive than reality,
+    which is the kind that lets a broken handler ship.
+    """
 
     root_type: type
     id_field: str
@@ -144,6 +159,8 @@ class _MutableRootRepository:
     def __init__(self, database: FakeDatabase) -> None:
         self._database = database
         self.rows: dict = {}
+        self._pending: dict = {}
+        self._baseline: dict = {}
 
     def load(self, root_id):
         try:
@@ -163,20 +180,40 @@ class _MutableRootRepository:
         if self._current_version(root_id) != expected_version:
             raise StaleReferenceError("optimistic version conflict")
         new_version = expected_version + 1
+        # Writers are serialized, so durable state cannot move mid-transaction.
+        # The commit-time check therefore validates the version this
+        # transaction started from -- not each save's own expectation, since a
+        # later save in the same transaction legitimately expects the version
+        # an earlier one produced, exactly as SQLite reads its own writes.
+        baseline = self._baseline.setdefault(root_id, self._durable_version(root_id))
 
         def validate() -> None:
-            if self._current_version(root_id) != expected_version:
+            if self._durable_version(root_id) != baseline:
                 raise StaleReferenceError("optimistic version conflict at commit")
 
         def apply() -> None:
             self.rows[root_id] = (root, new_version)
 
+        def cleanup() -> None:
+            self._pending.pop(root_id, None)
+            self._baseline.pop(root_id, None)
+
+        self._pending[root_id] = new_version
         self._database.stage(
-            root=(self.root_type.__name__, root_id), validate=validate, apply=apply
+            root=(self.root_type.__name__, root_id),
+            validate=validate,
+            apply=apply,
+            cleanup=cleanup,
         )
         return new_version
 
     def _current_version(self, root_id) -> int:
+        if root_id in self._pending:
+            return self._pending[root_id]
+        row = self.rows.get(root_id)
+        return 0 if row is None else row[1]
+
+    def _durable_version(self, root_id) -> int:
         row = self.rows.get(root_id)
         return 0 if row is None else row[1]
 
@@ -267,7 +304,11 @@ class FakeOperationRecorder:
     def find(self, operation_id):
         return self.records.get(operation_id)
 
-    def record(self, record) -> None:
+    def record(self, record, *, transaction) -> None:
+        if transaction is not self._database.active:
+            raise TransactionRuleError(
+                "an operation record must be written in the aggregate's transaction"
+            )
         if type(record) is not OperationRecord:
             raise ValidationError("record takes exactly one OperationRecord")
         if record.operation_id in self.records:

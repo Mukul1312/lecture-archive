@@ -10,6 +10,19 @@ A replay is verified, never trusted: the handler's `rederive` rebuilds the
 result from stored state, and its digest must equal the recorded one. Stored
 state that can no longer reproduce a recorded result is corruption, and
 fails closed rather than returning a plausible answer.
+
+Two limits of that verification, both deliberate and both the handler's to
+manage:
+
+* Only the result *payload* is checked, so verification reaches exactly as
+  far as the payload projects the value. An aggregate whose unprojected
+  state has drifted replays clean. Handlers should therefore project the
+  state a caller depends on, not merely an identity.
+* `rederive` runs outside the unit of work. Against a real SQLite adapter
+  each read then gets its own snapshot, so a multi-table rederive can
+  compare a torn read against the recorded digest. Task 7 should give the
+  replay path a read transaction; the fakes cannot express the difference,
+  so no test here would catch it.
 """
 
 from __future__ import annotations
@@ -63,7 +76,13 @@ def run_operation(
     if existing is not None:
         return _replay(command, name, input_digest, existing, rederive)
     with unit_of_work as active:
-        produced = _require_operation_result(execute(active), source="execute")
+        # `execute` deliberately takes no arguments. A handler that could
+        # reach the transaction could commit it, making aggregate state
+        # durable before the operation record exists -- after which the same
+        # operation id finds no record and runs the handler a second time.
+        # Withholding the transaction removes the capability rather than
+        # detecting its misuse once the damage is already durable.
+        produced = _require_operation_result(execute(), source="execute")
         completed_at_us = clock.now_us()
         if type(completed_at_us) is not int or completed_at_us <= 0:
             raise ValidationError("the clock must return positive epoch microseconds")
@@ -74,7 +93,7 @@ def run_operation(
             result_digest=command_result_digest(command, produced.payload),
             completed_at_us=completed_at_us,
         )
-        recorder.record(record)
+        recorder.record(record, transaction=active)
         active.commit()
     return CompletedOperation(record=record, result=produced.value, replayed=False)
 

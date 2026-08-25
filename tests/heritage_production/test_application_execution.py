@@ -87,7 +87,7 @@ class Scenario:
     def unit_of_work(self) -> FakeUnitOfWork:
         return FakeUnitOfWork(self.database)
 
-    def execute_create(self, unit_of_work: FakeUnitOfWork) -> OperationResult:
+    def execute_create(self) -> OperationResult:
         production = sample_production()
         version = self.productions.save(production, expected_version=0)
         return OperationResult(
@@ -110,7 +110,7 @@ def _never_rederive(record: OperationRecord) -> OperationResult:
     raise AssertionError("rederive must not run for a fresh operation")
 
 
-def _never_execute(unit_of_work) -> OperationResult:
+def _never_execute() -> OperationResult:
     raise AssertionError("execute must not run for a replayed operation")
 
 
@@ -153,7 +153,7 @@ class FreshExecutionTests(unittest.TestCase):
     def test_a_failing_handler_leaves_nothing_durable(self) -> None:
         scenario = Scenario()
 
-        def failing_execute(unit_of_work):
+        def failing_execute():
             scenario.productions.save(sample_production(), expected_version=0)
             raise InvariantError("the deliverable is refused")
 
@@ -186,46 +186,61 @@ class FreshExecutionTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             scenario.run(
-                create_production_command(), execute=lambda unit_of_work: "done"
+                create_production_command(), execute=lambda: "done"
             )
 
         self.assertEqual(scenario.productions.rows, {})
         self.assertEqual(scenario.recorder.records, {})
 
-    def test_a_handler_may_not_commit_its_own_transaction(self) -> None:
-        """run_operation owns the commit; a handler that takes it would
-        commit aggregate state before the operation record was written."""
+    def test_a_handler_is_never_handed_the_transaction(self) -> None:
+        """A handler that could commit could make aggregate state durable
+        before the operation record existed; the same operation id would then
+        find no record and run the handler a second time. `execute` takes no
+        arguments, so the capability does not exist to misuse."""
         scenario = Scenario()
+        received: list = []
 
-        def committing_execute(unit_of_work):
-            result = scenario.execute_create(unit_of_work)
-            unit_of_work.commit()
-            return result
+        def recording_execute(*args, **kwargs):
+            received.append((args, kwargs))
+            return scenario.execute_create()
 
-        with self.assertRaises(TransactionRuleError):
-            scenario.run(create_production_command(), execute=committing_execute)
+        scenario.run(create_production_command(), execute=recording_execute)
 
-        self.assertEqual(scenario.recorder.records, {})
+        self.assertEqual(received, [((), {})])
 
     def test_a_broken_clock_is_rejected_before_anything_commits(self) -> None:
-        class BrokenClock:
-            def now_us(self) -> int:
-                return 0
+        """Both halves of the guard: a non-positive time and a non-int time.
 
-        scenario = Scenario()
+        Testing only `0` leaves the exact-type half unexercised, and a float
+        would then be written into a durable record -- `OperationRecord` does
+        no validation of its own.
+        """
+        for name, value in (
+            ("zero", 0),
+            ("negative", -1),
+            ("float", 1.5),
+            ("bool", True),
+            ("string", "1700000000500000"),
+        ):
+            with self.subTest(clock=name):
+                scenario = Scenario()
 
-        with self.assertRaises(ValidationError):
-            run_operation(
-                create_production_command(),
-                recorder=scenario.recorder,
-                unit_of_work=scenario.unit_of_work(),
-                clock=BrokenClock(),
-                execute=scenario.execute_create,
-                rederive=_never_rederive,
-            )
+                class BrokenClock:
+                    def now_us(self):
+                        return value
 
-        self.assertEqual(scenario.productions.rows, {})
-        self.assertEqual(scenario.recorder.records, {})
+                with self.assertRaises(ValidationError):
+                    run_operation(
+                        create_production_command(),
+                        recorder=scenario.recorder,
+                        unit_of_work=scenario.unit_of_work(),
+                        clock=BrokenClock(),
+                        execute=scenario.execute_create,
+                        rederive=_never_rederive,
+                    )
+
+                self.assertEqual(scenario.productions.rows, {})
+                self.assertEqual(scenario.recorder.records, {})
 
     def test_a_twin_record_written_during_execution_forces_rollback(self) -> None:
         """Another process completing the same operation id wins."""
@@ -239,8 +254,8 @@ class FreshExecutionTests(unittest.TestCase):
             completed_at_us=5,
         )
 
-        def racing_execute(unit_of_work):
-            result = scenario.execute_create(unit_of_work)
+        def racing_execute():
+            result = scenario.execute_create()
             scenario.recorder.records[command.operation_id] = twin
             return result
 
@@ -382,14 +397,36 @@ class TransactionContractTests(unittest.TestCase):
                 self.policies.add(sample_policy())
             unit_of_work.rollback()
 
-    def test_one_transaction_may_write_the_same_root_repeatedly(self) -> None:
+    def test_saving_one_root_twice_at_the_same_version_conflicts(self) -> None:
+        """A real `UPDATE ... WHERE version = ?` matches zero rows the second
+        time. The fake must agree, or it blesses a handler that breaks in
+        Task 7."""
         production = sample_production()
         with FakeUnitOfWork(self.database) as unit_of_work:
             self.productions.save(production, expected_version=0)
-            self.productions.save(production, expected_version=0)
+            with self.assertRaises(StaleReferenceError):
+                self.productions.save(production, expected_version=0)
+            unit_of_work.rollback()
+
+    def test_a_second_save_must_expect_the_version_the_first_produced(self) -> None:
+        production = sample_production()
+        with FakeUnitOfWork(self.database) as unit_of_work:
+            first = self.productions.save(production, expected_version=0)
+            second = self.productions.save(production, expected_version=first)
             unit_of_work.commit()
 
-        self.assertEqual(self.productions.rows[production.production_id][1], 1)
+        self.assertEqual((first, second), (1, 2))
+        self.assertEqual(self.productions.rows[production.production_id][1], 2)
+
+    def test_a_rolled_back_save_leaves_no_pending_version_behind(self) -> None:
+        """Pending state must not leak into the next transaction."""
+        production = sample_production()
+        with FakeUnitOfWork(self.database):
+            self.productions.save(production, expected_version=0)
+
+        with FakeUnitOfWork(self.database) as unit_of_work:
+            self.assertEqual(self.productions.save(production, expected_version=0), 1)
+            unit_of_work.commit()
 
     def test_an_operation_record_is_not_an_aggregate_root_write(self) -> None:
         production = sample_production()
@@ -402,7 +439,7 @@ class TransactionContractTests(unittest.TestCase):
         )
         with FakeUnitOfWork(self.database) as unit_of_work:
             self.productions.save(production, expected_version=0)
-            self.recorder.record(record)
+            self.recorder.record(record, transaction=unit_of_work)
             unit_of_work.commit()
 
         self.assertIn(production.production_id, self.productions.rows)
@@ -497,6 +534,33 @@ class TransactionContractTests(unittest.TestCase):
                         )
             unit_of_work.rollback()
 
+    def test_the_recorder_refuses_a_foreign_transaction(self) -> None:
+        """Design 9.4 wants the record durable with the state it describes.
+
+        A Task 7 recorder holding its own connection would satisfy the port
+        signature by ignoring the handle, so the fake asserts the handle is
+        the transaction the aggregate write is in.
+        """
+        record = OperationRecord(
+            operation_id=OperationId(uid(1)),
+            command_name="CreateProduction",
+            input_digest=digest("b"),
+            result_digest=digest("c"),
+            completed_at_us=5,
+        )
+        with FakeUnitOfWork(self.database) as unit_of_work:
+            for name, foreign in (
+                ("none", None),
+                ("other", FakeUnitOfWork(self.database)),
+                ("string", "the transaction"),
+            ):
+                with self.subTest(transaction=name):
+                    with self.assertRaises(TransactionRuleError):
+                        self.recorder.record(record, transaction=foreign)
+            unit_of_work.rollback()
+
+        self.assertEqual(self.recorder.records, {})
+
     def test_a_duplicate_operation_id_is_refused_when_staged(self) -> None:
         record = OperationRecord(
             operation_id=OperationId(uid(1)),
@@ -506,12 +570,12 @@ class TransactionContractTests(unittest.TestCase):
             completed_at_us=5,
         )
         with FakeUnitOfWork(self.database) as unit_of_work:
-            self.recorder.record(record)
+            self.recorder.record(record, transaction=unit_of_work)
             unit_of_work.commit()
 
-        with FakeUnitOfWork(self.database):
+        with FakeUnitOfWork(self.database) as second:
             with self.assertRaises(OperationConflictError):
-                self.recorder.record(record)
+                self.recorder.record(record, transaction=second)
 
     def test_an_operation_id_recorded_concurrently_is_refused_at_commit(self) -> None:
         production = sample_production()
@@ -525,7 +589,7 @@ class TransactionContractTests(unittest.TestCase):
         twin = dataclasses.replace(record, completed_at_us=6)
         with FakeUnitOfWork(self.database) as unit_of_work:
             self.productions.save(production, expected_version=0)
-            self.recorder.record(record)
+            self.recorder.record(record, transaction=unit_of_work)
             self.recorder.records[record.operation_id] = twin
             with self.assertRaises(OperationConflictError):
                 unit_of_work.commit()
