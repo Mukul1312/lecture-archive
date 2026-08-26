@@ -39,6 +39,7 @@ from tests.heritage_production.application_fakes import (
     FakeDomainEventOutbox,
     FakeIdGenerator,
     FakeLegacyProposalTranslator,
+    FakeReviewFindingRepository,
     FakeOperationRecorder,
     FakeProductionRepository,
     FakeReleasePolicyVersionRepository,
@@ -91,6 +92,7 @@ class ApplicationHarness:
         self.recorder = FakeOperationRecorder(self.database)
         self.artifacts = FakeArtifactStore()
         self.proposals = FakeASRProposalSetRepository(self.database)
+        self.findings = FakeReviewFindingRepository(self.database)
         self.translator = FakeLegacyProposalTranslator()
         self.events = FakeDomainEventOutbox(self.database)
         self.clock = FakeClock()
@@ -112,6 +114,7 @@ class ApplicationHarness:
             proposals=self.proposals,
             editions=self.editions,
             productions=self.productions,
+            findings=self.findings,
             artifacts=self.artifacts,
             translator=self.translator,
             transactions=lambda: self.begin(),
@@ -319,6 +322,42 @@ class ApplicationHarness:
                 actor=self.context(),
                 production_id=production_id,
                 transcript_edition_id=TranscriptEditionId(uid(edition_suffix)),
+                source_versions=source_versions,
+                transcript_scope=transcript_scope,
+                proposal_set_refs=proposal_set_refs,
+                revisions=revisions,
+                gaps=gaps,
+                change_manifest=change_manifest,
+            )
+        )
+
+    def store_finding(self, finding) -> None:
+        """Place a decided finding in storage without going through review."""
+        with self.begin() as unit:
+            self.findings.save(finding, expected_version=0)
+            unit.commit()
+
+    def create_successor_edition(
+        self,
+        production_id: ProductionId,
+        parent,
+        *,
+        edition_suffix: int = 790,
+        suffix: int = 25,
+        source_versions=(),
+        transcript_scope=None,
+        proposal_set_refs=(),
+        revisions=(),
+        gaps=(),
+        change_manifest=None,
+    ):
+        return self.transcription.create_successor_transcript_edition(
+            commands.CreateSuccessorTranscriptEdition(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                production_id=production_id,
+                transcript_edition_id=TranscriptEditionId(uid(edition_suffix)),
+                parent=parent,
                 source_versions=source_versions,
                 transcript_scope=transcript_scope,
                 proposal_set_refs=proposal_set_refs,

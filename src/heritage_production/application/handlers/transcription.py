@@ -27,10 +27,16 @@ from heritage_production.domain.shared import (
     StaleReferenceError,
     ValidationError,
 )
-from heritage_production.domain.transcription import ASRProposalSet, TranscriptEdition
+from heritage_production.domain.review import FindingDecision
+from heritage_production.domain.transcription import (
+    ASRProposalSet,
+    ParentEditionManifest,
+    TranscriptEdition,
+)
 
 from ..commands.transcription import (
     CreateInitialTranscriptEdition,
+    CreateSuccessorTranscriptEdition,
     ImportProposalPackage,
 )
 from ..execution import CompletedOperation, OperationResult, run_operation
@@ -65,6 +71,7 @@ class TranscriptionCommandHandlers:
         proposals,
         editions,
         productions,
+        findings,
         artifacts,
         translator,
         transactions,
@@ -76,6 +83,7 @@ class TranscriptionCommandHandlers:
         self._proposals = proposals
         self._editions = editions
         self._productions = productions
+        self._findings = findings
         self._artifacts = artifacts
         self._translator = translator
         self._transactions = transactions
@@ -136,6 +144,139 @@ class TranscriptionCommandHandlers:
             self._editions.add(edition)
             # Sealed, but not silent: design 9.6 lists TranscriptEditionCreated,
             # so this root has events to drain even though it can never change.
+            self._publish(edition)
+            return OperationResult(value=edition, payload=_edition_payload(edition))
+
+        def rederive(record) -> OperationResult:
+            stored = self._editions.get(command.transcript_edition_id)
+            return OperationResult(value=stored, payload=_edition_payload(stored))
+
+        return run_operation(
+            command,
+            recorder=self._recorder,
+            unit_of_work=self._transactions(),
+            clock=self._clock,
+            execute=execute,
+            rederive=rederive,
+        )
+
+    def _resolve_parent(self, command):
+        """Bind the parent manifest to the parent that is actually stored.
+
+        `ParentEditionManifest` self-verifies: it recomputes its content
+        digest and refuses to exist unless that equals its own `EditionRef`.
+        So the manifest cannot misdescribe *some* edition -- but nothing in
+        the domain says which edition, and a manifest describing an edition
+        that was never sealed is perfectly well-formed. Checking the ref
+        against storage is what ties it to this Production's history.
+
+        The rebuilt comparison covers the one field that digest cannot:
+        `ancestor_edition_refs`. The domain pins its first element to the
+        parent's own parent, so a lie needs a chain three deep -- beyond that
+        first step the ancestry is asserted by the caller, and this walks it.
+        """
+        stored = self._editions.get(command.parent.edition_ref.transcript_edition_id)
+        if stored.ref != command.parent.edition_ref:
+            raise StaleReferenceError(
+                "the stored parent edition does not match the digest this successor pins"
+            )
+        if stored.production_id != command.production_id:
+            raise StaleReferenceError(
+                "the parent edition belongs to a different Production"
+            )
+        rebuilt = ParentEditionManifest.from_edition(stored, self._ancestors_of(stored))
+        if rebuilt != command.parent:
+            raise ValidationError(
+                "the supplied parent manifest does not describe the stored parent"
+            )
+        return stored
+
+    def _ancestors_of(self, edition) -> tuple:
+        """Walk the stored lineage, nearest first, verifying each digest.
+
+        The ancestry is derived rather than accepted: a caller free to assert
+        its own lineage could hide an edition from the record.
+        """
+        chain: list = []
+        current = edition.parent_edition_ref
+        while current is not None:
+            ancestor = self._editions.get(current.transcript_edition_id)
+            if ancestor.ref != current:
+                raise StaleReferenceError(
+                    "a stored ancestor edition does not match its recorded digest"
+                )
+            chain.append(ancestor.ref)
+            current = ancestor.parent_edition_ref
+        return tuple(chain)
+
+    def _require_accepted_findings(self, command, parent) -> tuple:
+        """Design 9.2 step 9: an accepted correction is what justifies a successor.
+
+        The domain checks these refs against the change manifest's keys. It
+        cannot check that the findings exist, that they were accepted rather
+        than rejected, or that they were raised against *this* parent -- only
+        something holding both aggregates can. Step 10 is explicit that review
+        of another edition is historical evidence, never authority here.
+        """
+        refs = tuple(
+            mapping.finding for mapping in command.change_manifest.finding_mappings
+        )
+        for ref in refs:
+            finding = self._findings.load(ref.review_finding_id).root
+            if finding.finding_payload_digest != ref.finding_payload_digest:
+                raise StaleReferenceError(
+                    "the stored finding does not match the payload digest this change pins"
+                )
+            if finding.edition_ref != parent.ref:
+                raise PolicyRefusalError(
+                    "a finding raised against another edition cannot authorize this successor"
+                )
+            disposition = finding.disposition
+            if disposition is None:
+                raise PolicyRefusalError(
+                    "an undecided finding cannot authorize a successor edition"
+                )
+            if disposition.decision is not FindingDecision.ACCEPTED:
+                raise PolicyRefusalError(
+                    "only an accepted finding can authorize a successor edition"
+                )
+            if disposition.disposition_digest != ref.disposition_digest:
+                raise StaleReferenceError(
+                    "the stored disposition does not match the digest this change pins"
+                )
+        return refs
+
+    def create_successor_transcript_edition(
+        self, command: CreateSuccessorTranscriptEdition
+    ) -> CompletedOperation:
+        def execute() -> OperationResult:
+            # No separate Production existence check here: the parent edition
+            # names a Production that exists by construction, so a command
+            # naming a different one is refused by the comparison in
+            # `_resolve_parent` whether or not that other one exists. The
+            # initial-edition handler has no parent, so there the load is the
+            # only check and stays.
+            parent = self._resolve_parent(command)
+            self._resolve_proposal_sets(command)
+            accepted = self._require_accepted_findings(command, parent)
+            edition = TranscriptEdition.seal_successor(
+                transcript_edition_id=command.transcript_edition_id,
+                production_id=command.production_id,
+                source_versions=command.source_versions,
+                transcript_scope=command.transcript_scope,
+                proposal_set_refs=command.proposal_set_refs,
+                parent_edition_ref=command.parent.edition_ref,
+                revisions=command.revisions,
+                gaps=command.gaps,
+                change_manifest=command.change_manifest,
+                creation_actor_id=command.actor.actor_id,
+                created_at_us=self._clock.now_us(),
+                parent_manifest=command.parent,
+                accepted_findings=accepted,
+                event_id=DomainEventId(self._ids.new_id()),
+                event_occurred_at_us=self._clock.now_us(),
+            )
+            self._editions.add(edition)
             self._publish(edition)
             return OperationResult(value=edition, payload=_edition_payload(edition))
 
