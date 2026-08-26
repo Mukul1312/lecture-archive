@@ -22,14 +22,17 @@ Three refusals matter more than the happy path:
 from __future__ import annotations
 
 from heritage_production.domain.shared import (
+    DomainEventId,
     PolicyRefusalError,
-    ProposalSetId,
     StaleReferenceError,
     ValidationError,
 )
-from heritage_production.domain.transcription import ASRProposalSet
+from heritage_production.domain.transcription import ASRProposalSet, TranscriptEdition
 
-from ..commands.transcription import ImportProposalPackage
+from ..commands.transcription import (
+    CreateInitialTranscriptEdition,
+    ImportProposalPackage,
+)
 from ..execution import CompletedOperation, OperationResult, run_operation
 
 
@@ -44,23 +47,110 @@ def _proposal_payload(proposal_set: ASRProposalSet) -> dict:
     }
 
 
+def _edition_payload(edition: TranscriptEdition) -> dict:
+    """A sealed root, so the semantic digest is what a replay pins."""
+    return {
+        "transcript_edition_id": edition.transcript_edition_id.value,
+        "production_id": edition.production_id.value,
+        "content_digest": edition.semantic_digest.hex_digest,
+        "revision_count": len(edition.revisions),
+        "gap_count": len(edition.gaps),
+    }
+
+
 class TranscriptionCommandHandlers:
     def __init__(
         self,
         *,
         proposals,
+        editions,
+        productions,
         artifacts,
         translator,
         transactions,
         recorder,
+        events,
         clock,
+        ids,
     ) -> None:
         self._proposals = proposals
+        self._editions = editions
+        self._productions = productions
         self._artifacts = artifacts
         self._translator = translator
         self._transactions = transactions
         self._recorder = recorder
+        self._events = events
         self._clock = clock
+        self._ids = ids
+
+    def _publish(self, root) -> None:
+        for event in root.pull_events():
+            self._events.enqueue(event)
+
+    def _resolve_proposal_sets(self, command) -> None:
+        """Read every declared proposal set by exact ID and digest.
+
+        Design 9.3 reads immutable inputs from other aggregates that way, and
+        a sealed edition cannot be deleted afterwards, so a reference that is
+        wrong here is wrong permanently.
+        """
+        declared_sources = set(command.source_versions)
+        for ref in command.proposal_set_refs:
+            stored = self._proposals.get(ref.proposal_set_id)
+            if stored.ref != ref:
+                raise StaleReferenceError(
+                    "the stored proposal set does not match the digest this edition pins"
+                )
+            # The application owns this check because neither aggregate can
+            # see the other: an edition built from proposals for a recording
+            # it does not declare has incoherent provenance.
+            if stored.source_version not in declared_sources:
+                raise ValidationError(
+                    "a proposal set was imported for a source this edition does not declare"
+                )
+
+    def create_initial_transcript_edition(
+        self, command: CreateInitialTranscriptEdition
+    ) -> CompletedOperation:
+        def execute() -> OperationResult:
+            # A sealed edition has no delete path, so an edition for a
+            # Production that does not exist would be permanent orphan
+            # evidence rather than a recoverable mistake.
+            self._productions.load(command.production_id)
+            self._resolve_proposal_sets(command)
+            edition = TranscriptEdition.seal_initial(
+                transcript_edition_id=command.transcript_edition_id,
+                production_id=command.production_id,
+                source_versions=command.source_versions,
+                transcript_scope=command.transcript_scope,
+                proposal_set_refs=command.proposal_set_refs,
+                revisions=command.revisions,
+                gaps=command.gaps,
+                change_manifest=command.change_manifest,
+                creation_actor_id=command.actor.actor_id,
+                created_at_us=self._clock.now_us(),
+                event_id=DomainEventId(self._ids.new_id()),
+                event_occurred_at_us=self._clock.now_us(),
+            )
+            self._editions.add(edition)
+            # Sealed, but not silent: design 9.6 lists TranscriptEditionCreated,
+            # so this root has events to drain even though it can never change.
+            self._publish(edition)
+            return OperationResult(value=edition, payload=_edition_payload(edition))
+
+        def rederive(record) -> OperationResult:
+            stored = self._editions.get(command.transcript_edition_id)
+            return OperationResult(value=stored, payload=_edition_payload(stored))
+
+        return run_operation(
+            command,
+            recorder=self._recorder,
+            unit_of_work=self._transactions(),
+            clock=self._clock,
+            execute=execute,
+            rederive=rederive,
+        )
 
     def import_proposal_package(
         self, command: ImportProposalPackage
@@ -125,9 +215,7 @@ class TranscriptionCommandHandlers:
             )
 
         def rederive(record) -> OperationResult:
-            stored = self._proposals.get(
-                ProposalSetId(record.result_payload["proposal_set_id"])
-            )
+            stored = self._proposals.get(command.proposal_set_id)
             return OperationResult(value=stored, payload=_proposal_payload(stored))
 
         return run_operation(

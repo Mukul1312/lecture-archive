@@ -9,10 +9,15 @@ is a way a real legacy export can be wrong.
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from heritage_production.application import commands
-from heritage_production.application.errors import OperationConflictError
+from heritage_production.application.errors import (
+    OperationConflictError,
+    ReplayIntegrityError,
+)
+from heritage_production.application.idempotency import command_result_digest
 from heritage_production.application.ports.adapters import TranslatedProposal
 from heritage_production.domain.shared import (
     ActorId,
@@ -340,6 +345,50 @@ class LegacyProvenanceTests(unittest.TestCase):
             outcome.record.result_payload["provenance_status"], "legacy_attested"
         )
         self.assertEqual(outcome.record.result_payload["warning_count"], 2)
+
+
+class ReplaySteeringTests(unittest.TestCase):
+    """A stored payload must not choose which root a replay loads.
+
+    Re-digesting a rewritten payload keeps the record self-consistent, so the
+    earlier guards pass. Loading by the identity the *command* declares -- a
+    value the verified input digest already covers -- is what stops a payload
+    with storage access from choosing the answer.
+    """
+
+    def test_a_tampered_payload_cannot_redirect_the_reload(self) -> None:
+        fixture = Fixture()
+        first = fixture.harness.import_package(fixture.package, SOURCE)
+        other_package = fixture.harness.artifacts.seed(
+            ArtifactId(uid(313)), b"a second package"
+        )
+        fixture.harness.translator.result = complete_translation(other_package)
+        other = fixture.harness.import_package(
+            other_package, SOURCE, proposal_suffix=762, suffix=24
+        ).result
+        fixture.harness.translator.result = complete_translation(fixture.package)
+
+        command = commands.ImportProposalPackage(
+            operation_id=OperationId(uid(20)),
+            actor=fixture.harness.context(),
+            proposal_set_id=ProposalSetId(uid(760)),
+            source_version=SOURCE,
+            raw_package=fixture.package,
+            import_root="data/imports/1985-08-21",
+            importing_adapter="whisper-package",
+            importing_adapter_version="1.0.0",
+        )
+        forged = dict(first.record.result_payload)
+        forged["proposal_set_id"] = other.proposal_set_id.value
+        forged["content_digest"] = other.semantic_digest.hex_digest
+        fixture.harness.recorder.records[command.operation_id] = dataclasses.replace(
+            first.record,
+            result_payload=forged,
+            result_digest=command_result_digest(command, forged),
+        )
+
+        with self.assertRaises(ReplayIntegrityError):
+            fixture.harness.import_package(fixture.package, SOURCE)
 
 
 class ImportProposalPackageCommandTests(unittest.TestCase):

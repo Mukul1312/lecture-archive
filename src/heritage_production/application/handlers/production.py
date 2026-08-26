@@ -23,7 +23,6 @@ from heritage_production.domain.release import ExternalGateSet, ReleasePolicyVer
 from heritage_production.domain.shared import (
     DomainEventId,
     ProductionId,
-    ReleasePolicyVersionId,
     StaleReferenceError,
 )
 
@@ -106,10 +105,17 @@ class ProductionCommandHandlers:
             rederive=rederive,
         )
 
-    def _reload(self, record) -> OperationResult:
-        stored = self._productions.load(
-            ProductionId(record.result_payload["production_id"])
-        )
+    def _reload(self, production_id: ProductionId) -> OperationResult:
+        """Reload by an identity the *command* names, never one the record does.
+
+        A stored payload is data an attacker with storage access can edit, and
+        re-digesting it keeps the record self-consistent. Letting it choose
+        which root to load would hand that attacker the answer; the command's
+        own identity is already covered by the verified input digest. Only a
+        command that names no identity -- `CreateProduction`, whose result is
+        the identity -- has to fall back to the record.
+        """
+        stored = self._productions.load(production_id)
         return OperationResult(
             value=stored.root,
             payload=_production_payload(stored.root, stored.version),
@@ -131,7 +137,11 @@ class ProductionCommandHandlers:
                 value=production, payload=_production_payload(production, version)
             )
 
-        return self._run(command, execute=execute, rederive=self._reload)
+        def rederive(record) -> OperationResult:
+            # The only handler with no declared identity to trust.
+            return self._reload(ProductionId(record.result_payload["production_id"]))
+
+        return self._run(command, execute=execute, rederive=rederive)
 
     def _open_production(self, command):
         """Load the target and confirm it is where the command expects.
@@ -166,7 +176,7 @@ class ProductionCommandHandlers:
             )
 
         def rederive(record) -> OperationResult:
-            reloaded = self._reload(record)
+            reloaded = self._reload(command.production_id)
             # The command names the exact source it attached, so the replay
             # returns that member rather than the aggregate.
             identity = command.attached_source.source_version_ref
@@ -212,7 +222,7 @@ class ProductionCommandHandlers:
             )
 
         def rederive(record) -> OperationResult:
-            reloaded = self._reload(record)
+            reloaded = self._reload(command.production_id)
             return OperationResult(
                 value=reloaded.value.selected_edition_ref, payload=reloaded.payload
             )
@@ -246,7 +256,7 @@ class ProductionCommandHandlers:
             )
 
         def rederive(record) -> OperationResult:
-            reloaded = self._reload(record)
+            reloaded = self._reload(command.production_id)
             return OperationResult(
                 value=reloaded.value.selected_policy_ref, payload=reloaded.payload
             )
@@ -283,7 +293,7 @@ class ProductionCommandHandlers:
             )
 
         def rederive(record) -> OperationResult:
-            reloaded = self._reload(record)
+            reloaded = self._reload(command.production_id)
             return OperationResult(
                 value=reloaded.value.active_gate_set_ref, payload=reloaded.payload
             )
@@ -316,9 +326,7 @@ class ProductionCommandHandlers:
             return OperationResult(value=policy, payload=_policy_payload(policy))
 
         def rederive(record) -> OperationResult:
-            stored = self._policies.get(
-                ReleasePolicyVersionId(record.result_payload["release_policy_version_id"])
-            )
+            stored = self._policies.get(command.release_policy_version_id)
             return OperationResult(value=stored, payload=_policy_payload(stored))
 
         return self._run(command, execute=execute, rederive=rederive)

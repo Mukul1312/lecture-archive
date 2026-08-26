@@ -28,6 +28,7 @@ from heritage_production.domain.shared import (
     RubricId,
     SourceRecordingRef,
     SourceVersionRef,
+    TranscriptEditionId,
 )
 
 from tests.heritage_production.application_fakes import (
@@ -109,11 +110,15 @@ class ApplicationHarness:
         )
         self.transcription = TranscriptionCommandHandlers(
             proposals=self.proposals,
+            editions=self.editions,
+            productions=self.productions,
             artifacts=self.artifacts,
             translator=self.translator,
             transactions=lambda: self.begin(),
             recorder=self.recorder,
+            events=self.events,
             clock=self.clock,
+            ids=self.ids,
         )
         self.registrations = RegistrationCommandHandlers(
             artifacts=self.artifacts,
@@ -292,6 +297,34 @@ class ApplicationHarness:
                 importing_adapter=importing_adapter,
                 importing_adapter_version=importing_adapter_version,
                 steward_attestation=steward_attestation,
+            )
+        )
+
+    def create_initial_edition(
+        self,
+        production_id: ProductionId,
+        *,
+        edition_suffix: int = 780,
+        suffix: int = 21,
+        source_versions=(),
+        transcript_scope=None,
+        proposal_set_refs=(),
+        revisions=(),
+        gaps=(),
+        change_manifest=None,
+    ):
+        return self.transcription.create_initial_transcript_edition(
+            commands.CreateInitialTranscriptEdition(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                production_id=production_id,
+                transcript_edition_id=TranscriptEditionId(uid(edition_suffix)),
+                source_versions=source_versions,
+                transcript_scope=transcript_scope,
+                proposal_set_refs=proposal_set_refs,
+                revisions=revisions,
+                gaps=gaps,
+                change_manifest=change_manifest,
             )
         )
 

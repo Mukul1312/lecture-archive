@@ -13,13 +13,16 @@ which only works because the operation record stores its result (design 13.4).
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
+from heritage_production.application import commands
 from heritage_production.application import commands
 from heritage_production.application.errors import (
     OperationConflictError,
     ReplayIntegrityError,
 )
+from heritage_production.application.idempotency import command_result_digest
 from heritage_production.application.execution import CompletedOperation
 from heritage_production.application.handlers import ProductionCommandHandlers
 from heritage_production.domain.production import AttachedSource, Production
@@ -36,6 +39,7 @@ from heritage_production.domain.shared import (
 from tests.heritage_production.application_harness import (
     STEWARD,
     ApplicationHarness,
+    attached_for,
 )
 from tests.heritage_production.heritage_release_fixtures import (
     actor,
@@ -353,6 +357,43 @@ class AttachSourceRecordingTests(unittest.TestCase):
         (root, version) = harness.productions.rows[production_id]
         self.assertEqual(version, 3)
         self.assertEqual(len(root.sources), 2)
+
+
+class ReplaySteeringTests(unittest.TestCase):
+    """A stored payload must not choose which root a replay loads.
+
+    `CreateProduction` is the one command with no identity of its own, so its
+    replay has to trust the record. Every other Production command declares
+    the identity, and the verified input digest already covers it -- so the
+    record is not consulted for *which* root, only for what it said happened.
+    """
+
+    def test_a_tampered_payload_cannot_redirect_the_attach_reload(self) -> None:
+        harness = ApplicationHarness()
+        first = harness.create(suffix=1)
+        second = harness.create(suffix=5)
+        version = source_version(suffix=3, character="2")
+        attached = harness.attach(first.result.production_id, version)
+
+        forged = dict(attached.record.result_payload)
+        forged["production_id"] = second.result.production_id.value
+        harness.recorder.records[attached.record.operation_id] = dataclasses.replace(
+            attached.record,
+            result_payload=forged,
+            result_digest=command_result_digest(
+                commands.AttachSourceRecording(
+                    operation_id=attached.record.operation_id,
+                    actor=harness.context(),
+                    production_id=first.result.production_id,
+                    attached_source=attached_for(version),
+                    expected_version=1,
+                ),
+                forged,
+            ),
+        )
+
+        with self.assertRaises(ReplayIntegrityError):
+            harness.attach(first.result.production_id, version)
 
 
 if __name__ == "__main__":
