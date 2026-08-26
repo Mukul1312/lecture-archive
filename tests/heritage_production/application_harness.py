@@ -13,6 +13,7 @@ from heritage_production.application import commands
 from heritage_production.application.handlers import (
     ProductionCommandHandlers,
     RegistrationCommandHandlers,
+    TranscriptionCommandHandlers,
 )
 from heritage_production.domain.production import AttachedSource, EditionSelection
 from heritage_production.domain.release import ReleasePolicyRules
@@ -22,6 +23,7 @@ from heritage_production.domain.shared import (
     ExternalGateSetId,
     OperationId,
     ProductionId,
+    ProposalSetId,
     ReleasePolicyVersionId,
     RubricId,
     SourceRecordingRef,
@@ -29,11 +31,13 @@ from heritage_production.domain.shared import (
 )
 
 from tests.heritage_production.application_fakes import (
+    FakeASRProposalSetRepository,
     FakeArtifactStore,
     FakeClock,
     FakeDatabase,
     FakeDomainEventOutbox,
     FakeIdGenerator,
+    FakeLegacyProposalTranslator,
     FakeOperationRecorder,
     FakeProductionRepository,
     FakeReleasePolicyVersionRepository,
@@ -85,6 +89,8 @@ class ApplicationHarness:
         self.policies = FakeReleasePolicyVersionRepository(self.database)
         self.recorder = FakeOperationRecorder(self.database)
         self.artifacts = FakeArtifactStore()
+        self.proposals = FakeASRProposalSetRepository(self.database)
+        self.translator = FakeLegacyProposalTranslator()
         self.events = FakeDomainEventOutbox(self.database)
         self.clock = FakeClock()
         self.ids = FakeIdGenerator()
@@ -100,6 +106,14 @@ class ApplicationHarness:
             events=self.events,
             clock=self.clock,
             ids=self.ids,
+        )
+        self.transcription = TranscriptionCommandHandlers(
+            proposals=self.proposals,
+            artifacts=self.artifacts,
+            translator=self.translator,
+            transactions=lambda: self.begin(),
+            recorder=self.recorder,
+            clock=self.clock,
         )
         self.registrations = RegistrationCommandHandlers(
             artifacts=self.artifacts,
@@ -252,6 +266,32 @@ class ApplicationHarness:
                 operation_id=OperationId(uid(suffix)),
                 actor=self.context(),
                 credential=credential,
+            )
+        )
+
+    def import_package(
+        self,
+        raw_package,
+        source_version,
+        *,
+        proposal_suffix: int = 760,
+        suffix: int = 20,
+        import_root: str = "data/imports/1985-08-21",
+        importing_adapter: str = "whisper-package",
+        importing_adapter_version: str = "1.0.0",
+        steward_attestation=None,
+    ):
+        return self.transcription.import_proposal_package(
+            commands.ImportProposalPackage(
+                operation_id=OperationId(uid(suffix)),
+                actor=self.context(),
+                proposal_set_id=ProposalSetId(uid(proposal_suffix)),
+                source_version=source_version,
+                raw_package=raw_package,
+                import_root=import_root,
+                importing_adapter=importing_adapter,
+                importing_adapter_version=importing_adapter_version,
+                steward_attestation=steward_attestation,
             )
         )
 

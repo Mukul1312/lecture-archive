@@ -27,6 +27,7 @@ from heritage_production.domain.transcription import (
     ParentEditionManifest,
     ProposalSetRef,
     SegmentRevision,
+    StewardAttestation,
 )
 
 from .context import (
@@ -52,6 +53,9 @@ class ImportProposalPackage:
     source_version: SourceVersionRef
     raw_package: ArtifactRef
     import_root: str
+    importing_adapter: str
+    importing_adapter_version: str
+    steward_attestation: StewardAttestation | None = None
 
     def __post_init__(self) -> None:
         require_envelope(self.operation_id, self.actor)
@@ -59,6 +63,16 @@ class ImportProposalPackage:
         require_exact(self.source_version, SourceVersionRef, "source_version")
         require_exact(self.raw_package, ArtifactRef, "raw_package")
         require_text(self.import_root, field="import_root")
+        # Design 9.4 puts adapter identity and version in this command's
+        # idempotency key, so they are declared inputs rather than something
+        # learned from the translation. The handler checks the declaration
+        # against the adapter that actually ran.
+        require_text(self.importing_adapter, field="importing_adapter")
+        require_text(self.importing_adapter_version, field="importing_adapter_version")
+        if self.steward_attestation is not None:
+            require_exact(
+                self.steward_attestation, StewardAttestation, "steward_attestation"
+            )
 
 
 @dataclass(frozen=True, slots=True)

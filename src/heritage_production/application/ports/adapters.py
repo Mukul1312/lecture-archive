@@ -14,6 +14,12 @@ from typing import Protocol, runtime_checkable
 
 from heritage_production.domain.production import ExternalSignOff
 from heritage_production.domain.review import ReviewSignOff, ReviewTargetManifest
+from heritage_production.domain.transcription import (
+    ConfigurationEvidence,
+    IdentityEvidence,
+    ProposalItem,
+    ProvenanceStatus,
+)
 from heritage_production.domain.shared import (
     ActorCredentialRef,
     ArtifactRef,
@@ -24,20 +30,46 @@ from heritage_production.domain.shared import (
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterIdentity:
+    """Which adapter build produced a translation.
+
+    Design 9.4 puts adapter identity and version in the proposal-import
+    idempotency key, so the command declares them and the handler asks the
+    adapter whether the declaration is true.
+    """
+
+    name: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
 class TranslatedProposal:
-    """A legacy package translated into proposal language, warnings included.
+    """A legacy package translated into domain values, warnings included.
+
+    Design 10.4 step 7 lets an adapter translate only *valid* results into
+    domain values, and forbids it adding guessed semantics. That is why the
+    evidence fields are `IdentityEvidence` rather than plain strings: the
+    status is the whole point. An observed model name `small` must not become
+    a pinned model revision merely by surviving translation.
 
     Warnings are structured evidence. Design 14.3 forbids a warning silently
-    downgrading a failure into a pass, so they travel beside the payload rather
-    than replacing it.
+    downgrading a failure into a pass, so they travel beside the payload
+    rather than replacing it.
+
+    `quarantined` is terminal, not advisory: design 10.4 quarantines an import
+    whose source cannot be independently bound, and there is no
+    `ProvenanceStatus` for it, so no proposal set is created at all.
     """
 
     raw_package: ArtifactRef
-    tool_name: str
-    model_name: str | None
-    model_revision: str | None
-    configuration_digest: ContentDigest | None
-    warnings: tuple[str, ...]
+    package_schema_version: int
+    tool_identity: IdentityEvidence
+    model_name: IdentityEvidence
+    model_revision: IdentityEvidence
+    configuration: ConfigurationEvidence
+    provenance_status: ProvenanceStatus
+    missing_field_warnings: tuple[str, ...]
+    items: tuple[ProposalItem, ...]
     quarantined: bool
     quarantine_reason: str | None
 
@@ -67,6 +99,8 @@ class VerifiedProof:
 @runtime_checkable
 class LegacyProposalTranslator(Protocol):
     """Design 10.4: an absolute legacy path is never dereferenced as authority."""
+
+    def identity(self) -> AdapterIdentity: ...
 
     def translate(
         self,

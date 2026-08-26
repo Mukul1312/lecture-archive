@@ -21,6 +21,10 @@ from heritage_production.application.errors import (
     OperationConflictError,
     TransactionRuleError,
 )
+from heritage_production.application.ports.adapters import (
+    AdapterIdentity,
+    TranslatedProposal,
+)
 from heritage_production.application.ports.infrastructure import (
     OperationRecord,
     StagedArtifact,
@@ -400,6 +404,36 @@ class FakeArtifactStore:
             return False
         digest, data = stored
         return digest == artifact.content_digest == ContentDigest.from_bytes(data)
+
+
+class FakeLegacyProposalTranslator:
+    """A translator whose every answer a test can steer.
+
+    Design 10.4 makes translation the anti-corruption boundary, so the fake
+    must be able to lie in each of the ways a real legacy package can: bind
+    the wrong source, quarantine, return an unexpected package, or come from
+    an adapter build other than the one declared.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str = "whisper-package",
+        version: str = "1.0.0",
+        result: TranslatedProposal | None = None,
+    ) -> None:
+        self._identity = AdapterIdentity(name, version)
+        self.result = result
+        self.calls: list = []
+
+    def identity(self) -> AdapterIdentity:
+        return self._identity
+
+    def translate(self, *, raw_package, import_root, bound_source) -> TranslatedProposal:
+        self.calls.append((raw_package, import_root, bound_source))
+        if self.result is None:
+            raise ValidationError("this fake translator was given no result to return")
+        return self.result
 
 
 class FakeDomainEventOutbox:
