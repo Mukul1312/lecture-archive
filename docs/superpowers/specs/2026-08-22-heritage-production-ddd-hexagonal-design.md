@@ -2,8 +2,8 @@
 
 Date: 2026-08-22
 
-Status: Design decisions approved by the user on 2026-08-22; this written
-specification awaits final user review. Implementation has not started.
+Status: Approved by the user. First-slice implementation started on
+2026-08-24 on branch `work/heritage-production-first-slice`.
 
 ## 1. Executive decision
 

@@ -66,6 +66,9 @@ _work/
 # Isolated Git worktrees used by agent-assisted implementation
 .worktrees/
 
+# Local Heritage Production store
+.heritage-production/
+
 # Local source and generated artifacts for the YouTube lecture enhancement
 Haladhara-lecture.webm
 .tmp-source-comparison/

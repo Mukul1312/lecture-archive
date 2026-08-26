@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The repository is a workspace for five long-lived archive programmes
+# (see docs/superpowers/specs/2026-08-26-corpus-ledger-domain-design.md §2).
+# It is deliberately NOT named after heritage_production, which is shelved —
+# see src/heritage_production/SHELVED.md.
+name = "heritage-archive"
+version = "0.0.0"
+description = "Archive workspace: transcription, translation, enhancement, narration"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography==50.0.0",
+]
+
+[project.optional-dependencies]
+# Needed only by the shelved heritage_production test suite.
+dev = [
+    "hypothesis==6.165.10",
+    "rfc8785==0.1.4",
+    "build==1.5.0",
+]
+
+# No [project.scripts]. The only console entry point on the branch pointed at
+# heritage_production's CLI, which is 62 lines of unimplemented subcommands
+# returning 0. Declaring it would advertise a command that does nothing.
+
+[tool.setuptools.packages.find]
+where = ["src"]
