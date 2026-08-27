@@ -22,7 +22,7 @@ comparison in [07](07-cloudflare-and-the-provider-matrix.md).
 | D11 | **Cloudflare Access** is the clearest functional fix for category 9 and is free at this scale (50 users, email OTP, no gallery code changes) | Cloudflare Zero Trust plans | Medium-high |
 | D12 | **R2's S3-compatible API** means the storage choice is not a learning sacrifice — the boto3/S3 skill transfers, only `endpoint_url` changes | Cloudflare R2 docs | High |
 | D13 | Storage cost, like GPU cost, **cannot decide this** — the total annual spread across all options is under $15 at current data volumes | Doc 07 §6 | High |
-| D14 | **The API tier is $0.73–$1.03 per audio-hour, not $3.02** — doc 05's derived figure is 3–4x high, so the corpus prices at $1,430–$2,010 rather than $5,900. Structurally this *strengthens* D7: the API tier still dominates and GPU is still a rounding error | [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md), verified against list prices | High |
+| D14 | **The API tier is $0.73–$1.03 per audio-hour, not $3.02** — doc 05's derived figure is 3–4x high, so the corpus prices at $1,430–$2,010 rather than $5,900. Structurally this *strengthens* D7. **But it changes no decision:** the bid estimate already called compute “a rounding error … about 1% of the bid”, and this moves it to ~0.3%. The deciding number is **M, human work-hours per audio-hour** (range 5.5–36, adopted at 11.5), which the estimate flags as “the number the pilot must measure” | [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md), verified against list prices | High |
 
 ---
 
@@ -47,10 +47,26 @@ analysed without knowing whether that decision is open for reconsideration or fi
 **Recommendation:** treat it as fixed unless consciously reversed. Drifting past an approved
 architectural decision is exactly the failure mode the DDD work was undertaken to prevent.
 
-### Q3. Is the Odia bid live?
+### Q3. Is the Odia bid live? — **Answered 2026-08-27: yes, but pre-bid.**
 
-The entire GPU case is prospective and rests on this. If the bid is not pursued, categories
-2–3 have **no current workload at all** and the GPU question closes entirely.
+`docs/odia-transcription-bid-estimate-2026-07-25.md` exists and is explicit: *“pre-bid. Not
+yet signed — the client wants a cost estimate first.”* Programme 1 also runs **today** via
+Sarvam, a hosted API, outside this repository.
+
+**This does not reopen categories 2–3.** The work runs on a bought API, not on GPU anyone
+rents, so there is still no GPU workload — which strengthens D4 rather than challenging it.
+
+### Q12. What is M, human work-hours per audio-hour? — **the question that matters**
+
+The bid estimate names it as the dominant driver: credible range **5.5 to 36, a 6.5x
+spread**, driving 40–70% of cost. Three cost models guessed 5.5 / 7.0 / 11.5; three red-team
+reviews judged those low and converged on 11–15. The estimate adopts **11.5** and flags it as
+*“the number the pilot must measure.”*
+
+Against a $215k Tier 1, one point of M outweighs every infrastructure question in this
+folder combined. **It cannot be researched — it needs the pilot, real Odia audio and a
+human transcriber.** Recorded here so the folder does not mistake its own scope for the
+project's priorities.
 
 ---
 
@@ -67,10 +83,11 @@ The entire GPU case is prospective and rests on this. If the bid is not pursued,
   ₹30/hr ($0.31), ElevenLabs Scribe v2 batch $0.22/hr — **$0.73–$1.03 per audio-hour with LLM
   reconciliation**, against the $3.02 doc 05 derived. See
   [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
-  **Two questions replace it:** (a) Sarvam's own pages disagree by 2.5x (₹30/hr in the
-  developer table, ₹1.25/min on the Odia product page) and only Sarvam can settle it; (b) the
-  bid document's ~$6,000 compute line is now the unrebuilt figure, since $3.02 was obtained by
-  subtracting from it.
+  **Neither replacement question is worth pursuing.** (a) Sarvam's pages disagree by 2.5x
+  (₹30/hr developer table vs ₹1.25/min Odia product page) — worth about **$920 on a $215k
+  bid, 0.4%**. (b) Rebuilding the ~$6,000 compute line would confirm a rounding error more
+  precisely; `docs/odia-transcription-bid-estimate-2026-07-25.md` §2 already calls compute
+  “a rounding error … about 1% of the bid”. **The number worth measuring is M** — see Q12.
 - **Q8.** Does serverless GPU (Modal, RunPod Serverless, fal) fit the bursty sweep pattern
   better than a rented instance? Flagged, not analysed.
 - **Q9.** Is there an existing Cloudflare account or DNS zone from the earlier projects? An

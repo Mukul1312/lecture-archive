@@ -118,6 +118,25 @@ requirement is therefore free on this engine. Doc 05 does not appear to account 
 
 **The compute line is overstated by roughly $4,000.**
 
+> **Scope correction, added after reading the bid document.** This verification
+> was undertaken on the belief that $3.02 sat in a submitted bid. It does not.
+> `docs/odia-transcription-bid-estimate-2026-07-25.md` is **pre-bid** -- *"Not yet
+> signed -- the client wants a cost estimate first"* -- and its section 2 already
+> states *"Compute is a rounding error. GPU + API + LLM for the entire 1,952-hour
+> corpus is ~$6k -- about 1% of the bid."* Correcting $5,900 to ~$1,800 moves
+> compute from 1% of the bid to about 0.3%. **It confirms a claim the estimate
+> already made, and changes no decision.**
+>
+> The number that decides this contract is **M, human work-hours per audio-hour**:
+> credible range **5.5 to 36**, driving 40-70% of cost, adopted at 11.5 and flagged
+> by the estimate itself as *"the number the pilot must measure."* Against a $215k
+> Tier 1, moving M by one point outweighs every API question in this document
+> combined. The Sarvam ambiguity in section 4 is worth about $920, or 0.4%.
+>
+> The pricing below stands and is correct. It is simply worth much less than the
+> effort implied, and this note exists so nobody repeats the mistake of optimising
+> the rounding error.
+
 **The error is in the bid's favour** — margin is better than modelled, not worse. But an
 inflated cost line can lose a bid on price, so it is worth correcting in either direction.
 

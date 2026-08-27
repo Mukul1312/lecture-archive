@@ -56,7 +56,7 @@ Read 00 and 01 first. Categories 02–05 can be read independently.
 | D10 | Cloudflare is a storage/delivery/access layer, **not** a compute platform — it complements rather than replaces the GPU decision | High | 07 |
 | D11 | Cloudflare Access is the clearest functional fix available for category 9, and is free at this scale | Medium-high | 07 |
 | D12 | R2's S3-compatible API means the storage decision need not be a learning sacrifice — the SDK skill transfers | High | 07 |
-| D14 | **The API tier costs $0.73–$1.03 per audio-hour, not $3.02.** Doc 05's derived figure is 3–4x high; the corpus prices at $1,430–$2,010, and the bid's ~$6,000 compute line is what now needs rebuilding | High | evidence/api-tier-pricing-2026-08-27 |
+| D14 | **The API tier costs $0.73–$1.03 per audio-hour, not $3.02** — but compute was already a rounding error, so this changes no decision. The bid's deciding number is **M, human work-hours per audio-hour** (5.5–36) | High | evidence/api-tier-pricing-2026-08-27 |
 
 ---
 

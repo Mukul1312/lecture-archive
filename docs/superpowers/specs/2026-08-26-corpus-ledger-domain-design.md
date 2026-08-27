@@ -979,11 +979,32 @@ Apparition of Shui Baladev" without.*
 is separate from `.venv` because it needs `packaging==26.3` where `.venv` holds
 23.2 for audio tooling.*
 
-*Two things this did not do. `base.en` remains unreachable — `_snapshot()`
+*`base.en` remains unreachable — `_snapshot()`
 resolves only the Systran small repo, and naming another model now fails loudly
 rather than mislabelling; the real gap-filling used `base.en` and a French pass,
-so gap-filling is not yet reproducible here. And no end-to-end CLI run has
-happened: `intake` downloads from archive.org, which is the steward's call.*
+so gap-filling is not yet reproducible here.*
+
+*The end-to-end run happened later the same day and **completed**:
+`source_ready` to `asr_ready` to `inspected` to `reviewed` to `draft_ready` to
+`handed_off`, on the 1985-08-21 Zurich lecture. Three further defects surfaced,
+none of which the 131 tests could reach, because all of them use a fake ASR
+adapter. faster-whisper returns `numpy.float64`, a float subclass the exact-type
+checks refused, so nothing could transcribe at all. Word timestamps come from a
+separate alignment pass and routinely fall outside their segment, and the strict
+containment check would have rejected both hand-made 1985 transcripts; the
+tolerance that replaced it was measured from those two corpora rather than
+chosen. And three paragraphs of text proved to be **hallucinated into 102 seconds
+of silence** -- flagged as suspicious by the inspection, but settled only by the
+steward listening. The machine narrowed 89 minutes to 22 spans totalling 8.6
+minutes; five clips decided it, recovering 37 seconds of lost content and
+removing four fabrications.*
+
+*One limitation found in passing, recorded in
+`docs/ggsm-transcript-reproducibility-2026-08-27.md`: the output is **not
+bit-reproducible**. faster-whisper's int8 CPU inference is non-deterministic over
+long audio -- the same 21-minute clip run twice gave 196 vs 197 segments. The
+recorded configuration is reproducible; the transcript is not, so its digest
+seals one run rather than being a recomputable checksum.*
 
 **5. Consider the smallest possible Odia record.** Programme 1 runs via Sarvam
 outside this repository, so it has no provenance here at all — the largest gap
