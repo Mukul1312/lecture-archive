@@ -900,8 +900,8 @@ Enhancement is the more mature store, not the more expendable one.
 
 ## A6. What replaces §13
 
-> **Status 2026-08-27:** items 1, 2 and 3 are done — merge `1996607`, and the
-> digest normalisation described below. Items 4 and 5 remain.
+> **Status 2026-08-27:** items 1–4 are done — merge `1996607`, digest
+> normalisation `a89910d`, ASR configuration seam `f2f1adb`. Item 5 remains.
 
 **1. Merge `work/heritage-production-first-slice` into `main`.** ✅ *Done —
 `1996607`.* The file sets
@@ -952,10 +952,38 @@ in either case, so the tie-break's behaviour is unchanged, and the sentence
 describes a runner that does not exist yet. Recorded here because editing an
 approved design document is otherwise out of bounds.*
 
-**4. Make the SSGGSM flow actually run.** Install the pinned `faster-whisper`,
-and reconcile `DEFAULT_ASR_CONFIGURATION` with the `initial_prompt` the real
-transcripts used. Wanted daily; currently cannot complete. Worth more than any
-architecture work.
+**4. Make the SSGGSM flow actually run.** ✅ *Done 2026-08-27 — `f2f1adb`.*
+Install the pinned `faster-whisper`, and reconcile `DEFAULT_ASR_CONFIGURATION`
+with the `initial_prompt` the real transcripts used. Wanted daily; currently
+cannot complete. Worth more than any architecture work.
+
+*The reconciliation as written above would have made things worse, and this is
+worth recording. `LocalFasterWhisperAdapter.transcribe` accepted a
+`configuration` argument and ignored it — every argument was hardcoded — so
+adding `initial_prompt` to the constant would have written a prompt into
+recorded provenance while the call still ran without one, and validation would
+have passed. The routing was made total first (`_route_configuration` refuses
+any key it cannot deliver), and only then was the prompt added.*
+
+*The prompt is per-lecture, not a constant: the two real transcripts used
+different prompts, each naming its own verse, persons and terms. It now lives in
+job state, bound by `set-prompt` and frozen once ASR evidence exists.
+`job_configuration(state, span=...)` derives the one configuration a job may run
+— full passes carry the prompt, span reruns drop it, which is what both real gap
+passes recorded. Measured on 25s of the 1985-08-08 lecture: "the four famous
+apparitions of Sri Baladeva" with the prompt, "the four celebrities of the
+Apparition of Shui Baladev" without.*
+
+*`.venv-transcribe` was built from `requirements-transcribe-windows.lock.txt`
+(which already existed, with recreation instructions) and matches it exactly. It
+is separate from `.venv` because it needs `packaging==26.3` where `.venv` holds
+23.2 for audio tooling.*
+
+*Two things this did not do. `base.en` remains unreachable — `_snapshot()`
+resolves only the Systran small repo, and naming another model now fails loudly
+rather than mislabelling; the real gap-filling used `base.en` and a French pass,
+so gap-filling is not yet reproducible here. And no end-to-end CLI run has
+happened: `intake` downloads from archive.org, which is the steward's call.*
 
 **5. Consider the smallest possible Odia record.** Programme 1 runs via Sarvam
 outside this repository, so it has no provenance here at all — the largest gap
