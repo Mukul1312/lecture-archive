@@ -1,5 +1,9 @@
 # Windows-compatible enhancement stack. Resemblyzer is installed separately
-# with --no-deps because its legacy `webrtcvad` dependency has no Windows wheel.
+# with --no-deps because its legacy `webrtcvad` dependency has no Windows wheel:
+#   .\.venv\Scripts\python.exe -m pip install --no-deps resemblyzer==0.1.4
+#
+# Do NOT add build==1.5.0 here or to .venv. It pulls packaging 26.3, and
+# DeepFilterNet 0.5.6 requires packaging<24.0. Nothing imports build.
 DeepFilterNet==0.5.6
 librosa==0.11.0
 numpy==1.26.4
@@ -8,4 +12,7 @@ pyloudnorm==0.2.0
 scipy==1.17.1
 soundfile==0.14.0
 torch==2.0.1
+# Required by DeepFilterNet at import time and previously missing from this
+# file; the working .venv had it installed by hand. 2.0.2 pairs with torch 2.0.1.
+torchaudio==2.0.2
 webrtcvad-wheels==2.0.14
