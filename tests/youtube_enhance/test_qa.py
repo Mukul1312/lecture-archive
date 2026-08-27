@@ -70,15 +70,15 @@ class QaTests(unittest.TestCase):
             "expected_candidate_window_ids": [],
             "candidate_window_scores": [],
             "hashes": {
-                "source_sha256": "A" * 64,
-                "adaptive_sha256": "D" * 64,
-                "delivery_master_sha256": "E" * 64,
-                "flac_sha256": "B" * 64,
-                "mp3_sha256": "C" * 64,
+                "source_sha256": "a" * 64,
+                "adaptive_sha256": "d" * 64,
+                "delivery_master_sha256": "e" * 64,
+                "flac_sha256": "b" * 64,
+                "mp3_sha256": "c" * 64,
             },
             "artifact_paths": {"source": "source.wav", "adaptive": "adaptive.wav", "delivery_master": "master.wav", "flac": "delivery.flac", "mp3": "delivery.mp3"},
             "listening_checklist": {"status": "pending", "required_sections": [
-                "candidate windows", "segment transitions", "chunk boundaries", "quiet consonants", "overlaps", "music and chanting", "applause and crowd", "beginning", "ending", "naturalness veto", "word-integrity veto"], "path": "listening-checklist.md", "sha256": "F" * 64,
+                "candidate windows", "segment transitions", "chunk boundaries", "quiet consonants", "overlaps", "music and chanting", "applause and crowd", "beginning", "ending", "naturalness veto", "word-integrity veto"], "path": "listening-checklist.md", "sha256": "f" * 64,
                 "veto_text": "Naturalness and word integrity veto delivery."},
         }
 
@@ -302,7 +302,7 @@ class QaTests(unittest.TestCase):
             publish_qa_pair(report, qa, checklist)
             parsed = json.loads(qa.read_text()); self.assertEqual(report, before)
             self.assertEqual(qa.read_bytes(), (json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",",":"), allow_nan=False)+"\n").encode())
-            self.assertEqual(parsed["listening_checklist"]["sha256"], hashlib.sha256(checklist.read_bytes()).hexdigest().upper())
+            self.assertEqual(parsed["listening_checklist"]["sha256"], hashlib.sha256(checklist.read_bytes()).hexdigest())
             self.assertEqual(parsed["expected_boundary_samples"], []); self.assertEqual(parsed["expected_candidate_window_ids"], [])
             self.assertEqual(list(root.glob("*.stage.*")), [])
 
@@ -328,7 +328,7 @@ class QaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder); report=self.valid_bound_report(root); report["expected_boundary_samples"]=[4]; report["boundary_scores"]=[{"boundary_sample":4,"jump":0.0,"jump_over_local_median_db":0.0}]; report["expected_candidate_window_ids"]=["w1"]; report["candidate_window_scores"]=[{"window_id":"w1","start_sample":0,"end_sample":8,"non_finite_samples":0,"peak":1.0}]
             qa,checklist=root/"qa.json",root/"check.md"; before=copy.deepcopy(report); publish_qa_pair(report,qa,checklist); data=json.loads(qa.read_text()); text=checklist.read_text()
-            self.assertEqual(report,before); self.assertEqual(data["listening_checklist"]["path"],str(checklist)); self.assertIn("4",text); self.assertIn("w1",text); self.assertIn("Naturalness veto",text); self.assertEqual(data["listening_checklist"]["sha256"],hashlib.sha256(checklist.read_bytes()).hexdigest().upper())
+            self.assertEqual(report,before); self.assertEqual(data["listening_checklist"]["path"],str(checklist)); self.assertIn("4",text); self.assertIn("w1",text); self.assertIn("Naturalness veto",text); self.assertEqual(data["listening_checklist"]["sha256"],hashlib.sha256(checklist.read_bytes()).hexdigest())
 
     def test_impulse_and_peak_thresholds_reach_complete_nonempty_score_rows(self):
         report=self.passing(); report["expected_boundary_samples"]=[4]; report["boundary_scores"]=[{"boundary_sample":4,"jump":0.05,"jump_over_local_median_db":20.0}]; validate_delivery(report)

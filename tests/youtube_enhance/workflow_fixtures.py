@@ -66,7 +66,7 @@ def artifact_record(path: Path, relative_path: str) -> ArtifactRecord:
     status = path.stat(follow_symlinks=False)
     return ArtifactRecord(
         relative_path=relative_path,
-        sha256=hashlib.sha256(path.read_bytes()).hexdigest().upper(),
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         size_bytes=status.st_size,
         file_id=(status.st_dev, status.st_ino),
         media=None,

@@ -351,10 +351,9 @@ def _exact_mapping(value: Any, keys: set[str], label: str) -> Mapping[str, Any]:
     return value
 
 
-def _canonical_sha(value: Any, *, lowercase: bool, label: str) -> str:
-    pattern = r"[0-9a-f]{64}" if lowercase else r"[0-9A-F]{64}"
-    if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
-        raise RuntimeError(f"{label} must be canonical {'lowercase' if lowercase else 'uppercase'} SHA-256")
+def _canonical_sha(value: Any, *, label: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise RuntimeError(f"{label} must be canonical lowercase SHA-256")
     return value
 
 
@@ -405,11 +404,11 @@ def _validate_manifest_stage_structure(manifest: Mapping[str, Any]) -> None:
             "completion_sha256", "private_map_sha256", "blind_map_sha256", "memory_budget",
         }, "candidate evidence")
         _canonical_sha(
-            manifest["candidate_context_fingerprint"], lowercase=True,
+            manifest["candidate_context_fingerprint"],
             label="candidate context fingerprint",
         )
         _canonical_sha(
-            manifest["candidate_report_sha256"], lowercase=False,
+            manifest["candidate_report_sha256"],
             label="candidate report physical hash",
         )
     if manifest.get("approval") is not None:
@@ -423,7 +422,7 @@ def _validate_manifest_stage_structure(manifest: Mapping[str, Any]) -> None:
             "blind_code", "candidate_id", "pause_treatment",
         }, "selection")
         _canonical_sha(
-            manifest.get("segment_map_sha256"), lowercase=False,
+            manifest.get("segment_map_sha256"),
             label="reviewed segment physical hash",
         )
     if "render" in keys:
@@ -512,7 +511,7 @@ def _verify_record(
         or not isinstance(record.get("path"), str)
         or not record["path"]
         or not isinstance(record.get("sha256"), str)
-        or re.fullmatch(r"[0-9A-F]{64}", record["sha256"]) is None
+        or re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is None
     ):
         raise RuntimeError("artifact record is malformed")
     if channels is not None and (
@@ -577,7 +576,7 @@ def _verify_diagnose_state(
     }, "manifest source")
     if not isinstance(source["path"], str) or not source["path"]:
         raise RuntimeError("manifest source path is invalid")
-    _canonical_sha(source["sha256"], lowercase=False, label="source physical hash")
+    _canonical_sha(source["sha256"], label="source physical hash")
     if type(source["bytes"]) is not int or source["bytes"] < 0 or not isinstance(source["probe"], dict):
         raise RuntimeError("manifest source byte/probe evidence is invalid")
     for name in ("headroom_gain", "decoded_peak"):
@@ -614,7 +613,7 @@ def _verify_diagnose_state(
         raise RuntimeError("immutable source is missing or reparse-linked")
     current_hash = sha256_file(source_path)
     if current_hash != source.get("sha256") or (
-        expected_hash is not None and current_hash != expected_hash.upper()
+        expected_hash is not None and current_hash != expected_hash.lower()
     ):
         raise RuntimeError("immutable source hash no longer matches manifest")
     if source_path.stat().st_size != source.get("bytes"):
@@ -743,9 +742,9 @@ def _run_diagnose_locked(args: argparse.Namespace) -> None:
     if _is_reparse_point(args.source) or not args.source.is_file():
         raise RuntimeError("immutable source must be a regular non-reparse file")
     source_hash = sha256_file(args.source)
-    if source_hash != args.expected_sha256.upper():
+    if source_hash != args.expected_sha256.lower():
         raise RuntimeError(
-            f"source hash mismatch: expected {args.expected_sha256.upper()}, got {source_hash}"
+            f"source hash mismatch: expected {args.expected_sha256.lower()}, got {source_hash}"
         )
     workspace = Path(args.workspace)
     if _is_reparse_point(workspace):
@@ -1216,7 +1215,7 @@ def _derive_candidate_evidence(
         path = _workspace_leaf(run_root, relative)
         if path.is_symlink() or not path.is_file():
             raise RuntimeError("candidate artifact is missing or symlinked")
-        if sha256_file(path).casefold() != str(expected_hash).casefold():
+        if sha256_file(path) != expected_hash:
             raise RuntimeError(f"candidate artifact hash changed: {path}")
     private_wrapper = read_json(private_path)
     public = read_json(report_path)
@@ -1550,8 +1549,8 @@ def _verify_approved_state(workspace: Path, manifest: Mapping[str, Any]) -> Mapp
     selection = _exact_mapping(manifest.get("selection"), {
         "blind_code", "candidate_id", "pause_treatment",
     }, "selection")
-    _canonical_sha(approval["fingerprint"], lowercase=True, label="approval fingerprint")
-    _canonical_sha(approval["evidence_sha256"], lowercase=True, label="approval evidence hash")
+    _canonical_sha(approval["fingerprint"], label="approval fingerprint")
+    _canonical_sha(approval["evidence_sha256"], label="approval evidence hash")
     if any(not isinstance(approval[name], str) or not approval[name] for name in (
         "blind_code", "candidate_id", "pause_treatment", "reviewer", "approved_at"
     )):
@@ -1623,10 +1622,10 @@ def _render_completion(
     if not isinstance(artifacts, dict):
         raise RuntimeError("render completion artifacts must be an object")
     _canonical_sha(
-        completion["approval_fingerprint"], lowercase=True,
+        completion["approval_fingerprint"],
         label="render approval fingerprint",
     )
-    _canonical_sha(completion["source_sha256"], lowercase=False, label="render source hash")
+    _canonical_sha(completion["source_sha256"], label="render source hash")
     if (
         isinstance(completion["reference_gain"], bool)
         or not isinstance(completion["reference_gain"], (int, float))
@@ -1671,7 +1670,7 @@ def _render_completion(
                 "pause-mask.f32", "pause-render.wav",
             }
             or not isinstance(digest, str)
-            or not re.fullmatch(r"[0-9A-F]{64}", digest)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
         ):
             raise RuntimeError("render artifact manifest is malformed")
         expected.add(path.resolve())
@@ -2154,7 +2153,7 @@ def _verify_export_state(workspace: Path, manifest: Mapping[str, Any]) -> None:
                 "Haladhara-lecture-enhanced.flac", "Haladhara-lecture-enhanced.mp3",
             }
             or not isinstance(digest, str)
-            or not re.fullmatch(r"[0-9A-F]{64}", digest)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or path.is_symlink()
             or not path.is_file()
             or sha256_file(path) != digest
@@ -2507,8 +2506,8 @@ def _verify_qa_state(workspace: Path, manifest: Mapping[str, Any]) -> None:
         or qa_path.parent != checklist_path.parent or qa_path == checklist_path
         or _is_reparse_point(qa_path) or _is_reparse_point(checklist_path)
         or not qa_path.is_file() or not checklist_path.is_file()
-        or not re.fullmatch(r"[0-9A-F]{64}", str(state["report_sha256"]))
-        or not re.fullmatch(r"[0-9A-F]{64}", str(state["checklist_sha256"]))
+        or not re.fullmatch(r"[0-9a-f]{64}", str(state["report_sha256"]))
+        or not re.fullmatch(r"[0-9a-f]{64}", str(state["checklist_sha256"]))
         or sha256_file(qa_path) != state.get("report_sha256")
         or sha256_file(checklist_path) != state.get("checklist_sha256")
     ):

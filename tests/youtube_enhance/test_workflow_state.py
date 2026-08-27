@@ -69,7 +69,7 @@ class WorkflowRepositoryTests(unittest.TestCase):
         self.assertEqual(linked_identity.canonical_root, primary.resolve())
         self.assertEqual(primary_identity.git_common_dir, (primary / ".git").resolve())
         self.assertEqual(primary_identity, linked_identity)
-        self.assertRegex(primary_identity.identity_sha256, r"^[0-9A-F]{64}$")
+        self.assertRegex(primary_identity.identity_sha256, r"^[0-9a-f]{64}$")
 
     def test_discovery_rejects_malformed_or_ambiguous_git_output(self):
         cases = ("", "relative/.git\n", "C:\\one\\.git\nC:\\two\\.git\n", "  \n")
@@ -176,7 +176,7 @@ class WorkflowRepositoryTests(unittest.TestCase):
     def test_job_lock_is_under_jobs_locks_and_bound_to_normalized_job_root(self):
         paths = job_paths(self.repository, "sample-job")
         normalized_job_root = os.path.normcase(os.path.abspath(os.path.normpath(paths.job_root)))
-        expected_name = hashlib.sha256(normalized_job_root.encode("utf-8")).hexdigest().upper()
+        expected_name = hashlib.sha256(normalized_job_root.encode("utf-8")).hexdigest()
 
         self.assertEqual(
             paths.lock_file,
@@ -333,14 +333,14 @@ class WorkflowRepositoryTests(unittest.TestCase):
         record = artifact_record(artifact, "work/artifact.bin")
 
         with self.assertRaises(ValueError):
-            validate_existing_artifact(paths, replace(record, sha256="B" * 64))
+            validate_existing_artifact(paths, replace(record, sha256="b" * 64))
 
-    def test_validate_existing_artifact_requires_uppercase_sha256(self):
+    def test_validate_existing_artifact_requires_lowercase_sha256(self):
         paths, artifact = self._write_artifact(b"validated artifact")
         record = artifact_record(artifact, "work/artifact.bin")
 
         with self.assertRaises(ValueError):
-            validate_existing_artifact(paths, replace(record, sha256=record.sha256.lower()))
+            validate_existing_artifact(paths, replace(record, sha256=record.sha256.upper()))
 
     def test_validate_existing_artifact_rejects_identity_substitution_during_hashing(self):
         paths, artifact = self._write_artifact(b"validated artifact")
@@ -385,7 +385,7 @@ class WorkflowRepositoryTests(unittest.TestCase):
         impostor = artifact.with_name("same-size-impostor.bin")
         impostor.write_bytes(b"substitute-bytes!")
         self.assertEqual(record.size_bytes, impostor.stat().st_size)
-        impostor_sha256 = hashlib.sha256(impostor.read_bytes()).hexdigest().upper()
+        impostor_sha256 = hashlib.sha256(impostor.read_bytes()).hexdigest()
         inconsistent_record = replace(record, sha256=impostor_sha256)
         recorded_inode = artifact.with_name("recorded-inode.bin")
         real_hash = workflow_state._sha256_file

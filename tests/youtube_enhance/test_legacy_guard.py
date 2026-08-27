@@ -34,7 +34,7 @@ class LegacyGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             artifact = Path(folder) / "source.bin"
             artifact.write_bytes(b"validated")
-            expected = hashlib.sha256(b"validated").hexdigest().upper()
+            expected = hashlib.sha256(b"validated").hexdigest()
             result = hash_external_artifacts({artifact: expected})
             self.assertTrue(result[str(artifact.resolve())]["matches"])
 
@@ -63,7 +63,7 @@ class LegacyGuardTests(unittest.TestCase):
             alias = root / "nested" / ".." / "source.bin"
 
             with self.assertRaises(ValueError):
-                hash_external_artifacts({alias: hashlib.sha256(b"validated").hexdigest().upper()})
+                hash_external_artifacts({alias: hashlib.sha256(b"validated").hexdigest()})
 
     def test_external_hashes_reject_reparse_ancestors(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -80,7 +80,7 @@ class LegacyGuardTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 hash_external_artifacts(
-                    {linked / "source.bin": hashlib.sha256(b"validated").hexdigest().upper()}
+                    {linked / "source.bin": hashlib.sha256(b"validated").hexdigest()}
                 )
 
     def test_inventory_rejects_reparse_directories(self):
@@ -126,7 +126,7 @@ class LegacyGuardTests(unittest.TestCase):
             write_baseline(
                 root,
                 destination,
-                {external: hashlib.sha256(b"validated").hexdigest().upper()},
+                {external: hashlib.sha256(b"validated").hexdigest()},
             )
 
             after = protected.stat()

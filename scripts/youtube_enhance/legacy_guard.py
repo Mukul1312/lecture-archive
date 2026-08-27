@@ -116,7 +116,7 @@ def _sha256(path: Path) -> str:
     with open(_filesystem_path(path), "rb") as handle:
         while block := handle.read(1024 * 1024):
             digest.update(block)
-    return digest.hexdigest().upper()
+    return digest.hexdigest()
 
 
 def hash_external_artifacts(expected_hashes: Mapping[Path, str]) -> dict[str, Any]:
@@ -126,10 +126,9 @@ def hash_external_artifacts(expected_hashes: Mapping[Path, str]) -> dict[str, An
         if (
             not isinstance(expected, str)
             or len(expected) != 64
-            or expected != expected.upper()
-            or any(character not in "0123456789ABCDEF" for character in expected)
+            or any(character not in "0123456789abcdef" for character in expected)
         ):
-            raise ValueError("expected SHA-256 must be an uppercase hexadecimal digest")
+            raise ValueError("expected SHA-256 must be a lowercase hexadecimal digest")
         path = _require_regular_external_path(Path(requested_path))
         actual = _sha256(path)
         artifacts[str(path)] = {

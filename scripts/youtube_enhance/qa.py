@@ -74,7 +74,7 @@ def _required_hashes(report: dict[str, Any]) -> None:
         "flac_sha256", "mp3_sha256",
     ):
         value = hashes.get(key)
-        if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789ABCDEF" for char in value.upper()):
+        if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
             raise QaFailure(f"QA report has invalid {key}")
 
 
@@ -100,7 +100,7 @@ def _check_checklist(report: dict[str, Any]) -> None:
             or "naturalness" not in checklist["veto_text"].lower()):
         raise QaFailure("pending listening checklist metadata/evidence is incomplete")
     value = checklist.get("sha256")
-    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value.lower()):
+    if not isinstance(value, str) or len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
         raise QaFailure("pending listening checklist hash is invalid")
 
 
@@ -347,7 +347,7 @@ def collect_qa_report(
         },
     }
     payload = _render_listening_checklist(report)
-    report["listening_checklist"]["sha256"] = hashlib.sha256(payload).hexdigest().upper()
+    report["listening_checklist"]["sha256"] = hashlib.sha256(payload).hexdigest()
     return report
 
 
@@ -368,7 +368,7 @@ def publish_qa_pair(report: dict[str, Any], qa_path: Path, checklist_path: Path)
     payload = _render_listening_checklist(snapshot)
     checklist = dict(snapshot.get("listening_checklist", {}))
     checklist.update({"status": "pending", "path": str(checklist_path),
-                      "sha256": hashlib.sha256(payload).hexdigest().upper(),
+                      "sha256": hashlib.sha256(payload).hexdigest(),
                       "required_sections": [section.lower() for section in CHECKLIST_SECTIONS],
                       "veto_text": "Naturalness and word integrity veto delivery."})
     snapshot["listening_checklist"] = checklist

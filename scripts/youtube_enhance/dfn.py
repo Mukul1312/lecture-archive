@@ -249,7 +249,7 @@ class CachedDfnAdapter:
             raise ValueError("cached DeepFilterNet input must be mono")
         work_directory.mkdir(parents=True, exist_ok=True)
         pcm = np.ascontiguousarray(samples, dtype="<f4")
-        pcm_hash = hashlib.sha256(pcm.tobytes()).hexdigest().upper()
+        pcm_hash = hashlib.sha256(pcm.tobytes()).hexdigest()
         params = {
             **self.base_params,
             "render_context_key": self.render_context_key,

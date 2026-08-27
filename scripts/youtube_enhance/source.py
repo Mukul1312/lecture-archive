@@ -31,7 +31,7 @@ def sha256_file(path: Path, block_bytes: int = 1024 * 1024) -> str:
     with path.open("rb") as handle:
         while block := handle.read(block_bytes):
             digest.update(block)
-    return digest.hexdigest().upper()
+    return digest.hexdigest()
 
 
 def calculate_headroom_gain(peak: float) -> float:

@@ -112,7 +112,7 @@ def _require_approved_job(job_path: Path) -> tuple[dict[str, Any], Path, str]:
     source_path = Path(source_text)
     if not source_path.is_file():
         raise FileNotFoundError(f"job source is missing: {source_path}")
-    if sha256_file(source_path) != source_hash.upper():
+    if sha256_file(source_path) != source_hash.lower():
         raise RuntimeError("job source SHA-256 no longer matches its approved bytes")
 
     treatment = _require_mapping(job.get("treatment"), "job treatment")
@@ -132,7 +132,7 @@ def _require_approved_job(job_path: Path) -> tuple[dict[str, Any], Path, str]:
     formats = delivery.get("formats")
     if not isinstance(formats, list) or not {"flac_24bit", "mp3_192kbps"}.issubset(formats):
         raise RuntimeError("job delivery formats do not require 24-bit FLAC and 192 kbps MP3")
-    return job, source_path, source_hash.upper()
+    return job, source_path, source_hash.lower()
 
 
 def _model_hashes(model_directory: Path) -> dict[str, str]:

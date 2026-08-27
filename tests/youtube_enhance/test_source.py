@@ -24,7 +24,7 @@ class SourceTests(unittest.TestCase):
             path.write_bytes(b"lecture-source")
             self.assertEqual(
                 sha256_file(path),
-                hashlib.sha256(b"lecture-source").hexdigest().upper(),
+                hashlib.sha256(b"lecture-source").hexdigest(),
             )
 
     def test_headroom_gain_never_boosts(self):
@@ -112,7 +112,7 @@ class SourceTests(unittest.TestCase):
             self.skipTest("local immutable source is not present")
         self.assertEqual(
             sha256_file(source),
-            "262630088DCC07E4507C004A3E46FA4CAF430EEFC2D047509A0618AFAE43BF68",
+            "262630088dcc07e4507c004a3e46fa4caf430eefc2d047509a0618afae43bf68",
         )
 
 

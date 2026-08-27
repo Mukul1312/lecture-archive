@@ -99,7 +99,7 @@ class CliTests(unittest.TestCase):
         )
         argv = [
             "diagnose", "--source", "synthetic.webm", "--workspace", "synthetic-workspace",
-            "--expected-sha256", "A" * 64,
+            "--expected-sha256", "a" * 64,
         ]
         for failure in failures:
             with self.subTest(failure=type(failure).__name__), patch(
@@ -404,10 +404,13 @@ class CliTests(unittest.TestCase):
                 completion["provenance"]["preflight_space"],
                 committed["preflight_space"]["candidates"],
             )
-            for key in ("report_evidence_sha256", "blind_map_sha256"):
+            # Canonical-evidence hashes and physical file hashes were once
+            # recorded in opposite cases; both are lowercase now.
+            for key in (
+                "report_evidence_sha256", "blind_map_sha256",
+                "public_report_sha256", "completion_sha256", "private_map_sha256",
+            ):
                 self.assertRegex(committed["candidate_evidence"][key], r"^[0-9a-f]{64}$")
-            for key in ("public_report_sha256", "completion_sha256", "private_map_sha256"):
-                self.assertRegex(committed["candidate_evidence"][key], r"^[0-9A-F]{64}$")
 
             with patch(
                 "scripts.youtube_enhance.cli._verify_diagnose_state"
@@ -888,7 +891,7 @@ class CliTests(unittest.TestCase):
             previous["selection"] = {
                 "blind_code": "A", "candidate_id": "original", "pause_treatment": "original",
             }
-            previous["segment_map_sha256"] = "F" * 64
+            previous["segment_map_sha256"] = "f" * 64
             write_json_atomic(workspace / "manifest.json", previous)
 
             with patch(
@@ -1578,7 +1581,7 @@ class CliTests(unittest.TestCase):
                 "sample_rate": (True, 48000.0, "48000"),
                 "frames": (True, 8.0, "8"),
                 "path": (path, ""),
-                "sha256": (valid["sha256"].lower(), True),
+                "sha256": (valid["sha256"].upper(), True),
                 "subtype": (True, 32),
             }.items():
                 for value in values:
@@ -1751,11 +1754,11 @@ class Task8CarriedProofTests(unittest.TestCase):
 def _minimal_manifest():
     return {
         "schema_version": 1,
-        "source": {"sha256": "A" * 64, "decoded_samples": 8},
+        "source": {"sha256": "a" * 64, "decoded_samples": 8},
         "versions": {},
         "processing": {},
-        "segment_map_sha256": "B" * 64,
-        "candidate_report_sha256": "C" * 64,
+        "segment_map_sha256": "b" * 64,
+        "candidate_report_sha256": "c" * 64,
         "approval": None,
     }
 
@@ -1763,7 +1766,7 @@ def _minimal_manifest():
 def _fingerprinted_manifest():
     return {
         "schema_version": 1,
-        "source": {"sha256": "A" * 64, "decoded_samples": 8, "headroom_gain": 0.75},
+        "source": {"sha256": "a" * 64, "decoded_samples": 8, "headroom_gain": 0.75},
         "versions": {"python": "3.11", "deepfilternet": "0.5.6"},
         "processing": {
             "sample_rate": 48000,
@@ -1786,7 +1789,7 @@ def _fingerprinted_manifest():
             "public_report_sha256": "7" * 64,
             "completion_sha256": "8" * 64,
             "private_map_sha256": "9" * 64,
-            "blind_map_sha256": "A" * 64,
+            "blind_map_sha256": "a" * 64,
         },
         "segment_map_sha256": "3" * 64,
         "candidate_report_sha256": "7" * 64,
@@ -2054,7 +2057,7 @@ def _candidate_workspace(workspace: Path):
     })
     manifest = {
         "schema_version": 1,
-        "source": {"path": "source.webm", "sha256": "A" * 64, "decoded_samples": 40,
+        "source": {"path": "source.webm", "sha256": "a" * 64, "decoded_samples": 40,
                    "headroom_gain": 1.0, "bytes": 1, "probe": {}},
         "versions": {
             "deepfilternet": "0.5.6", "model": "DeepFilterNet3",

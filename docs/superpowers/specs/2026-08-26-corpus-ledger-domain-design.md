@@ -900,7 +900,11 @@ Enhancement is the more mature store, not the more expendable one.
 
 ## A6. What replaces §13
 
-**1. Merge `work/heritage-production-first-slice` into `main`.** The file sets
+> **Status 2026-08-27:** items 1, 2 and 3 are done — merge `1996607`, and the
+> digest normalisation described below. Items 4 and 5 remain.
+
+**1. Merge `work/heritage-production-first-slice` into `main`.** ✅ *Done —
+`1996607`.* The file sets
 are disjoint — `main` added only `ggsm_transcription`, the branch only
 `heritage_production`, and `youtube_enhance` is byte-identical on both. The
 only overlapping file is `.gitignore`, which must resolve toward `main`
@@ -909,11 +913,11 @@ plus the branch's one new line `.heritage-production/`. `pyproject.toml`
 arrives from the branch naming the whole repository `heritage-production`;
 rename it, since heritage is the shelved part.
 
-**2. Add `src/heritage_production/SHELVED.md`** pointing at §12 and its
+**2. Add `src/heritage_production/SHELVED.md`** ✅ *Done — `1996607`.* Pointing at §12 and its
 unfreeze triggers. In the tree, not only in `docs/` — a future session finding
 35,000 lines of dense DDD code will otherwise assume it is live.
 
-**3. Normalise all digests to lowercase.** Nine sites: `dfn.py:252`,
+**3. Normalise all digests to lowercase.** ✅ *Done 2026-08-27.* Nine sites: `dfn.py:252`,
 `legacy_guard.py:119`, `qa.py:350`, `qa.py:371`, `source.py:34`,
 `workflow_state.py:211,230,281,427`. Lowercase is already what
 `manifest.py::cache_key` and all three fingerprints produce, and what
@@ -925,6 +929,25 @@ Known costs, all acceptable:
 the DFN chunk cache invalidates (recomputable CPU work); the two archived
 approvals become non-recomputable, which they already are since their
 `source.path` values no longer resolve.
+
+*What the change actually touched, which was wider than the nine producer
+sites: the nine producers, plus every validator that required uppercase
+(`workflow_state._SHA256`, `legacy_guard.hash_external_artifacts`, two `qa.py`
+alphabet checks, and seven `[0-9A-F]{64}` patterns in `cli.py`), plus
+`local_d30.py`'s two authoritative constants. `cli._canonical_sha` lost its
+`lowercase` parameter — with one canonical form there is nothing to choose —
+and the `.casefold()` comparison at `cli.py:1219`, which existed only to bridge
+the two cases, became exact. Digests arriving from outside (`--expected-sha256`,
+a pre-fix `job.json`) are normalised with `.lower()` on the way in, matching
+`store.make_job_id`. `tests/youtube_enhance/test_digest_case.py` now fails the
+build if `.hexdigest().upper()` or `[0-9A-F]` reappears in the package, and
+asserts both stores hash the same bytes to the same identity.*
+
+*One documentation line is knowingly left stale:
+`docs/superpowers/specs/2026-08-22-persistent-lecture-audio-enhancement-skill-design.md`
+line 194 says the source tie-break sorts "by uppercase source SHA-256". Hex
+sorts identically in either case, so the ordering is unchanged and only the word
+is wrong; it is an approved design document and was not edited.*
 
 **4. Make the SSGGSM flow actually run.** Install the pinned `faster-whisper`,
 and reconcile `DEFAULT_ASR_CONFIGURATION` with the `initial_prompt` the real

@@ -27,7 +27,7 @@ JOBS_RELATIVE = Path("data/enhance/jobs")
 PROTECTED_RELATIVE = Path("data/enhance/youtube")
 
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-_SHA256 = re.compile(r"^[0-9A-F]{64}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _WINDOWS_FORBIDDEN = frozenset('<>:"\\|?*')
 _JOB_THREAD_LOCKS: dict[str, threading.Lock] = {}
 _JOB_THREAD_LOCKS_GUARD = threading.Lock()
@@ -208,7 +208,7 @@ def discover_canonical_repository(
         canonical_root=canonical_root,
         git_common_dir=git_common_dir,
         git_common_file_id=file_id,
-        identity_sha256=hashlib.sha256(identity_input).hexdigest().upper(),
+        identity_sha256=hashlib.sha256(identity_input).hexdigest(),
     )
 
 
@@ -227,7 +227,7 @@ def job_paths(repository: RepositoryIdentity, job_id: str) -> JobPaths:
     data_root = repository.canonical_root / JOBS_RELATIVE
     job_root = data_root / job_id
     normalized_job_root = _normalized_path_text(job_root)
-    lock_id = hashlib.sha256(normalized_job_root.encode("utf-8")).hexdigest().upper()
+    lock_id = hashlib.sha256(normalized_job_root.encode("utf-8")).hexdigest()
     return JobPaths(
         repository=repository,
         data_root=data_root,
@@ -278,7 +278,7 @@ def _validate_job_paths(paths: JobPaths) -> None:
         raise ValueError("job state path is not canonical")
     lock_id = hashlib.sha256(
         _normalized_path_text(paths.job_root).encode("utf-8")
-    ).hexdigest().upper()
+    ).hexdigest()
     expected_lock_file = paths.data_root / ".locks" / f"{lock_id}.lock"
     if _normalized_path_text(paths.lock_file) != _normalized_path_text(expected_lock_file):
         raise ValueError("job lock path is not canonical")
@@ -424,7 +424,7 @@ def _sha256_file(handle: BinaryIO) -> str:
     digest = hashlib.sha256()
     while block := handle.read(1024 * 1024):
         digest.update(block)
-    return digest.hexdigest().upper()
+    return digest.hexdigest()
 
 
 def _stable_filesystem_metadata(status: os.stat_result) -> tuple[int, ...]:
@@ -459,7 +459,7 @@ def validate_existing_artifact(paths: JobPaths, record: ArtifactRecord) -> Path:
     if (before.st_dev, before.st_ino) != record.file_id:
         raise ValueError("artifact file ID does not match its record")
     if not isinstance(record.sha256, str) or _SHA256.fullmatch(record.sha256) is None:
-        raise ValueError("artifact SHA-256 must be uppercase hexadecimal")
+        raise ValueError("artifact SHA-256 must be lowercase hexadecimal")
 
     try:
         with _open_artifact_handle(path) as handle:
