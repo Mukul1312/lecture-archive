@@ -1006,11 +1006,39 @@ long audio -- the same 21-minute clip run twice gave 196 vs 197 segments. The
 recorded configuration is reproducible; the transcript is not, so its digest
 seals one run rather than being a recomputable checksum.*
 
-**5. Consider the smallest possible Odia record.** Programme 1 runs via Sarvam
-outside this repository, so it has no provenance here at all — the largest gap
-in the portfolio. Perhaps 120 lines: source digest, model, date, output digest.
-No run key, no lifecycle, no lock layer. If it reaches fifty rows, the case for
+**5. Consider the smallest possible Odia record.** ✅ *Done 2026-08-27 — `f8a66b6`,
+`scripts/odia_transcript_index.py`, 165 lines. Smaller and differently shaped than proposed.*
+
+Programme 1 runs via Sarvam outside this repository, so it has no provenance here at all —
+the largest gap in the portfolio. Perhaps 120 lines: source digest, model, date, output
+digest. No run key, no lifecycle, no lock layer. If it reaches fifty rows, the case for
 three tables is made *from data* rather than asserted.
+
+*What the discussion changed. The premise was that programme 1 had no record. It has one —
+a spreadsheet the steward already maintains, holding lecture, URL, date and status. So model
+and date were dropped: the sheet already carries them, and duplicating a working system is
+how two records start disagreeing.*
+
+*What survived is the half a spreadsheet cannot compute. **Fingerprints**, for three
+failures a filename cannot catch: a transcript edited after it was audited (the sheet still
+reads "done" while the file is no longer the one approved); the same lecture transcribed
+twice under slightly different names, out of 1,357 near-identical ones; and a transcript that
+has stopped being valid UTF-8, which for a wholly non-ASCII script destroys the text
+silently. The script writes a CSV with two columns to paste in. **The sheet stays the
+authority; the script is a helper, and nothing breaks if it is never run again.***
+
+*The falsification test therefore never got its chance, and should not be revived. It asked
+whether fifty rows would justify three tables. The answer arrived from a different
+direction: the steward has a working tracker, the transcripts are read while the listener
+plays the audio so errors self-correct, and there is no contract requiring records of any
+kind. **Nothing here needs a lifecycle.** Asked directly whether even two columns and a
+script were too much machinery, he said to build it and "don't think about volunteers and
+machinery" — the instruction is worth keeping in view.*
+
+*Left open deliberately: **Sanskrit verse quotation.** ASR mangles quoted verses, and for
+publication they need marking and correcting against canonical text. That is editorial
+work, not a record-keeping problem, and folding it in here would have been the same mistake
+as building a lifecycle nobody asked for.*
 
 ## A7. Separate repository — not yet
 
