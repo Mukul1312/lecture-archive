@@ -191,7 +191,7 @@ The workflow has two mandatory human gates and one conditional human gate:
 1. **Source choice (conditional):** required whenever multiple sources have different
    decoded program hashes. A single source records `selection_kind: automatic_single`.
    Multiple sources may bypass the human gate only when their decoded program hashes
-   are identical; the runner then chooses deterministically by uppercase source SHA-256
+   are identical; the runner then chooses deterministically by lowercase source SHA-256
    and normalized path order and records `selection_kind: automatic_pcm_equivalent`.
    Both automatic cases advance to `source-ready` with comparison evidence and are not
    represented as human approval. Quality measurements may recommend a differing

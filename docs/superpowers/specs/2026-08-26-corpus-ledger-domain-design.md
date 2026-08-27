@@ -943,11 +943,14 @@ a pre-fix `job.json`) are normalised with `.lower()` on the way in, matching
 build if `.hexdigest().upper()` or `[0-9A-F]` reappears in the package, and
 asserts both stores hash the same bytes to the same identity.*
 
-*One documentation line is knowingly left stale:
+*One line in an approved design document was corrected with the steward's
+consent rather than left stale:
 `docs/superpowers/specs/2026-08-22-persistent-lecture-audio-enhancement-skill-design.md`
-line 194 says the source tie-break sorts "by uppercase source SHA-256". Hex
-sorts identically in either case, so the ordering is unchanged and only the word
-is wrong; it is an approved design document and was not edited.*
+line 193 described the source tie-break as sorting "by uppercase source
+SHA-256" and now says lowercase. Only the word changed — hex sorts identically
+in either case, so the tie-break's behaviour is unchanged, and the sentence
+describes a runner that does not exist yet. Recorded here because editing an
+approved design document is otherwise out of bounds.*
 
 **4. Make the SSGGSM flow actually run.** Install the pinned `faster-whisper`,
 and reconcile `DEFAULT_ASR_CONFIGURATION` with the `initial_prompt` the real
