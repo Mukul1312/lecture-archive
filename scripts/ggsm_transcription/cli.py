@@ -27,6 +27,7 @@ class CommandHandlers(Protocol):
     """Command-facing use cases; fakes exercise this boundary in unit tests."""
 
     def intake(self, url: str) -> dict[str, Any]: ...
+    def set_prompt(self, job_id: str, prompt: str) -> dict[str, Any]: ...
     def status(self, job_id: str) -> dict[str, Any]: ...
     def transcribe(self, job_id: str) -> dict[str, Any]: ...
     def inspect(self, job_id: str) -> dict[str, Any]: ...
@@ -56,6 +57,11 @@ class WorkflowCommands:
 
     def intake(self, url: str) -> dict[str, Any]:
         return IntakeService(self.store, self._source_adapter_factory()).intake(url)
+
+    def set_prompt(self, job_id: str, prompt: str) -> dict[str, Any]:
+        with self.store.transaction(job_id) as transaction:
+            transaction.set_initial_prompt(prompt)
+        return self.store.load_job(job_id)
 
     def status(self, job_id: str) -> dict[str, Any]:
         return self.store.load_job(job_id)
@@ -127,6 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
     intake = commands.add_parser("intake", help="Download and bind an HTTPS source by SHA-256.")
     intake.add_argument("--url", required=True, metavar="HTTPS-URL")
 
+    set_prompt = commands.add_parser(
+        "set-prompt",
+        help="Bind this lecture's ASR prompt before transcribing (verse, persons, terms).",
+    )
+    set_prompt.add_argument("--job", required=True, metavar="JOB-ID")
+    set_prompt.add_argument("--prompt", required=True, metavar="TEXT")
+
     for name, help_text in (
         ("status", "Read the current job state without changing it."),
         ("transcribe", "Create immutable full local ASR evidence."),
@@ -179,6 +192,8 @@ def _execute(arguments: argparse.Namespace, commands: CommandHandlers) -> dict[s
     command = arguments.command
     if command == "intake":
         return _state_payload(command, commands.intake(arguments.url))
+    if command == "set-prompt":
+        return _state_payload(command, commands.set_prompt(arguments.job, arguments.prompt))
     if command == "status":
         return _state_payload(command, commands.status(arguments.job))
     if command == "transcribe":

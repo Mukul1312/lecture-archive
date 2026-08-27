@@ -23,7 +23,26 @@ DEFAULT_ASR_CONFIGURATION: dict[str, object] = {
     "model": "small", "device": "cpu", "compute_type": "int8", "language": "en",
     "beam_size": 5, "word_timestamps": True, "vad_filter": False,
     "condition_on_previous_text": False,
+    # The base has no prompt. A full run substitutes the job's own; see
+    # job_configuration, which is the only supported way to vary this dict.
+    "initial_prompt": None,
 }
+# Every configuration key must reach exactly one destination. A key reaching none
+# would be written into metadata and never applied -- a recorded claim about a
+# parameter that did not run. _route_configuration refuses that rather than
+# dropping it, which is why adding a key here alone is not enough to use it.
+_SNAPSHOT_CONFIGURATION_KEYS = ("model",)
+_MODEL_CONSTRUCTION_KEYS = ("device", "compute_type")
+_TRANSCRIBE_CONFIGURATION_KEYS = (
+    "language", "beam_size", "word_timestamps", "vad_filter", "condition_on_previous_text",
+    "initial_prompt",
+)
+_ROUTED_CONFIGURATION_KEYS = frozenset(
+    _SNAPSHOT_CONFIGURATION_KEYS + _MODEL_CONSTRUCTION_KEYS + _TRANSCRIBE_CONFIGURATION_KEYS
+)
+# _snapshot resolves only the cached Systran small snapshot. Naming any other
+# model must fail here rather than load small and record something else.
+_SUPPORTED_MODEL_NAMES = frozenset({"small"})
 _REQUIRED_MEDIA_RUNTIME_KEYS = {"execution_mode", "ffmpeg", "ffprobe"}
 _LOCAL_EXECUTION_MODE = "local"
 _PINNED_FASTER_WHISPER_VERSION = "1.2.1"
@@ -68,6 +87,41 @@ def _command_version(command: str) -> str:
     return lines[0].strip() if lines and lines[0].strip() else "unknown"
 
 
+def _route_configuration(
+    configuration: object,
+) -> tuple[str, dict[str, object], dict[str, object]]:
+    """Split a configuration into the model name, constructor and call arguments.
+
+    The key set must match exactly. A key this adapter cannot apply is an error
+    rather than an omission, so recorded metadata can never describe a parameter
+    that was not passed to faster-whisper.
+    """
+    if not isinstance(configuration, dict):
+        raise JobValidationError("ASR configuration must be an object")
+    keys = set(configuration)
+    unroutable = sorted(keys - _ROUTED_CONFIGURATION_KEYS)
+    if unroutable:
+        raise JobValidationError(
+            "ASR configuration names parameters this adapter cannot apply: "
+            + ", ".join(unroutable)
+        )
+    missing = sorted(_ROUTED_CONFIGURATION_KEYS - keys)
+    if missing:
+        raise JobValidationError(
+            "ASR configuration is missing required parameters: " + ", ".join(missing)
+        )
+    model = configuration["model"]
+    if model not in _SUPPORTED_MODEL_NAMES:
+        raise JobValidationError(
+            f"ASR configuration names an unsupported local model: {model!r}"
+        )
+    return (
+        model,
+        {key: configuration[key] for key in _MODEL_CONSTRUCTION_KEYS},
+        {key: configuration[key] for key in _TRANSCRIBE_CONFIGURATION_KEYS},
+    )
+
+
 class LocalFasterWhisperAdapter:
     """Production adapter which resolves only a local cached small snapshot."""
 
@@ -106,15 +160,15 @@ class LocalFasterWhisperAdapter:
         }
 
     def transcribe(self, source_path: Path, configuration: dict[str, object]) -> list[dict[str, object]]:
+        _model_name, construction, transcription = _route_configuration(configuration)
         snapshot = self._snapshot()
         try:
             faster_whisper = self._import_module("faster_whisper")
         except ImportError as error:
             raise JobValidationError("faster-whisper is unavailable; activate .venv-transcribe before transcribing") from error
         try:
-            model = faster_whisper.WhisperModel(str(snapshot), device="cpu", compute_type="int8")
-            segments, _info = model.transcribe(str(source_path), language="en", beam_size=5, word_timestamps=True,
-                                              vad_filter=False, condition_on_previous_text=False)
+            model = faster_whisper.WhisperModel(str(snapshot), **construction)
+            segments, _info = model.transcribe(str(source_path), **transcription)
             return [_segment_to_record(index, segment) for index, segment in enumerate(segments)]
         except (OSError, RuntimeError) as error:
             raise JobValidationError("local faster-whisper backend failed during transcription") from error
@@ -376,8 +430,25 @@ def _matches_fixed_json_value(value: object, expected: object) -> bool:
     return False
 
 
-def _validate_fixed_configuration(configuration: object, label: str) -> None:
-    if not _matches_fixed_json_value(configuration, DEFAULT_ASR_CONFIGURATION):
+def job_configuration(state: dict[str, Any], *, span: bool) -> dict[str, object]:
+    """Return the only configuration this job may run for this kind of pass.
+
+    A full pass carries the lecture's own prompt. A span rerun deliberately drops
+    it: a prompt biases a short clip heavily toward its own vocabulary, which is
+    exactly wrong when re-reading the seconds ASR already failed to hear. Both
+    real 1985 gap passes recorded no prompt while their full passes carried one.
+
+    Because the result is derived rather than supplied, recorded provenance can
+    be checked against it exactly.
+    """
+    prompt = None if span else state.get("initial_prompt")
+    return {**DEFAULT_ASR_CONFIGURATION, "initial_prompt": prompt}
+
+
+def _validate_fixed_configuration(
+    configuration: object, label: str, state: dict[str, Any], *, span: bool
+) -> None:
+    if not _matches_fixed_json_value(configuration, job_configuration(state, span=span)):
         raise JobValidationError(f"{label} metadata does not use the fixed local configuration")
 
 
@@ -413,7 +484,7 @@ def _validate_full_metadata(metadata: dict[str, object], state: dict[str, Any], 
     if metadata.get("source_sha256") != state["source_sha256"]:
         raise ArtifactValidationError(f"{label} metadata is not source-bound")
     try:
-        _validate_fixed_configuration(metadata.get("configuration"), label)
+        _validate_fixed_configuration(metadata.get("configuration"), label, state, span=False)
         _validate_asr_provenance(metadata.get("runtime"))
     except JobValidationError as error:
         raise ArtifactValidationError(str(error)) from error
@@ -427,7 +498,7 @@ def _validate_rerun_metadata(
     try:
         metadata_start = _validate_canonical_span_value(metadata.get("start_seconds"), start, f"{label} metadata start")
         metadata_end = _validate_canonical_span_value(metadata.get("end_seconds"), end, f"{label} metadata end")
-        _validate_fixed_configuration(metadata.get("configuration"), label)
+        _validate_fixed_configuration(metadata.get("configuration"), label, state, span=True)
     except JobValidationError as error:
         raise ArtifactValidationError(f"{label} metadata has invalid rerun bounds") from error
     if (metadata.get("source_sha256") != state["source_sha256"]
@@ -786,15 +857,16 @@ class ASRService:
                 else:
                     if _has_existing_output(self.store, job_id, output_paths):
                         raise ArtifactValidationError("full ASR evidence exists without a recoverable source-bound intent")
+                    configuration = job_configuration(state, span=False)
                     records = _validate_sequence(
-                        self.model_adapter.transcribe(source, dict(DEFAULT_ASR_CONFIGURATION)), duration
+                        self.model_adapter.transcribe(source, dict(configuration)), duration
                     )
                     self.store.validate_source(job_id)
                     runtime = _validate_asr_provenance(self.model_adapter.runtime_metadata())
                     self.store.validate_source(job_id)
                     metadata = {
                         "source_sha256": state["source_sha256"],
-                        "configuration": dict(DEFAULT_ASR_CONFIGURATION),
+                        "configuration": dict(configuration),
                         "runtime": dict(runtime),
                     }
                     output_bytes = {
@@ -868,7 +940,8 @@ class ASRService:
                     if not temporary.is_file():
                         raise ArtifactValidationError("media adapter did not produce a requested span")
                     records = _validate_sequence(
-                        self.model_adapter.transcribe(temporary, dict(DEFAULT_ASR_CONFIGURATION)), end_value - start_value
+                        self.model_adapter.transcribe(temporary, job_configuration(state, span=True)),
+                        end_value - start_value,
                     )
                 finally:
                     try:
@@ -882,7 +955,7 @@ class ASRService:
                 self._validate_primary_asr_evidence(job_id, state)
                 metadata = {
                     "source_sha256": state["source_sha256"], "start_seconds": start_value, "end_seconds": end_value,
-                    "configuration": dict(DEFAULT_ASR_CONFIGURATION), "runtime": runtime, "media_runtime": media_runtime,
+                    "configuration": job_configuration(state, span=True), "runtime": runtime, "media_runtime": media_runtime,
                 }
                 output_bytes = {
                     output_relatives[0]: _jsonl(records).encode("utf-8"),

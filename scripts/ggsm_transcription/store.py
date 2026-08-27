@@ -225,6 +225,25 @@ class JobTransaction:
             self._state["source_url_aliases"].append(alias)
             self._dirty = True
 
+    def set_initial_prompt(self, prompt: str) -> None:
+        """Bind the per-lecture ASR prompt before any ASR evidence is produced.
+
+        The prompt names this lecture's verse, persons and terms so ASR spells
+        them the way the tradition does. It is lecture content, so it belongs to
+        the job rather than to a constant shared by every lecture. Rebinding it
+        after a run would leave recorded provenance describing a prompt the
+        transcript was not produced with, so evidence closes the window.
+        """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise JobValidationError("initial prompt must be a non-empty string")
+        if self._state.get("asr") is not None:
+            raise StageTransitionError("initial prompt cannot change once ASR evidence is bound")
+        if self._state["stage"] not in ("created", "source_ready"):
+            raise StageTransitionError("initial prompt requires a job that has not yet been transcribed")
+        if self._state["initial_prompt"] != prompt:
+            self._state["initial_prompt"] = prompt
+            self._dirty = True
+
     def record_asr_metadata(self, metadata: dict[str, Any]) -> None:
         """Bind immutable full-run provenance to the job with its evidence files."""
         if self._state["stage"] != "source_ready":
@@ -334,6 +353,8 @@ class JobStore:
             "stage": "created", "created_at": now, "updated_at": now,
             "stage_history": [{"stage": "created", "at": now}], "source": None,
             "source_url_aliases": [], "tool_versions": {}, "artifacts": {},
+            # Per-lecture ASR prompt. None until bound; see set_initial_prompt.
+            "initial_prompt": None,
         }
         # Keep failed construction under the already-ignored crash staging root.
         # Retention is safer than recursively deleting a tree that may have been
@@ -618,9 +639,12 @@ class JobStore:
     def _validate_manifest(self, state: object, expected_id: str) -> None:
         if not isinstance(state, dict):
             raise RepositoryHealthError("job manifest must be a JSON object")
-        required = {"schema_version", "revision", "job_id", "source_sha256", "stage", "created_at", "updated_at", "stage_history", "source", "source_url_aliases", "tool_versions", "artifacts"}
+        required = {"schema_version", "revision", "job_id", "source_sha256", "stage", "created_at", "updated_at", "stage_history", "source", "source_url_aliases", "tool_versions", "artifacts", "initial_prompt"}
         if not required.issubset(state) or state["schema_version"] != 1 or state["job_id"] != expected_id or not _is_sha256(state["source_sha256"]):
             raise RepositoryHealthError("job manifest identity/schema is invalid")
+        prompt = state["initial_prompt"]
+        if prompt is not None and (not isinstance(prompt, str) or not prompt.strip()):
+            raise RepositoryHealthError("job initial prompt must be absent or a non-empty string")
         if not isinstance(state["revision"], int) or isinstance(state["revision"], bool) or state["revision"] < 0 or state["stage"] not in (set(_NEXT_STAGE) | {"handed_off"}):
             raise RepositoryHealthError("job manifest revision or stage is invalid")
         if not all(isinstance(state[key], str) and state[key] for key in ("created_at", "updated_at")) or not isinstance(state["stage_history"], list) or not state["stage_history"]:

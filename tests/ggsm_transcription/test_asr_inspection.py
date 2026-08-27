@@ -217,6 +217,68 @@ class ASRContractTests(unittest.TestCase):
         self.store.validate_artifact(result["job_id"], "asr/full.jsonl")
         self.store.validate_artifact(result["job_id"], "asr/metadata.json")
 
+    LECTURE_PROMPT = "Śrīmad-Bhāgavatam 6.2.36–37, Śrīla Gour Govinda Swami Mahārāja, Ajāmila, Viṣṇudūtas"
+
+    def _bind_prompt(self, job_id: str, prompt: str) -> None:
+        with self.store.transaction(job_id) as transaction:
+            transaction.set_initial_prompt(prompt)
+
+    def test_full_run_uses_the_prompt_the_job_declares(self) -> None:
+        # Break caught: the fixed configuration could not express an initial_prompt
+        # at all, yet both real 1985 transcripts used one -- a per-lecture list of
+        # the verse, persons and terms whose spellings ASR would otherwise mangle.
+        # A prompt is lecture content, so it belongs to the job, not to a module
+        # constant shared by every lecture.
+        job_id = self.job["job_id"]
+        self._bind_prompt(job_id, self.LECTURE_PROMPT)
+
+        result = self.service.transcribe(job_id)
+
+        self.assertEqual(self.model.calls[0][1]["initial_prompt"], self.LECTURE_PROMPT)
+        metadata = json.loads((self.store.job_root(result["job_id"]) / "asr" / "metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["configuration"]["initial_prompt"], self.LECTURE_PROMPT)
+        self.assertEqual(self.store.load_job(job_id)["initial_prompt"], self.LECTURE_PROMPT)
+
+    def test_a_span_rerun_drops_the_prompt_the_full_run_used(self) -> None:
+        # Break caught: both real gap-filling passes recorded initial_prompt None
+        # while the full pass carried one. A prompt biases a short clip heavily
+        # toward its own vocabulary, which is exactly wrong when re-running the
+        # seconds ASR already failed to hear. The rule is fixed, not a free choice.
+        job_id = self.job["job_id"]
+        self._bind_prompt(job_id, self.LECTURE_PROMPT)
+        ready = self.service.transcribe(job_id)
+
+        self.service.rerun_span(ready["job_id"], 6, 9)
+
+        self.assertEqual(self.model.calls[0][1]["initial_prompt"], self.LECTURE_PROMPT)
+        self.assertIsNone(self.model.calls[-1][1]["initial_prompt"])
+
+    def test_a_prompt_cannot_be_bound_once_asr_evidence_exists(self) -> None:
+        # Break caught: rebinding after the run would leave recorded provenance
+        # describing a prompt the transcript was not produced with.
+        job_id = self.job["job_id"]
+        self.service.transcribe(job_id)
+
+        with self.assertRaises((StageTransitionError, JobValidationError)):
+            self._bind_prompt(job_id, self.LECTURE_PROMPT)
+
+    def test_recorded_metadata_must_carry_the_prompt_the_job_declares(self) -> None:
+        # Break caught: a candidate could otherwise attest any prompt, or none,
+        # regardless of what the job was bound to.
+        job_id = self.job["job_id"]
+        self._bind_prompt(job_id, self.LECTURE_PROMPT)
+
+        self._register_direct_full_asr_candidate(
+            job_id,
+            local_runtime_metadata(),
+            configuration={**DEFAULT_ASR_CONFIGURATION, "initial_prompt": "a different prompt"},
+        )
+
+        with self.assertRaises(ArtifactValidationError):
+            with self.store.transaction(job_id) as transaction:
+                transaction.complete_asr()
+        self.assertEqual(self.store.load_job(job_id)["stage"], "source_ready")
+
     def test_typed_asr_completion_rejects_explicitly_remote_or_unpinned_provenance(self) -> None:
         # Break caught: fixed decoder settings let a public typed transaction attest an explicitly remote or unpinned ASR run.
         cases = (
@@ -409,8 +471,76 @@ class ASRContractTests(unittest.TestCase):
         adapter = LocalFasterWhisperAdapter(snapshot_path=snapshot, module_importer=lambda name: Module())
         records = adapter.transcribe(Path("source.bin"), DEFAULT_ASR_CONFIGURATION)
         self.assertEqual(calls["construction"], (str(snapshot.resolve()), {"device": "cpu", "compute_type": "int8"}))
-        self.assertEqual(calls["transcription"], ("source.bin", {"language": "en", "beam_size": 5, "word_timestamps": True, "vad_filter": False, "condition_on_previous_text": False}))
+        self.assertEqual(calls["transcription"], ("source.bin", {"language": "en", "beam_size": 5, "word_timestamps": True, "vad_filter": False, "condition_on_previous_text": False, "initial_prompt": None}))
         self.assertEqual(records[0]["id"], 7)
+
+    def _recording_adapter(self, calls: dict[str, object]) -> LocalFasterWhisperAdapter:
+        snapshot = Path(self.tmp.name) / "recording-snapshot"
+        snapshot.mkdir(exist_ok=True)
+        (snapshot / "config.json").write_text("{}", encoding="utf-8")
+
+        class Segment:
+            id, start, end, text = 7, 1.0, 2.0, " A line."
+            avg_logprob = -0.1
+            words = []
+
+        class Model:
+            def __init__(self, path: str, **kwargs: object) -> None:
+                calls["construction"] = (path, kwargs)
+
+            def transcribe(self, path: str, **kwargs: object):
+                calls["transcription"] = (path, kwargs)
+                return iter([Segment()]), object()
+
+        class Module:
+            WhisperModel = Model
+
+        return LocalFasterWhisperAdapter(snapshot_path=snapshot, module_importer=lambda name: Module())
+
+    def test_local_adapter_executes_the_configuration_it_is_given(self) -> None:
+        # Break caught: the adapter hardcoded every argument and ignored the
+        # configuration entirely, so recorded provenance described values it did
+        # not control. Metadata that cannot lie is the whole point of recording it.
+        calls: dict[str, object] = {}
+        adapter = self._recording_adapter(calls)
+
+        adapter.transcribe(Path("source.bin"), {
+            **DEFAULT_ASR_CONFIGURATION,
+            "language": "fr", "beam_size": 1, "vad_filter": True, "compute_type": "float16",
+        })
+
+        self.assertEqual(calls["construction"][1], {"device": "cpu", "compute_type": "float16"})
+        self.assertEqual(calls["transcription"][1], {
+            "language": "fr", "beam_size": 1, "word_timestamps": True,
+            "vad_filter": True, "condition_on_previous_text": False,
+            "initial_prompt": None,
+        })
+
+    def test_local_adapter_refuses_a_configuration_key_it_cannot_route(self) -> None:
+        # Break caught: a key named here but not routed would be written into
+        # metadata and silently dropped from the call -- a recorded claim about a
+        # parameter that was never applied. This is exactly how initial_prompt
+        # would have been added had the routing not been made total first; the
+        # example below is a real faster-whisper parameter this adapter does not
+        # pass, so naming it must fail rather than become a lie that validates.
+        calls: dict[str, object] = {}
+        adapter = self._recording_adapter(calls)
+
+        with self.assertRaises(JobValidationError):
+            adapter.transcribe(Path("source.bin"), {**DEFAULT_ASR_CONFIGURATION, "temperature": 0.4})
+        self.assertNotIn("transcription", calls)
+
+    def test_local_adapter_requires_every_configuration_key(self) -> None:
+        # Break caught: a missing key would otherwise fall back to faster-whisper's
+        # own default, which the metadata would not record at all.
+        calls: dict[str, object] = {}
+        adapter = self._recording_adapter(calls)
+        incomplete = dict(DEFAULT_ASR_CONFIGURATION)
+        del incomplete["beam_size"]
+
+        with self.assertRaises(JobValidationError):
+            adapter.transcribe(Path("source.bin"), incomplete)
+        self.assertNotIn("transcription", calls)
 
     def test_changed_source_is_rejected_before_full_asr_evidence_is_written(self) -> None:
         # Break caught: ASR evidence could otherwise attest a file other than the hash-bound recording.

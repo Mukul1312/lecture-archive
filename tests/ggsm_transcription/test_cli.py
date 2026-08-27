@@ -13,7 +13,7 @@ import unittest
 from urllib.error import URLError
 
 from scripts.ggsm_transcription import cli
-from scripts.ggsm_transcription.asr import LocalFasterWhisperAdapter
+from scripts.ggsm_transcription.asr import DEFAULT_ASR_CONFIGURATION, LocalFasterWhisperAdapter
 from scripts.ggsm_transcription.intake import HttpsFfprobeSourceAdapter, IntakeService, SourceDownload
 from scripts.ggsm_transcription.store import JobStore, JobValidationError
 
@@ -454,5 +454,8 @@ class CliExternalFailureContractTests(unittest.TestCase):
         (snapshot / "config.json").write_text("{}", encoding="utf-8")
         adapter = LocalFasterWhisperAdapter(snapshot_path=snapshot, module_importer=lambda _name: ProgrammerFailure)
 
+        # A real configuration, not {}: the adapter now routes what it is given,
+        # so an empty mapping is refused before faster-whisper is ever reached.
+        # The point of this test is the TypeError, which must still surface.
         with self.assertRaisesRegex(TypeError, "unexpected adapter contract"):
-            adapter.transcribe(Path(self.tmp.name) / "source.bin", {})
+            adapter.transcribe(Path(self.tmp.name) / "source.bin", DEFAULT_ASR_CONFIGURATION)
