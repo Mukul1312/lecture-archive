@@ -217,6 +217,64 @@ class ASRContractTests(unittest.TestCase):
         self.store.validate_artifact(result["job_id"], "asr/full.jsonl")
         self.store.validate_artifact(result["job_id"], "asr/metadata.json")
 
+    def test_word_timestamps_may_overhang_their_segment_slightly(self) -> None:
+        # Break caught: word timestamps come from a separate DTW alignment pass
+        # than segment boundaries, so faster-whisper routinely places a word a
+        # few hundred milliseconds outside its segment. Requiring strict
+        # containment rejected the second real lecture outright -- and would
+        # reject both hand-made 1985 transcripts this project already treats as
+        # good: 9 violations in 8,985 words (max 0.44s) for 1985-08-21, and
+        # 10 in 4,422 (max 0.38s) for 1985-08-08. The tolerance is measured from
+        # those two corpora, not chosen; see _WORD_BOUND_TOLERANCE_SECONDS.
+        def record(word_start: float, word_end: float) -> dict[str, object]:
+            return {"id": 0, "start": 10.0, "end": 12.0, "text": " a word.",
+                    "words": [{"start": word_start, "end": word_end, "word": " a"}]}
+
+        # Real overhang, both directions, at the largest magnitude observed.
+        asr_module._validate_record(record(9.56, 11.0))
+        asr_module._validate_record(record(10.5, 12.44))
+
+        for name, args in (
+            ("word far before segment", (2.0, 11.0)),
+            ("word far after segment", (10.5, 20.0)),
+            ("word ends before it starts", (11.5, 11.0)),
+            ("negative word start", (-0.5, 11.0)),
+        ):
+            with self.subTest(case=name), self.assertRaises(JobValidationError):
+                asr_module._validate_record(record(*args))
+
+    def test_adapter_converts_library_float_subclasses_to_json_native_numbers(self) -> None:
+        # Break caught: faster-whisper 1.2.1 returns numpy.float64 for segment and
+        # word bounds. numpy.float64 is a float *subclass*, so it passes isinstance
+        # but fails the exact-type checks that guard persisted evidence -- and the
+        # first real transcription of a real lecture died on "ASR segment start
+        # must be a finite number" after 130 tests using fake adapters had passed.
+        # A library type must not escape the adapter that translates it.
+        class LibraryFloat(float):
+            """Stands in for numpy.float64: a float subclass whose type() is not float."""
+
+        class Word:
+            start, end = LibraryFloat(0.0), LibraryFloat(0.5)
+            word, probability = " Today", LibraryFloat(0.9)
+
+        class Segment:
+            id, text = 0, " Today it is."
+            start, end = LibraryFloat(0.0), LibraryFloat(1.0)
+            avg_logprob, compression_ratio = LibraryFloat(-0.5), LibraryFloat(1.4)
+            no_speech_prob = LibraryFloat(0.2)
+            words = [Word()]
+
+        record = asr_module._segment_to_record(0, Segment())
+
+        for field in ("start", "end", "avg_logprob", "compression_ratio", "no_speech_prob"):
+            with self.subTest(field=field):
+                self.assertIs(type(record[field]), float)
+        for field in ("start", "end", "probability"):
+            with self.subTest(word_field=field):
+                self.assertIs(type(record["words"][0][field]), float)
+        # The record must now survive the validation that rejected the real run.
+        asr_module._validate_record(record)
+
     LECTURE_PROMPT = "Śrīmad-Bhāgavatam 6.2.36–37, Śrīla Gour Govinda Swami Mahārāja, Ajāmila, Viṣṇudūtas"
 
     def _bind_prompt(self, job_id: str, prompt: str) -> None:

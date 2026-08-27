@@ -8,6 +8,7 @@ import importlib
 import importlib.metadata
 import json
 import math
+import numbers
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
@@ -43,6 +44,14 @@ _ROUTED_CONFIGURATION_KEYS = frozenset(
 # _snapshot resolves only the cached Systran small snapshot. Naming any other
 # model must fail here rather than load small and record something else.
 _SUPPORTED_MODEL_NAMES = frozenset({"small"})
+# Word timestamps are produced by a separate DTW alignment pass than segment
+# boundaries, so faster-whisper routinely places a word slightly outside the
+# segment that contains it. Measured across both hand-made 1985 transcripts --
+# 13,407 words in total -- the largest overhang is 0.44s (1985-08-21 segment
+# 425). One second is roughly twice that: loose enough to accept every real
+# observation, tight enough that a grossly misplaced word is still rejected.
+# Raise this only against new measurements, never to make a run pass.
+_WORD_BOUND_TOLERANCE_SECONDS = 1.0
 _REQUIRED_MEDIA_RUNTIME_KEYS = {"execution_mode", "ffmpeg", "ffprobe"}
 _LOCAL_EXECUTION_MODE = "local"
 _PINNED_FASTER_WHISPER_VERSION = "1.2.1"
@@ -193,16 +202,37 @@ class FfmpegMediaAdapter:
         }
 
 
+def _json_native(value: object) -> object:
+    """Convert a library-native real number to a JSON-native int or float.
+
+    faster-whisper returns ``numpy.float64`` for segment and word bounds. Those
+    are ``float`` *subclasses*, so they satisfy ``isinstance`` but fail the exact
+    ``type()`` checks in ``_json_integer`` and ``_finite_number`` -- correctly,
+    because a numpy scalar is not a JSON number and must never reach persisted
+    evidence. Converting here, at the boundary that translates library objects
+    into records, keeps that strictness intact everywhere downstream.
+
+    Anything that is not a real number is returned untouched so that validation
+    still rejects it. ``bool`` is excluded because it is a subclass of ``int``
+    and the validators reject it deliberately.
+    """
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return value
+    return int(value) if isinstance(value, numbers.Integral) else float(value)
+
+
 def _segment_to_record(index: int, segment: Any) -> dict[str, object]:
-    record: dict[str, object] = {"id": getattr(segment, "id", index), "start": getattr(segment, "start", None),
-                                 "end": getattr(segment, "end", None), "text": getattr(segment, "text", None)}
+    record: dict[str, object] = {"id": _json_native(getattr(segment, "id", index)),
+                                 "start": _json_native(getattr(segment, "start", None)),
+                                 "end": _json_native(getattr(segment, "end", None)),
+                                 "text": getattr(segment, "text", None)}
     for name in ("avg_logprob", "compression_ratio", "no_speech_prob"):
         value = getattr(segment, name, None)
         if value is not None:
-            record[name] = value
+            record[name] = _json_native(value)
     words = getattr(segment, "words", None)
     if words is not None:
-        record["words"] = [{key: getattr(word, key) for key in ("start", "end", "word", "probability") if getattr(word, key, None) is not None} for word in words]
+        record["words"] = [{key: _json_native(getattr(word, key)) for key in ("start", "end", "word", "probability") if getattr(word, key, None) is not None} for word in words]
     return record
 
 
@@ -361,7 +391,9 @@ def _validate_record(record: object, previous_start: float | None = None) -> dic
             if not isinstance(word, dict) or not isinstance(word.get("word"), str):
                 raise JobValidationError("raw ASR word timestamp is malformed")
             word_start, word_end = _finite_number(word.get("start"), "word start"), _finite_number(word.get("end"), "word end")
-            if word_start < start or word_end < word_start or word_end > end:
+            if (word_start < 0 or word_end < word_start
+                    or word_start < start - _WORD_BOUND_TOLERANCE_SECONDS
+                    or word_end > end + _WORD_BOUND_TOLERANCE_SECONDS):
                 raise JobValidationError("raw ASR word timestamp is outside its segment")
             if "probability" in word:
                 _finite_number(word["probability"], "word probability")
