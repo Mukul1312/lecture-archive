@@ -35,6 +35,7 @@ recorded explicitly in [00-scope-and-method.md](00-scope-and-method.md).
 | [07-cloudflare-and-the-provider-matrix.md](07-cloudflare-and-the-provider-matrix.md) | Cloudflare as a third provider; R2 vs S3; the provisional 12-category provider matrix |
 | [06-decisions-and-open-questions.md](06-decisions-and-open-questions.md) | What has been decided, what is open, what must be measured |
 | [evidence/price-snapshot-2026-08-24.md](evidence/price-snapshot-2026-08-24.md) | Every external number with its source and retrieval date |
+| [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md) | **The hosted ASR tier, verified.** Corrects doc 05's $3.02/audio-hour to $0.73–$1.03 |
 
 Read 00 and 01 first. Categories 02–05 can be read independently.
 
@@ -55,6 +56,7 @@ Read 00 and 01 first. Categories 02–05 can be read independently.
 | D10 | Cloudflare is a storage/delivery/access layer, **not** a compute platform — it complements rather than replaces the GPU decision | High | 07 |
 | D11 | Cloudflare Access is the clearest functional fix available for category 9, and is free at this scale | Medium-high | 07 |
 | D12 | R2's S3-compatible API means the storage decision need not be a learning sacrifice — the SDK skill transfers | High | 07 |
+| D14 | **The API tier costs $0.73–$1.03 per audio-hour, not $3.02.** Doc 05's derived figure is 3–4x high; the corpus prices at $1,430–$2,010, and the bid's ~$6,000 compute line is what now needs rebuilding | High | evidence/api-tier-pricing-2026-08-27 |
 
 ---
 

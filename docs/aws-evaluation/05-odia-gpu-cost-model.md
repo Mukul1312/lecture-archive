@@ -96,6 +96,20 @@ move the commercial outcome and should not consume analytical effort.
 
 ## 6. Where the compute money actually is
 
+> **Corrected 2026-08-27.** The $3.02 figure below was verified against list prices and is
+> **overstated by roughly 3–4x**. The measured total is **$0.73–$1.03 per audio-hour**
+> ($1,430–$2,010 for the corpus), against $3.02 ($5,900) here. Azure batch is $0.18/hr, not
+> the $0.36 its own blog still advertises; Sarvam bundles Odia→English translation free at
+> ₹30/hr; ElevenLabs Scribe v2 batch is $0.22/hr. Since $3.02 was obtained by subtracting the
+> GPU estimate from the bid document's ~$6,000 compute line, **the discrepancy is most likely
+> in that $6,000 figure**, which remains unrebuilt. Full working, sources and sensitivity:
+> [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
+>
+> **The original reasoning is left intact below.** Its structural conclusion — that the API
+> tier dominates compute and GPU choice does not — is *strengthened*, not weakened: at
+> $0.73–$1.03 per audio-hour the API tier is still ~93–95% of a corrected compute line, and
+> GPU is still a rounding error.
+
 If GPU is on the order of $100 and the total compute line is ~$6,000, then approximately
 **$5,900 — about $3.02 per audio-hour — is Azure `or-IN` + Sarvam `od-IN` + ElevenLabs Scribe
 + LLM reconciliation.**
@@ -148,5 +162,8 @@ simplifies the infrastructure.
 - The $6k compute figure comes from the bid document and has not been independently rebuilt
   here; the $3.02/audio-hour API figure is derived from it by subtraction and should be
   verified directly against Azure, Sarvam and ElevenLabs list pricing before use in a quote.
+  **Done 2026-08-27** — see [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
+  The API tier prices at **$0.73–$1.03/audio-hour**, so the $3.02 is 3–4x high and the
+  ~$6,000 bid line is now the figure that needs rebuilding.
 - This model covers **transcription inference only**. Enhancement of the same corpus is
   costed separately in [02](02-category-01-local-cpu-compute.md) at roughly $69–92.

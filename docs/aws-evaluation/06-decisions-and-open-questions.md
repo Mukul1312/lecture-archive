@@ -22,6 +22,7 @@ comparison in [07](07-cloudflare-and-the-provider-matrix.md).
 | D11 | **Cloudflare Access** is the clearest functional fix for category 9 and is free at this scale (50 users, email OTP, no gallery code changes) | Cloudflare Zero Trust plans | Medium-high |
 | D12 | **R2's S3-compatible API** means the storage choice is not a learning sacrifice — the boto3/S3 skill transfers, only `endpoint_url` changes | Cloudflare R2 docs | High |
 | D13 | Storage cost, like GPU cost, **cannot decide this** — the total annual spread across all options is under $15 at current data volumes | Doc 07 §6 | High |
+| D14 | **The API tier is $0.73–$1.03 per audio-hour, not $3.02** — doc 05's derived figure is 3–4x high, so the corpus prices at $1,430–$2,010 rather than $5,900. Structurally this *strengthens* D7: the API tier still dominates and GPU is still a rounding error | [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md), verified against list prices | High |
 
 ---
 
@@ -62,8 +63,14 @@ The entire GPU case is prospective and rests on this. If the bid is not pursued,
 - **Q6.** Is the 19 GB per-job working set worth persisting at all, or should it be treated as
   fully disposable? This is the central design tension between resumability and storage cost,
   and it drives categories 5 and 12.
-- **Q7.** What do Azure `or-IN`, Sarvam `od-IN` and ElevenLabs Scribe actually cost per
-  audio-hour? This is ~98% of compute spend and has not been independently priced.
+- **Q7. Answered 2026-08-27.** Azure `S1 Speech to Text Batch` $0.18/hr, Sarvam STT+Translate
+  ₹30/hr ($0.31), ElevenLabs Scribe v2 batch $0.22/hr — **$0.73–$1.03 per audio-hour with LLM
+  reconciliation**, against the $3.02 doc 05 derived. See
+  [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
+  **Two questions replace it:** (a) Sarvam's own pages disagree by 2.5x (₹30/hr in the
+  developer table, ₹1.25/min on the Odia product page) and only Sarvam can settle it; (b) the
+  bid document's ~$6,000 compute line is now the unrebuilt figure, since $3.02 was obtained by
+  subtracting from it.
 - **Q8.** Does serverless GPU (Modal, RunPod Serverless, fal) fit the bursty sweep pattern
   better than a rented instance? Flagged, not analysed.
 - **Q9.** Is there an existing Cloudflare account or DNS zone from the earlier projects? An
