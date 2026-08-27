@@ -4,6 +4,36 @@
 **Prepared:** 2026-07-25 · FX 1 USD = 96.72 INR · figures exclusive of GST.
 **Status:** pre-bid. Not yet signed — the client wants a cost estimate first.
 
+> **SUPERSEDED IN PREMISE, 2026-08-27.** There is no client and no commercial transaction.
+> Programme 1 is **volunteer seva**: the transcripts are handed to a senior devotee, and the
+> people who review them are unpaid volunteers. The steward describes this document as *"a
+> basic document"*.
+>
+> **What no longer applies:** the three tiers ($215k / $510k / $940k), the per-audio-hour
+> tariffs, the renegotiation collar on M, the WER acceptance annex, the walk-away rights, and
+> the eight contract traps in section 6. All of it is machinery for a contract that does not
+> exist. M itself is downgraded — with unpaid reviewers it drives *schedule*, not cost, and
+> the schedule may stretch.
+>
+> **What still stands, and is worth keeping:**
+> - The **measured corpus** — 1,357 Oriya files, 1,952 audio-hours, enumerated and ffprobe'd
+>   rather than taken from the client's estimate. Still the only hard number in the project.
+> - **Whisper cannot transcribe Odia** (no `or` token, 125.6% WER). IndicConformer, Sarvam
+>   `od-IN`, Azure `or-IN` and ElevenLabs Scribe `ori` can.
+> - The **Unicode normalisation warning** in section 6.5 — that ~32% of raw Odia "errors" are
+>   encoding artifacts. With no WER clause to argue over, this is now a straightforward
+>   data-integrity risk, and the live one.
+>
+> **The real cost, measured from an invoice rather than estimated:** Sarvam bills ₹30/hour
+> without diarization, so the entire 1,952-hour corpus transcribes for **₹58,560 (~$613)**.
+> Section 2's "~$6k, about 1% of the bid" was an order of magnitude high, which mattered to
+> nobody. Working: `docs/aws-evaluation/evidence/api-tier-pricing-2026-08-27.md`.
+>
+> **The standard, settled 2026-08-27:** devotees read the transcript *while listening to the
+> lecture*. The audio is always present, so timestamp accuracy matters more than word
+> accuracy, and a light Odia read-through is the matched review — not the audio-verified pass
+> the tiers were priced around.
+
 > **One-line recommendation.** Do **not** quote a fixed price on audio nobody has transcribed yet.
 > Bid a **~$42k / 14-week paid pilot** (≈$28k credited back to production), which *measures* the one
 > number that drives 40–70% of the cost. Offer **Tier 1 (machine archive) at ~$215k** as the only thing

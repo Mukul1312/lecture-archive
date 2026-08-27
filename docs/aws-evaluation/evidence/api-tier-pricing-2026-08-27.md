@@ -85,7 +85,9 @@ ASR engines, which is reasonable, but it cannot account for the gap.
 
 ---
 
-## 4. Sarvam contradicts itself by 2.5x — the one open uncertainty
+## 4. Sarvam's 2.5x contradiction — **SETTLED by invoice, 2026-08-27**
+
+Three Sarvam pages disagreed:
 
 | Source | Rate | Per hour |
 |---|---|---:|
@@ -93,17 +95,43 @@ ASR engines, which is reasonable, but it cannot account for the gap.
 | `sarvam.ai/apis/speech-to-text/odia` — product page, "Base plan" | ₹1.25/minute | **₹75** |
 | `sarvam.ai/speech-to-text` — product page | ₹1.5/minute | **₹90** |
 
-**₹30/hour is used here**, on the grounds that the developer pricing table is what governs
-API billing and the product pages are marketing surfaces. **This is a judgement, not a
-verified fact, and it is the only material uncertainty left in this document.** One email to
-Sarvam settles it.
+This was recorded as the one material uncertainty here, needing an email to Sarvam. **No
+email was needed.** The steward had already run a real lecture through the console, and the
+dashboard billed it:
 
-Sensitivity: at ₹75/hour the three-engine total becomes **$1.18/audio-hour** and the corpus
-**$2,300** — still under half of doc 05's figure. **The conclusion survives either reading.**
+> **₹38 for 51.4 minutes** of Saaras v3 Odia speech-to-text.
 
-**Sarvam bundles translation at no extra charge.** "Speech to Text" and "Speech to Text +
-Translate" are both ₹30/hour; only diarization moves the price (₹45). The Odia → English
-requirement is therefore free on this engine. Doc 05 does not appear to account for this.
+₹38 ÷ 0.857 h = **₹44.36/hour**. Checked forward: 3,084 s ÷ 3600 × ₹45 = **₹38.55**. At
+₹30/hour the same audio would have cost ₹25.70; at ₹75/hour, ₹64.
+
+So the billed rate is **₹45/hour — the diarization tier** — and the transcript confirms it,
+carrying `Speaker 1` / `Speaker 2` labels throughout. **The developer table is correct; the
+per-minute product-page figures are not what gets billed.**
+
+**Rates as they appear on the steward's own dashboard**, which is the authority here:
+
+| Service | Rate |
+|---|---|
+| Speech to text — real-time / streaming / batch | **₹30/hour** |
+| Speech to text with diarization — batch | **₹45/hour** |
+| Translate & transliterate | ₹2.00 / 1,000 characters |
+| Sarvam 105B | ₹29.28 / ₹10.98 / ₹73.20 per 1M tokens |
+
+Two corrections this forces. **The dashboard carries no "Speech to Text & Translate" line
+at all** — that product appears only in the API docs, so the earlier claim that translation
+comes bundled free could not be exercised from this account. And **translating the corpus
+through Sarvam would cost more than transcribing it**: at ₹2 per 1,000 characters and
+roughly 32,000 Odia characters per audio-hour, 1,952 hours is about ₹125,000 against
+₹58,560 for the transcription. The steward translates with Claude instead, at no marginal
+cost.
+
+**A paid invoice beats a vendor's website.** The lesson outlasts the number: one lecture
+actually run settled in minutes what three contradictory pages could not, and the research
+that produced those three pages was mine.
+
+**Diarization is being dropped** (2026-08-27). The speaker labels split a single lecturer's
+speech more often than they identify a second voice. That takes the corpus from ₹87,840 to
+**₹58,560 (~$613)** and yields cleaner text.
 
 ---
 
@@ -114,28 +142,49 @@ requirement is therefore free on this engine. Doc 05 does not appear to account 
 | Doc 05 §6, derived by subtraction from the bid's ~$6,000 compute line | $3.02 | **$5,900** |
 | **Verified from list prices** | **$0.73 – $1.03** | **$1,430 – $2,010** |
 | Sarvam at the ₹75 product-page rate instead | $1.18 | $2,300 |
-| Sarvam alone, if the pilot retires drafts 2 and 3 | $0.31 | **$613** |
+| Sarvam alone, no diarization — **the actual plan** | **$0.31** | **$613** |
 
-**The compute line is overstated by roughly $4,000.**
+**The compute line was overstated by roughly $4,000 — but it never mattered.** See the scope
+correction below: there is no contract, so no figure here decides anything.
 
-> **Scope correction, added after reading the bid document.** This verification
-> was undertaken on the belief that $3.02 sat in a submitted bid. It does not.
-> `docs/odia-transcription-bid-estimate-2026-07-25.md` is **pre-bid** -- *"Not yet
-> signed -- the client wants a cost estimate first"* -- and its section 2 already
-> states *"Compute is a rounding error. GPU + API + LLM for the entire 1,952-hour
-> corpus is ~$6k -- about 1% of the bid."* Correcting $5,900 to ~$1,800 moves
-> compute from 1% of the bid to about 0.3%. **It confirms a claim the estimate
-> already made, and changes no decision.**
+### 5a. What actually constrains programme 1
+
+Not money. **1,357 Oriya lectures at one per day is 3.7 years**, and Sarvam could process all
+1,952 hours this month for ₹58,560. The corpus finishes when volunteers finish reading it, or
+it finishes immediately if nobody has to.
+
+The steward settled the standard on 2026-08-27: **devotees will read the transcript while
+listening to the lecture.** That is decisive, because the reader always has the audio —
+they hear the right word and see a wrong one, and carry on. Two consequences:
+
+- **Timestamp accuracy matters more than word accuracy.** Following along breaks if timing
+  drifts; it survives a mistranscribed word.
+- **Audio-verified review is the wrong bar.** That is the standard for the GGSM Listening
+  draft, which stands alone as a text. Here a light Odia read-through — catching nonsense,
+  not checking against audio — is the matched level of effort, and the steward's senior
+  reads Odia.
+
+> **Scope correction, twice revised.** This verification was undertaken believing $3.02 sat
+> in a submitted bid. Reading `docs/odia-transcription-bid-estimate-2026-07-25.md` showed it
+> was **pre-bid** — *"Not yet signed"* — and that its section 2 already called compute *"a
+> rounding error … about 1% of the bid"*. The steward then corrected the premise entirely:
 >
-> The number that decides this contract is **M, human work-hours per audio-hour**:
-> credible range **5.5 to 36**, driving 40-70% of cost, adopted at 11.5 and flagged
-> by the estimate itself as *"the number the pilot must measure."* Against a $215k
-> Tier 1, moving M by one point outweighs every API question in this document
-> combined. The Sarvam ambiguity in section 4 is worth about $920, or 0.4%.
+> > **There is no client and no money.** Programme 1 is volunteer seva. The transcripts are
+> > handed to a senior devotee; the "bid document" was a basic costing exercise, and the
+> > people who will review the output are volunteers who are not paid.
 >
-> The pricing below stands and is correct. It is simply worth much less than the
-> effort implied, and this note exists so nobody repeats the mistake of optimising
-> the rounding error.
+> So the tier pricing ($215k / $510k / $940k), the renegotiation collar, the WER acceptance
+> annex and the walk-away rights all describe machinery for a contract that does not exist.
+> **M — human work-hours per audio-hour — stops being a cost driver and becomes a schedule
+> input**, and the steward has said the schedule may stretch.
+>
+> What survives the correction: the measured corpus (1,952 h, ffprobe'd), the engine finding
+> that Whisper cannot transcribe Odia at all while IndicConformer and Sarvam can, and the
+> Unicode normalisation warning — which is now the live risk rather than a contract clause.
+>
+> **The real figure is ₹58,560 (~$613) for all 1,952 hours** at ₹30/hour without diarization.
+> Small enough that it should shape no decision at all. The only real constraint is how much
+> volunteer attention the output has to pass through — see section 5a.
 
 **The error is in the bid's favour** — margin is better than modelled, not worse. But an
 inflated cost line can lose a bid on price, so it is worth correcting in either direction.

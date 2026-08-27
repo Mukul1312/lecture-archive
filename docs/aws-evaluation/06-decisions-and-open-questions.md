@@ -47,26 +47,30 @@ analysed without knowing whether that decision is open for reconsideration or fi
 **Recommendation:** treat it as fixed unless consciously reversed. Drifting past an approved
 architectural decision is exactly the failure mode the DDD work was undertaken to prevent.
 
-### Q3. Is the Odia bid live? — **Answered 2026-08-27: yes, but pre-bid.**
+### Q3. Is the Odia bid live? — **Answered 2026-08-27: there is no bid.**
 
-`docs/odia-transcription-bid-estimate-2026-07-25.md` exists and is explicit: *“pre-bid. Not
-yet signed — the client wants a cost estimate first.”* Programme 1 also runs **today** via
-Sarvam, a hosted API, outside this repository.
+First answer: the estimate exists but is pre-bid, *"Not yet signed"*. The steward then
+corrected the premise outright — **programme 1 is volunteer seva.** No client, no money, no
+transaction. Transcripts are handed to a senior devotee; reviewers are unpaid volunteers.
+The estimate was, in his words, *"a basic document"*.
 
-**This does not reopen categories 2–3.** The work runs on a bought API, not on GPU anyone
-rents, so there is still no GPU workload — which strengthens D4 rather than challenging it.
+**This does not reopen categories 2–3.** The work runs today on Sarvam, a hosted API, not on
+GPU anyone rents — so there is still no GPU workload, which strengthens D4 rather than
+challenging it. It also removes any commercial reason to optimise anything in this folder.
 
-### Q12. What is M, human work-hours per audio-hour? — **the question that matters**
+### Q12. What is M, human work-hours per audio-hour? — **downgraded 2026-08-27**
 
-The bid estimate names it as the dominant driver: credible range **5.5 to 36, a 6.5x
-spread**, driving 40–70% of cost. Three cost models guessed 5.5 / 7.0 / 11.5; three red-team
-reviews judged those low and converged on 11–15. The estimate adopts **11.5** and flags it as
-*“the number the pilot must measure.”*
+Briefly recorded here as the question that mattered, on the reasoning that one point of M
+outweighed every infrastructure question in this folder against a $215k contract.
 
-Against a $215k Tier 1, one point of M outweighs every infrastructure question in this
-folder combined. **It cannot be researched — it needs the pilot, real Odia audio and a
-human transcriber.** Recorded here so the folder does not mistake its own scope for the
-project's priorities.
+**With no contract, M stops being a cost driver and becomes a schedule input.** Volunteers
+are unpaid, so a higher M costs time rather than money, and the steward has said the
+schedule may stretch. Measuring it is no longer worth a pilot.
+
+What replaced it is a standard, not a number: devotees will read the transcript **while
+listening to the lecture**, so a light Odia read-through is the matched level of review and
+audio-verified checking is over-engineering. See section 5a of
+[evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
 
 ---
 
@@ -83,11 +87,12 @@ project's priorities.
   ₹30/hr ($0.31), ElevenLabs Scribe v2 batch $0.22/hr — **$0.73–$1.03 per audio-hour with LLM
   reconciliation**, against the $3.02 doc 05 derived. See
   [evidence/api-tier-pricing-2026-08-27.md](evidence/api-tier-pricing-2026-08-27.md).
-  **Neither replacement question is worth pursuing.** (a) Sarvam's pages disagree by 2.5x
-  (₹30/hr developer table vs ₹1.25/min Odia product page) — worth about **$920 on a $215k
-  bid, 0.4%**. (b) Rebuilding the ~$6,000 compute line would confirm a rounding error more
-  precisely; `docs/odia-transcription-bid-estimate-2026-07-25.md` §2 already calls compute
-  “a rounding error … about 1% of the bid”. **The number worth measuring is M** — see Q12.
+  **Both replacement questions are now closed.** (a) Sarvam's 2.5x contradiction was settled
+  **by invoice** on 2026-08-27 rather than by email: a real lecture billed ₹38 for 51.4
+  minutes, which is ₹44.36/hour — the ₹45 diarization tier. The developer pricing table is
+  correct and the per-minute product-page figures are not what gets billed. Diarization is
+  being dropped, putting the corpus at **₹58,560 (~$613)**. (b) Rebuilding the ~$6,000
+  compute line is moot: there is no client. See Q3.
 - **Q8.** Does serverless GPU (Modal, RunPod Serverless, fal) fit the bursty sweep pattern
   better than a rented instance? Flagged, not analysed.
 - **Q9.** Is there an existing Cloudflare account or DNS zone from the earlier projects? An
