@@ -198,15 +198,16 @@ superseding record should state what was learned and choose between finishing th
 cutover on a new time-box and reverting to incremental extraction against whatever the
 rewrite has produced.
 
-Also revisit if the transcription cutover forces the model past three contexts over one
-kernel, whichever way [ADR-0002](0002-one-kernel-two-lifecycle-contexts.md)'s open
-question resolves — scope growth is the mechanism by which the previous attempt became
-unlandable.
+Also revisit if the transcription cutover produces the checkable language collision in
+[ADR-0002](0002-one-kernel-two-lifecycle-contexts.md) §7 or forces the model beyond its
+accepted `archive` context plus the expected Narrator Voice context — scope growth is
+the mechanism by which the previous attempt became unlandable.
 
 ## 8. What this record does not decide
 
 The domain model's shape, the context split, the cutover order (all
 [ADR-0002](0002-one-kernel-two-lifecycle-contexts.md)), what is reused
 ([ADR-0001](0001-reuse-only-the-shared-kernel.md)), or the research scripts
-([ADR-0003](0003-archive-research-scripts.md)). It does not set the time-box — §5 is
-deliberately incomplete.
+([ADR-0003](0003-archive-research-scripts.md)). It sets the start gate and 35-day
+stopping rule in §5; it does not decide the successor plan or time-box after that rule
+fires.

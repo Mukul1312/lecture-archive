@@ -1,7 +1,8 @@
 # ADR-0001 — Only the 1,044-line shared kernel comes out of `heritage_production`. The rest stays shelved.
 
 **Date:** 2026-08-29 · **Status:** Proposed · **Governs:** `src/heritage_production/`
-**Revised:** 2026-08-29 after studying the `ticket-to-lord` reference codebase — see §3 "What the reference changed" 
+**Revised:** 2026-08-29 after studying the `ticket-to-lord` reference codebase — see §3 "What the reference changed"
+**Revised:** 2026-08-31 after verifying that repository-wide test discovery still collected the shelved suite
 **Supersedes:** nothing · **Superseded by:** —
 
 Related: [ADR-0004](0004-clean-room-rewrite-with-cutover.md) is the rewrite this feeds.
@@ -59,8 +60,11 @@ its own authority.
    worked example of one repository port per aggregate root. It is a reading, not a
    dependency.
 4. **Everything else stays shelved**, unedited, with its four unfreeze triggers intact.
-5. **Move the shelved suite out of default test discovery**, so it is run explicitly
-   rather than on every full run.
+5. **Stop using repository-wide discovery as the default test command.** The documented
+   active suite discovers `tests/ggsm_transcription/`, `tests/heritage_archive/` and
+   `tests/youtube_enhance/`, then runs `tests.test_legacy_script_paths`; it does not
+   collect `tests/heritage_production/`. The shelved suite remains in place and is run
+   only when requested explicitly.
 
 ## 3. Evidence
 
@@ -139,11 +143,13 @@ produces. Rewriting it means rewriting the one solved problem in the area.
   right and this is not a defect. `unittest` collects 656; the extra is
   `ProductionApprovalStateMachine.TestCase.runTest`, synthesised by Hypothesis from
   [`test_production_properties.py:79`](../../tests/heritage_production/test_production_properties.py#L79).
-- **`SHELVED.md`'s "roughly 55 seconds" is unverified here and mis-scoped.** It
-  describes `unittest discover -s tests -t .` — the entire `tests/` tree, 73 files —
-  not this package's own suite, and Hypothesis settings make it machine- and
-  seed-sensitive. Decision 5 stands on the reading-path cost regardless; the number
-  should be measured before it is quoted again.
+- **`SHELVED.md`'s "roughly 55 seconds" is mis-scoped.** It covers the entire `tests/`
+  tree, not this package's own suite, and Hypothesis settings make it machine- and
+  seed-sensitive. On 2026-08-31, the exact measured repository-wide command,
+  `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`, ran 799 tests in
+  858.415 seconds and ended with 13 import errors because the shelved application modules
+  are absent. That measurement is why Decision 5 names the active roots instead of
+  advertising repository-wide discovery.
 
 ### What the reference changed
 
@@ -185,9 +191,10 @@ That is why decision 1 drops the recorder rather than lifting it.
 - **The review aggregate boundary must be drawn from scratch**, when review is
   eventually needed. This is a gain, not a cost — but it is work that mining would
   have appeared to avoid.
-- **The shelved package stops being free to ignore and starts being explicitly
-  excluded.** Decision 5 requires a change to whatever runs the suite; if that change
-  is not made, the exclusion exists only in this document.
+- **The documented default suite changes.** `README.md` names each active discovery
+  root and no longer advertises `discover -s tests`. A raw repository-wide discovery
+  still means "run everything", including the intentionally shelved suite, and is not
+  the supported default.
 - **Two published documents now disagree with this one** (§12.1's 1,500, §12 Task 1's
   `corpus_ledger`). §3 above records the corrections; the spec is not edited, per this
   repository's supersession practice.
@@ -203,8 +210,9 @@ judgement and is stated as such:
 - **Decision 4** — the four `SHELVED.md` triggers stand unchanged and are the trigger.
   When one fires, a new ADR supersedes this record *for that part only*. Fix the four
   known defects in `SHELVED.md` before unfreezing, not after; the first is CRITICAL.
-- **Decision 5** — if the shelved suite is ever run in CI rather than explicitly, this
-  record is being ignored and should be superseded rather than quietly violated.
+- **Decision 5** — if the shelved suite becomes part of an active default or CI run,
+  record which unfreeze trigger fired and supersede this part rather than widening the
+  default silently.
 
 ## 7. What this record does not decide
 

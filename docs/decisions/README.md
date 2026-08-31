@@ -35,10 +35,15 @@ someone who never runs that workflow.
 | [0003](0003-archive-research-scripts.md) | Archive 85 research scripts; ten are live, one is test-pinned | Proposed | `scripts/` (excluding the two production packages) |
 | [0004](0004-clean-room-rewrite-with-cutover.md) | Clean-room rewrite then cutover, not incremental extraction | Accepted 2026-08-29 | the restructure as a whole |
 | [0005](0005-code-layout-rulebook.md) | Layout, naming and graduation thresholds, ported from a working DDD codebase | Proposed | the new package's on-disk structure |
+| [0006](0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md) | The authorized Cartesia IVC is the current SSGGSM Odia production voice, with configurable delivery controls | Accepted 2026-08-31 | Narrator Voice for SSGGSM Odia diary narration |
 
 **Reading order** for someone new: 0004 (why a rewrite at all) → 0002 (what the model is)
 → 0005 (where code goes) → 0001 (what is reused) → 0003 (the script cleanup, independent
 of the rest).
+
+For the current narration track, read 0006 and its linked production design. That track
+materialises Narrator Voice from 0002 but is independent of the archive-rewrite sequence
+and stopping rule in 0004.
 
 Records 0002 and 0003 were materially revised on 2026-08-29 after an adversarial audit
 refuted specific claims in each; 0001, 0002 and 0004 were revised again the same day
@@ -46,9 +51,10 @@ after studying the `ticket-to-lord` TypeScript reference codebase; and 0002, 000
 0004 were revised a third time when the four open questions were resolved. Each carries
 a revision note saying what changed.
 
-**Open questions: none.** All four decisions that were left to the steward on 2026-08-29
-are settled — one bounded context (0002 §6), the stopping rule and its date (0004 §5),
-and the disposition of `hi/build_casting_site.py` (0003 §3.1).
+**Open ADR questions from 2026-08-29: none.** All four decisions that were left to the
+steward that day are settled — one bounded context (0002 §6), the stopping rule and its
+date (0004 §5), and the disposition of `hi/build_casting_site.py` (0003 §3.1). The linked
+production design separately lists implementation choices for review.
 
 ## Status values
 

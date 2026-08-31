@@ -1,5 +1,14 @@
 # GGSM Voice-Clone — Project Findings & State
 
+> **Historical implementation record:** This documents the earlier VoxCPM2/LoRA route;
+> it is not the current production workflow. The authorized SSGGSM Odia baseline and
+> its narrow scope are now governed by
+> [ADR-0006](decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md), with
+> implementation proposed in the linked Cartesia production design. Nothing below is
+> deleted because its experimental evidence remains useful. In particular, the old
+> "license unconstrained" statement below is historical shorthand, not current authority
+> for voice cloning, source-text use or distribution; each right remains a separate check.
+
 Durable record of what we've learned and built. **Goal:** clone Gour Govinda Swami's English voice
 (VoxCPM2 LoRA) and produce a **calm diary Short** — GGSM alone at night writing to Gopāla, *not*
 class-tone. Seva; license unconstrained.

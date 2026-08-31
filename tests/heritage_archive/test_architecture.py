@@ -18,8 +18,8 @@ Two properties this module has that the `heritage_production` original did not:
   skips loudly while the package is absent and fails if the package exists but the
   scanner finds nothing — which would mean the scanner, not the code, is broken.
 
-Run explicitly (the shelved suite is excluded from default discovery per ADR-0001
-decision 5):
+This is one root in the active-suite command documented by `README.md`. That command
+does not collect the shelved suite, per ADR-0001 decision 5:
 
     python -m unittest discover -s tests/heritage_archive -t .
 """

@@ -16,6 +16,9 @@ The following paths are therefore local or externally managed:
   blind auditions, QA exports, and final delivery archives.
 - `site-casting/audio/` and `site-odia-check/audio/`: private listening-review
   assets used by the static site templates.
+- Cartesia narration job roots (`CARTESIA_NARRATION_ROOT`): private voice identifiers,
+  detailed/private authorization attestation records and evidence, run manifests,
+  generated takes, reviews and masters.
 - `.tmp-*`, `voice_lab/`, and deployment metadata: reproducible local output.
 
 Several retained scripts and templates refer to these paths intentionally.

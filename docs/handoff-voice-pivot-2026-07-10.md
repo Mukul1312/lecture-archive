@@ -1,5 +1,12 @@
 # HANDOFF — voice pivot: no longer cloning GGSM (2026-07-10)
 
+> **Historical status (2026-08-31):** This handoff accurately records the instruction
+> in force on 2026-07-10. Its no-clone and “cloning is obsolete” statements are
+> superseded **only for authorized SSGGSM Odia diary narration** by
+> [ADR-0006](decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md), after
+> the steward attested direct permission and approved the Cartesia Instant Voice Clone.
+> Its Hindi/English and other historical findings are not silently broadened or erased.
+
 **Read this first in the new chat.** It supersedes the "clone GGSM's voice" goal that drove all prior work.
 
 ## The new constraint

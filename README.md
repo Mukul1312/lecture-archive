@@ -12,6 +12,16 @@ does not add more media or rewrite the published baseline. See
 [External audio assets](docs/external-audio-assets.md) for the expected local
 paths and publication policy.
 
+## Current SSGGSM Odia narration
+
+The approved production baseline is an authorized Cartesia Sonic 3.6 Instant Voice
+Clone for SSGGSM Odia diary narration. The accepted scope and configurable
+`speed=0.90`, `volume=1.00`, `emotion=calm` defaults are recorded in
+[ADR-0006](docs/decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md).
+The proposed code-controlled, review-gated workflow is in the
+[Cartesia Odia narration production design](docs/superpowers/specs/2026-08-31-cartesia-odia-narration-production-design.md).
+No production implementation or private audio is added by those documents.
+
 ## Main components
 
 - `scripts/hi/` and `cloud/`: Hindi extraction, ASR, evaluation, and training
@@ -33,7 +43,16 @@ set:
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-enhance-windows.txt
 .\.venv\Scripts\python.exe -m pip install resemblyzer==0.1.4 --no-deps
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+$activeTestRoots = @(
+    "tests/ggsm_transcription",
+    "tests/heritage_archive",
+    "tests/youtube_enhance"
+)
+foreach ($testRoot in $activeTestRoots) {
+    & .\.venv\Scripts\python.exe -m unittest discover -s $testRoot -t . -v
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+& .\.venv\Scripts\python.exe -m unittest tests.test_legacy_script_paths -v
 ```
 
 Resemblyzer's declared `webrtcvad` package has no Windows wheel and otherwise
@@ -47,7 +66,15 @@ requirements file:
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements-enhance.txt
-./.venv/bin/python -m unittest discover -s tests -v
+for test_root in tests/ggsm_transcription tests/heritage_archive tests/youtube_enhance; do
+    ./.venv/bin/python -m unittest discover -s "$test_root" -t . -v || exit
+done
+./.venv/bin/python -m unittest tests.test_legacy_script_paths -v
 ```
 
 FFmpeg is also required for real audio processing.
+
+These commands are the active default suite. They deliberately exclude the shelved
+`tests/heritage_production/` suite under
+[ADR-0001](docs/decisions/0001-reuse-only-the-shared-kernel.md); repository-wide
+`discover -s tests` is therefore not the default command.
