@@ -144,11 +144,13 @@ should know these were considered, not overlooked.
 
 ## 7. What this record does not decide
 
-Whether `enhance_diagnose.py`'s measured O(n^1.79) bug gets fixed — the
-`np.percentile(rdb, 60)` call inside `blind_rt60`'s `while` loop at **`:206`**; note
-`odia-design-measured-corrections-2026-08-28.md:37` cites `:192`, which is a docstring
-line, so that citation is off by fourteen. Nor whether `fetch_idt.py`'s regex at `:43`
-gets fixed. Both are live defects in live scripts and both are out of scope here.
+Whether `enhance_diagnose.py`'s measured O(n^1.79) bug gets fixed is not decided here;
+the `np.percentile(rdb, 60)` call sits inside `blind_rt60`'s `while` loop at **`:206`**.
+The draft of `odia-design-measured-corrections-2026-08-28.md` cited
+`enhance_diagnose.py:192`, which is a docstring line; that reference was corrected to the
+actual percentile call at `:206` before the document was published on 2026-09-01. This
+record also does not decide whether `fetch_idt.py`'s regex at `:43` gets fixed. Both are
+live defects in live scripts and both are out of scope here.
 
 `cloud/` is counted in §1 for scale only and is governed by no record yet — it is
 GPU-host tooling with a different lifecycle and deserves its own assessment.
