@@ -2,8 +2,12 @@
 
 **Date:** 2026-09-02
 
-**Status:** **Proposed implementation design for steward review.** ADR-0008 is the
-accepted architecture boundary; details introduced only here remain proposed.
+**Status:** **Superseded for implementation by the
+[2026-09-02 v3 design](2026-09-02-cartesia-odia-narration-production-v3-design.md).**
+
+This file is retained as the historical Lane-B-only proposal. ADR-0010 and ADR-0011
+add the accepted hybrid Cartesia authoring, narrow Odia-intro, dry episode-composition
+and timed-narration boundaries without weakening ADR-0008's fixed-voice job.
 
 **Authority:** [ADR-0006](../../decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md),
 [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md) and

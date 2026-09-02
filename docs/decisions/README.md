@@ -30,15 +30,17 @@ someone who never runs that workflow.
 
 | # | Decision | Status | Governs |
 |---|---|---|---|
-| [0001](0001-reuse-only-the-shared-kernel.md) | Only the 1,044-line shared kernel comes out of `heritage_production`; the rest stays shelved | Proposed | `src/heritage_production/` |
+| [0001](0001-reuse-only-the-shared-kernel.md) | ADR-0001 audits the source kernel; Narrator Voice v1 lifts only its further consumer-driven generic symbol trim | Accepted 2026-09-02 | `src/heritage_production/` |
 | [0002](0002-one-kernel-two-lifecycle-contexts.md) | One `archive` context with a lifecycle aggregate per flow; transcription cut over first | Accepted 2026-08-29 | `scripts/ggsm_transcription/`, `scripts/youtube_enhance/` |
 | [0003](0003-archive-research-scripts.md) | Archive 85 research scripts; ten are live, one is test-pinned | Proposed | `scripts/` (excluding the two production packages) |
 | [0004](0004-clean-room-rewrite-with-cutover.md) | Clean-room rewrite then cutover, not incremental extraction | Accepted 2026-08-29 | the restructure as a whole |
-| [0005](0005-code-layout-rulebook.md) | Layout, naming and graduation thresholds, ported from a working DDD codebase | Proposed | the new package's on-disk structure |
+| [0005](0005-code-layout-rulebook.md) | Layout, naming and graduation thresholds, ported from a working DDD codebase | Accepted 2026-09-02 | the new package's on-disk structure |
 | [0006](0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md) | The authorized Cartesia IVC is the current SSGGSM Odia production voice, with configurable delivery controls | Accepted 2026-08-31 | Narrator Voice for SSGGSM Odia diary narration |
 | [0007](0007-two-policy-isolated-narration-lanes.md) | Narrator Voice has two policy-isolated lanes; authorized SSGGSM Odia does not replace non-SSGGSM EN/HI narration | Accepted 2026-09-02 | Narrator Voice policy scopes and the archive-clock start trigger |
 | [0008](0008-lane-b-production-boundaries.md) | Lane-B production keeps one narration job while separating authorization, artifacts, settings and user entry points | Accepted 2026-09-02 | SSGGSM/Odia/diary production architecture |
-| [0009](0009-share-narration-mechanics-not-policy.md) | Share provider-neutral narration mechanics, never lane policy | Proposed | Technical capability shared or considered for sharing between narration lanes |
+| [0009](0009-share-narration-mechanics-not-policy.md) | Share provider-neutral narration mechanics, never lane policy | Accepted 2026-09-02 | Technical capability shared or considered for sharing between narration policy scopes |
+| [0010](0010-cartesia-prompting-is-validated-rendering-evidence.md) | Cartesia prompting is validated rendering evidence, not free-form narration policy | Accepted 2026-09-02 | Hybrid synthesis authoring and Cartesia request compilation |
+| [0011](0011-diary-episodes-compose-fixed-voice-narration-masters.md) | Diary episodes compose fixed-voice narration masters without becoming a mixed-voice job | Accepted 2026-09-02 | Narrow Odia intro scope, dry episode assembly and timed narration handoff |
 
 **Reading order** for someone new: 0004 (why a rewrite at all) → 0002 (what the model is)
 → 0005 (where code goes) → 0001 (what is reused) → 0003 (the script cleanup, independent
@@ -46,10 +48,23 @@ of the rest).
 
 For narration, read 0007 first: it separates the active future non-SSGGSM EN/HI
 programme from the authorized SSGGSM/Odia/diary production lane. Read 0006 for the
-authorized voice/baseline and 0008 plus its linked v2 design for the Lane-B production
-model. Read proposed 0009 when evaluating code extraction across lanes. Narrator-only
-work is independent of the archive-rewrite sequence and does not start or consume
-0004's clock; 0007 §2.4 gives the exact archive-context trigger.
+authorized SSGGSM voice/baseline, then 0008 for the Lane-B production boundary. Read
+0009 before extracting code across policy scopes, 0010 for the hybrid Cartesia
+authoring boundary and 0011 for the narrow Odia-intro/episode-composition extension.
+The [v3 production design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md)
+is the authoritative implementation design.
+
+**Narrator Voice implementation note:** ADR-0005's inbound-adapter extension includes
+non-Python `apps/` and `contracts/` when their first real console/contract consumer
+lands. This does not pre-create a platform layer: every `platform/<primitive>/` folder
+still graduates only with its first real consumer.
+
+**ADR-0001 implementation clarification:** acceptance authorizes the audited source,
+not a wholesale export surface. Narrator Voice v1 characterizes source behavior first,
+then records its exact generic retained source/symbol manifest and post-trim count;
+archive-specific identities, events, refs, sources and policy remain shelved.
+Narrator-only work is independent of the archive-rewrite sequence and does not start
+or consume 0004's clock; 0007 §2.4 gives the exact archive-context trigger.
 
 Records 0002 and 0003 were materially revised on 2026-08-29 after an adversarial audit
 refuted specific claims in each; 0001, 0002 and 0004 were revised again the same day

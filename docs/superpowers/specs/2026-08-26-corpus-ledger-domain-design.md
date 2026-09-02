@@ -352,7 +352,7 @@ taxonomy preference.
 > `must-not-resemble SSGGSM` rule, byte-hash take identity and automatic two-gate
 > publication rule are not the aggregate or release policy for authorized
 > SSGGSM/Odia/diary narration. See [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md)
-> and the separate [Odia production v2 design](2026-09-02-cartesia-odia-narration-production-v2-design.md).
+> and the separate accepted [Odia production v3 design](2026-09-02-cartesia-odia-narration-production-v3-design.md).
 
 #### `Narrator`
 

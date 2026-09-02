@@ -1,7 +1,7 @@
 # Narrator Voice shared-capability audit — 2026-09-02
 
 **Status:** Recorded evidence for [ADR-0008](decisions/0008-lane-b-production-boundaries.md)
-and proposed [ADR-0009](decisions/0009-share-narration-mechanics-not-policy.md)
+and accepted [ADR-0009](decisions/0009-share-narration-mechanics-not-policy.md)
 
 **Question:** What can the authorized SSGGSM/Odia production workflow safely reuse
 from this whole repository, and what must remain lane-specific or historical?
@@ -12,7 +12,7 @@ from this whole repository, and what must remain lane-specific or historical?
 
 | Classification | Meaning |
 |---|---|
-| **Conditional direct lift** | Cohesive, provider/policy-neutral code can move as code, but only after its governing ADR and verification conditions are satisfied. |
+| **Governed direct lift** | The accepted ADR permits one exact source-and-symbol lift only after its characterization and verification conditions are satisfied. |
 | **Extract after characterization** | A proven mechanic exists inside an active workflow; first pin its behaviour with tests, then move only the neutral part. |
 | **Design precedent only** | The interaction or algorithm is useful, but the current implementation carries hard-coded paths, browser-only state, import-time work or historical policy. Reimplement it behind new ports/use cases. |
 | **Do not reuse for Lane B** | Its purpose conflicts with authorized faithful SSGGSM/Odia production or it belongs to an unrelated model/language workflow. Preserve it as history; dissimilarity material remains Lane-A evidence. |
@@ -25,7 +25,7 @@ as a durable review system.
 
 | Capability | Concrete evidence | Classification and safe use |
 |---|---|---|
-| Canonical serialization, content digests and opaque IDs | `src/heritage_production/domain/shared/canonical.py`, `digests.py`, `ids.py`; ADR-0001 §§2–3. | **Conditional direct lift.** Lift only the trimmed, import-verified kernel if ADR-0001 is accepted. Preserve its exclusions (`trust.py`, the credential block in `refs.py`, `AggregateEventRecorder`). Never import the shelved package in place. |
+| Canonical serialization, content digests and opaque IDs | `src/heritage_production/domain/shared/canonical.py`, `digests.py`, `ids.py`; ADR-0001 §§2–3. | **Governed direct lift.** Lift only the exact, trimmed, import-verified source-and-symbol manifest. Preserve its exclusions (`trust.py`, `refs.py:78-125` credential types, `AggregateEventRecorder`); remeasure after exclusions. Never import the shelved package in place. |
 | Immutable artifact identity and safe relative paths | `scripts/ggsm_transcription/store.py:70–77, 413–439, 455–476, 596–616`; `scripts/ggsm_transcription/review.py:53–70`; `scripts/youtube_enhance/manifest.py:87–156`. | **Extract after characterization.** Share hashes, artifact facts and containment checks; lane policy supplies eligibility. |
 | OS locks, monotonic revision and atomic manifest replacement | `scripts/ggsm_transcription/store.py:103–173`; `scripts/youtube_enhance/workflow_state.py`. | **Extract after characterization.** These are observed implementation precedents to pin with tests. Expected-revision/CAS is a new Lane-B requirement, not proven by these files. Do not couple a narration repository to either existing job aggregate. |
 | Typed workflow and review evidence | `scripts/ggsm_transcription/review.py:110–186, 287–419, 499–615`; `scripts/youtube_enhance/manifest.py:75–102`. | **Pattern plus narrow helpers.** Lane B draws its own aggregate; do not reuse either state machine wholesale. |
@@ -37,7 +37,7 @@ as a durable review system.
 | Player, keyboard, notes and export interactions | `scripts/hi/build_casting_site.py`, `scripts/build_qa_gallery.py`, `scripts/assemble_diary.py`. | **Design precedent only.** Reimplement against durable commands. Do not carry casting assertions, metric defaults or `localStorage` as truth. |
 | Generic signal diagnostics | `scripts/voice_quality.py:33–130`; `scripts/youtube_enhance/gates.py:253–325`. | **Potential neutral advisory capability.** Never make it an automatic Lane-B pronunciation, identity or release gate. |
 | TTS transport abstraction | ADR-0006 §2.6; ADR-0007 §2.3. | **Share a port shape, not provider DTOs.** It receives a validated/resolved lane request. Cartesia SDK types remain in Lane-B infrastructure; Lane A chooses its provider later. |
-| Cost preflight, retries, idempotency and resumption | The Lane-B v1/v2 production designs. | **Planned Lane-B-local behaviour.** A second consumer may justify sharing low-level retry classification/attempt facts; budget, authorization, identity and eligibility remain lane-owned. |
+| Cost preflight, retries, idempotency and resumption | The narration production v1/v2 designs and accepted v3 design. | **Planned lane-local behaviour.** A second consumer may justify sharing low-level retry classification/attempt facts; budget, authorization, identity and eligibility remain lane-owned. |
 
 ## 3. Policy that cannot be shared
 
@@ -98,7 +98,7 @@ Lane B policy ─┘
 
 For the Lane-B first slice, reuse by **measured extraction**, not by dependency on
 historical scripts. Keep a mechanic Lane-B-local until another lane earns a neutral
-Narrator Voice helper. ADR-0001 independently governs its conditional one-time trimmed
-kernel lift; only a second bounded context can earn later additions to `kernel/` under
+Narrator Voice helper. ADR-0001 independently governs its accepted one-time trimmed
+kernel lift and post-exclusion remeasurement; only a second bounded context can earn later additions to `kernel/` under
 ADR-0005. This preserves useful work without allowing identity, language, authorization
 or release policy to leak between opposite lanes.

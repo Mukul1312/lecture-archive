@@ -1,6 +1,6 @@
 # ADR-0005 — The code-organisation rulebook, ported from a working DDD codebase rather than invented.
 
-**Date:** 2026-08-29 · **Status:** Proposed · **Governs:** the new package's on-disk structure
+**Date:** 2026-08-29 · **Status:** Accepted 2026-09-02 · **Governs:** the new package's on-disk structure
 **Supersedes:** the structure sketch in [ADR-0002](0002-one-kernel-two-lifecycle-contexts.md) §5 · **Superseded by:** [ADR-0008](0008-lane-b-production-boundaries.md) §2.4, only where this record's CLI example could be read as the sole permitted Narrator Voice inbound adapter
 
 ---

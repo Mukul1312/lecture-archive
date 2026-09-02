@@ -1,6 +1,6 @@
 # ADR-0001 — Only the 1,044-line shared kernel comes out of `heritage_production`. The rest stays shelved.
 
-**Date:** 2026-08-29 · **Status:** Proposed · **Governs:** `src/heritage_production/`
+**Date:** 2026-08-29 · **Status:** Accepted 2026-09-02 · **Governs:** `src/heritage_production/`
 **Revised:** 2026-08-29 after studying the `ticket-to-lord` reference codebase — see §3 "What the reference changed"
 **Revised:** 2026-08-31 after verifying that repository-wide test discovery still collected the shelved suite
 **Supersedes:** nothing · **Superseded by:** —

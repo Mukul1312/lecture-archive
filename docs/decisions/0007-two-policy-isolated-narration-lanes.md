@@ -1,7 +1,7 @@
 # ADR-0007 — Narrator Voice has two policy-isolated lanes; authorized SSGGSM Odia does not replace non-SSGGSM EN/HI narration
 
 **Date:** 2026-09-02 · **Status:** **Accepted 2026-09-02** · **Governs:** Narrator Voice policy scopes and the archive-rewrite clock trigger
-**Supersedes:** only (a) ADR-0006's literal claim to supersede Programme 5's speaker/language description, (b) the SSGGSM `must-not-resemble` rule in the corpus-ledger design for the authorized SSGGSM/Odia/diary lane, and (c) ADR-0004 §5.1's phrase “first commit creating the new package,” as defined in decision 4 · **Superseded by:** [ADR-0008](0008-lane-b-production-boundaries.md) only for §3's `NarrationTake` identity conflict row and closing aggregate/persistence-open statement, plus §7's Lane-B aggregate-model non-decision; all two-lane policy and archive-clock decisions remain in force
+**Supersedes:** only (a) ADR-0006's literal claim to supersede Programme 5's speaker/language description, (b) the SSGGSM `must-not-resemble` rule in the corpus-ledger design for the authorized SSGGSM/Odia/diary lane, and (c) ADR-0004 §5.1's phrase “first commit creating the new package,” as defined in decision 4 · **Superseded by:** [ADR-0008](0008-lane-b-production-boundaries.md) only for §3's `NarrationTake` identity conflict row and closing aggregate/persistence-open statement, plus §7's Lane-B aggregate-model non-decision; [ADR-0011](0011-diary-episodes-compose-fixed-voice-narration-masters.md) only for §2 decision 1's two-lane closure and “Anything else” row, solely to admit its narrow Lane C; all remaining Lane-A/Lane-B policy and archive-clock decisions remain in force
 
 ---
 
