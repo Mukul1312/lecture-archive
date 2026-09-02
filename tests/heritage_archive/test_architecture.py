@@ -332,3 +332,90 @@ class ArchitectureGuardTests(unittest.TestCase):
                 self.skipTest(f"OS refused a temporary directory link: {error}")
             self.assertTrue(_is_reparse_point(link))
             self.assertEqual(set(modules_under(root, PACKAGE)), {(PACKAGE, "kernel", "safe")})
+
+
+class NarratorVoiceArchitectureTests(unittest.TestCase):
+    NARRATOR_ROOT = PACKAGE_ROOT / "contexts" / "narrator_voice"
+
+    @staticmethod
+    def _classes(path: Path, suffix: str = "") -> set[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        return {
+            node.name for node in tree.body
+            if isinstance(node, ast.ClassDef) and (not suffix or node.name.endswith(suffix))
+        }
+
+    def test_narrator_voice_is_nonvacuous_with_exactly_three_roots_and_repository_ports(self) -> None:
+        domain = self.NARRATOR_ROOT / "domain"
+        application = self.NARRATOR_ROOT / "application"
+        roots = {
+            name
+            for filename in ("authorization.py", "narration_job.py", "diary_episode.py")
+            for name in self._classes(domain / filename)
+            if name in {"AuthorizationRecord", "NarrationJob", "DiaryEpisode"}
+        }
+        repositories = self._classes(application / "ports.py", "Repository")
+        self.assertEqual(roots, {"AuthorizationRecord", "NarrationJob", "DiaryEpisode"})
+        self.assertEqual(
+            repositories,
+            {"AuthorizationRecordRepository", "NarrationJobRepository", "DiaryEpisodeRepository"},
+        )
+        self.assertGreaterEqual(len(list(domain.glob("*.py"))), 8)
+        self.assertGreaterEqual(len(list(application.glob("*.py"))), 5)
+
+    def test_lane_b_and_lane_c_use_distinct_narrow_policy_factories_and_handlers(self) -> None:
+        narration_source = (self.NARRATOR_ROOT / "domain" / "narration_job.py").read_text(encoding="utf-8")
+        handler_source = (self.NARRATOR_ROOT / "application" / "handlers.py").read_text(encoding="utf-8")
+        self.assertIn("def prepare_lane_b_diary_job(", narration_source)
+        self.assertIn("def prepare_lane_c_intro_job(", narration_source)
+        self.assertIn("class PrepareDiaryNarrationHandler", handler_source)
+        self.assertIn("class PrepareIntroNarrationHandler", handler_source)
+        self.assertNotIn("prepare_job_for_lane", narration_source)
+
+    def test_narrator_domain_and_application_have_no_legacy_provider_web_filesystem_or_ffmpeg_import(self) -> None:
+        forbidden_roots = {
+            "heritage_production", "requests", "httpx", "urllib", "socket", "aiohttp",
+            "fastapi", "flask", "django", "cartesia", "ffmpeg", "subprocess", "pathlib", "os",
+        }
+        violations = []
+        for layer in ("domain", "application"):
+            for source in (self.NARRATOR_ROOT / layer).glob("*.py"):
+                module = (PACKAGE, "contexts", "narrator_voice", layer, source.stem)
+                for imported in imports_from(source, module):
+                    if imported and imported[0].lower() in forbidden_roots:
+                        violations.append(f"{source.name}: {'.'.join(imported)}")
+        self.assertEqual(violations, [])
+
+    def test_complete_public_use_case_surface_has_frozen_commands_results_and_explicit_handlers(self) -> None:
+        handlers = self._classes(self.NARRATOR_ROOT / "application" / "handlers.py", "Handler")
+        expected = {
+            "RegisterAuthorizationHandler", "RecordAuthorizationChangeHandler", "ShowAuthorizationStatusHandler",
+            "PrepareDiaryNarrationHandler", "PrepareIntroNarrationHandler", "RevisePassageTextHandler",
+            "ReorderPassagesHandler", "ReviseDeliveryDefaultsHandler", "ValidateRenderRecipeHandler",
+            "RequireRenderRecipeHandler", "RequireDictionaryHandler", "EstimateGenerationHandler",
+            "GenerateTakeHandler", "GeneratePendingPassagesHandler", "RecordReviewDecisionHandler",
+            "SelectWorkingTakeHandler", "AssembleNarrationMasterHandler",
+            "RecordNarrationMasterListeningHandler", "IssueNarrationMasterSnapshotHandler",
+            "ShowNarrationStatusHandler", "ReconcileGenerationAttemptHandler",
+            "ReconcileNarrationAssemblyAttemptHandler", "PrepareDiaryEpisodeHandler",
+            "AttachIntroMasterHandler", "AttachDiaryMasterHandler", "SetIntroDiaryGapHandler",
+            "AssembleEpisodeSpeechMasterHandler", "RecordEpisodeListeningHandler",
+            "BuildTimedNarrationPackageHandler", "RecordTimingCorrectionHandler",
+            "ShowEpisodeStatusHandler", "ExportPresentationHandoffHandler",
+            "ReconcileEpisodeAssemblyAttemptHandler",
+        }
+        self.assertEqual(handlers, expected)
+        command_source = (self.NARRATOR_ROOT / "application" / "commands.py").read_text(encoding="utf-8")
+        result_source = (self.NARRATOR_ROOT / "application" / "results.py").read_text(encoding="utf-8")
+        command_tree = ast.parse(command_source)
+        result_tree = ast.parse(result_source)
+        command_classes = {node.name: node for node in command_tree.body if isinstance(node, ast.ClassDef)}
+        result_classes = {node.name: node for node in result_tree.body if isinstance(node, ast.ClassDef)}
+        self.assertTrue(all(name.removesuffix("Handler") + "Command" in command_classes for name in expected))
+        for collection in (command_classes.values(), result_classes.values()):
+            for node in collection:
+                decorator_text = {ast.unparse(value) for value in node.decorator_list}
+                self.assertTrue(
+                    any("dataclass" in value and "frozen=True" in value and "slots=True" in value for value in decorator_text),
+                    node.name,
+                )
