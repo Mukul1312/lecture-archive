@@ -1,369 +1,334 @@
-"""Layering guards for `heritage_archive`, written before the code they guard.
-
-ADR-0001 decision 2(a) and ADR-0004 decision 2: these go in **first**, before any
-domain code, because the shelved `heritage_production` shows what happens without
-them — 34,679 lines with a firewall that only ever verified itself.
-
-These are the *layering* guards only. Named-invariant guards (`INV-<ID>`, ADR-0001
-decision 2(b), ADR-0005 §6) arrive with their invariants, one test per invariant,
-each citing the ADR that mandated it.
-
-Two properties this module has that the `heritage_production` original did not:
-
-* It never asserts that a folder exists. ADR-0005 §5 forbids scaffolding — "empty
-  folders rot" — so the guards discover whatever is present and check that, rather
-  than pinning a shape. A layout that has not graduated yet must not be forced into
-  existence by its own test suite.
-* It cannot pass vacuously without saying so. `test_the_guards_are_not_vacuous`
-  skips loudly while the package is absent and fails if the package exists but the
-  scanner finds nothing — which would mean the scanner, not the code, is broken.
-
-This is one root in the active-suite command documented by `README.md`. That command
-does not collect the shelved suite, per ADR-0001 decision 5:
-
-    python -m unittest discover -s tests/heritage_archive -t .
-"""
+"""AST architecture guard for the package layout accepted by ADR-0005."""
 
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
+import os
 from pathlib import Path
+import stat
+import subprocess
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
+PACKAGE = "heritage_archive"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-# The one line to change if the package is renamed. Matches pyproject.toml's
-# `name = "heritage-archive"`, and is deliberately distinct from the shelved
-# `heritage_production` sitting beside it in src/.
-PACKAGE_NAME = "heritage_archive"
-PACKAGE_ROOT = PROJECT_ROOT / "src" / PACKAGE_NAME
-
-# ADR-0005 §3. Lower may not import higher.
-LAYER_RANK = {"domain": 0, "application": 1, "infrastructure": 2}
-
-# ADR-0005 §5: the composition root is the ONE named exemption to the dependency
-# rule — it may import across contexts, because it is the main partition, nothing
-# depends on it, and construction is not orchestration. Named here so the carve-out
-# is a decision on the record rather than a wildcard someone widens later.
-COMPOSITION_ROOT_PARTS = (PACKAGE_NAME, "composition_root")
-
-# Until composition_root/ graduates (ADR-0005 §5: 3+ repositories, or wiring past
-# ~50 lines, or cross-context wiring), inline wiring lives in the inbound CLI
-# adapter. That file is infrastructure, so it is already allowed to import both
-# application and domain; it gets no cross-context exemption, which is the point.
+PACKAGE_ROOT = PROJECT_ROOT / "src" / PACKAGE
+CONTEXT_LAYERS = {"domain": 0, "application": 1, "infrastructure": 2}
 
 
-def python_modules() -> list[tuple[Path, tuple[str, ...]]]:
-    """Every module in the package, as (path, dotted-parts). Empty if absent."""
-    if not PACKAGE_ROOT.is_dir():
-        return []
-    modules: list[tuple[Path, tuple[str, ...]]] = []
-    for source_file in sorted(PACKAGE_ROOT.rglob("*.py")):
-        if "__pycache__" in source_file.parts:
-            continue
-        relative = source_file.relative_to(PACKAGE_ROOT).with_suffix("").parts
-        if relative and relative[-1] == "__init__":
-            relative = relative[:-1]
-        modules.append((source_file, (PACKAGE_NAME, *relative)))
-    return modules
+class ArchitectureViolation(AssertionError):
+    """Raised when a source layout violates the accepted import rulebook."""
 
 
-def imported_modules(source_file: Path, module: tuple[str, ...]) -> list[tuple[str, ...]]:
-    """Every module this file imports, with relative imports resolved.
+def _is_reparse_point(path: Path) -> bool:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return True
+    attributes = getattr(metadata, "st_file_attributes", 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
-    Resolving relative imports is not optional: without it the cycle and boundary
-    walks are blind to exactly the intra-package edges they exist to find. The
-    `heritage_production` suite learned this the hard way and kept a dedicated test
-    for it (`test_domain_import_boundaries.py`).
-    """
-    tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
-    # A package __init__ is its own package; a plain module lives inside its parent.
-    package = module if source_file.name == "__init__.py" else module[:-1]
 
-    imports: list[tuple[str, ...]] = []
+def modules_under(package_root: Path, package_name: str) -> dict[tuple[str, ...], Path]:
+    found: dict[tuple[str, ...], Path] = {}
+    if _is_reparse_point(package_root) or not package_root.is_dir():
+        return found
+    for directory, names, files in os.walk(package_root, followlinks=False):
+        current = Path(directory)
+        names[:] = [
+            name
+            for name in names
+            if name not in {"__pycache__", ".venv", ".venv-narrator"}
+            and not _is_reparse_point(current / name)
+        ]
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            source = current / name
+            if _is_reparse_point(source):
+                continue
+            parts = source.relative_to(package_root).with_suffix("").parts
+            module = (package_name, *(parts[:-1] if parts[-1] == "__init__" else parts))
+            found[module] = source
+    return found
+
+
+def imports_from(source: Path, module: tuple[str, ...]) -> set[tuple[str, ...]]:
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    package = module if source.name == "__init__.py" else module[:-1]
+    imports: set[tuple[str, ...]] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            imports.extend(tuple(alias.name.split(".")) for alias in node.names)
+            imports.update(tuple(alias.name.split(".")) for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             base = tuple(node.module.split(".")) if node.module else ()
             if node.level:
-                if node.level > len(package):
-                    continue
                 base = (*package[: len(package) - node.level + 1], *base)
-            if node.module is None:
-                # A bare `from . import errors`: the aliases ARE module names, so
-                # the edge is to `<package>.errors`, not to `<package>`. Stopping at
-                # the package loses intra-package edges and blinds the cycle walk --
-                # which is precisely how `heritage_production`'s resolver behaves,
-                # and this module's own resolver test caught it.
-                # When `node.module` is set (`from .errors import Foo`) the aliases
-                # may be plain symbols, so the edge correctly stops at the module.
-                imports.extend((*base, alias.name) for alias in node.names)
-            else:
-                imports.append(base)
+            imports.add(base)
+            imports.update((*base, alias.name) for alias in node.names)
     return imports
 
 
-def context_of(module: tuple[str, ...]) -> str | None:
-    """`heritage_archive.contexts.<name>....` -> `<name>`, else None."""
-    if len(module) >= 3 and module[1] == "contexts":
-        return module[2]
+def context_layer(module: tuple[str, ...], package_name: str) -> tuple[str, str] | None:
+    if len(module) >= 4 and module[:2] == (package_name, "contexts") and module[3] in CONTEXT_LAYERS:
+        return module[2], module[3]
     return None
 
 
-def layer_of(module: tuple[str, ...]) -> str | None:
-    """The layer segment inside a context, or None for kernel/platform/root."""
-    if context_of(module) is None or len(module) < 4:
-        return None
-    return module[3] if module[3] in LAYER_RANK else None
-
-
-def is_composition_root(module: tuple[str, ...]) -> bool:
-    return module[: len(COMPOSITION_ROOT_PARTS)] == COMPOSITION_ROOT_PARTS
-
-
-def is_internal(imported: tuple[str, ...]) -> bool:
-    return bool(imported) and imported[0] == PACKAGE_NAME
-
-
-def where(source_file: Path) -> str:
-    return str(source_file.relative_to(PROJECT_ROOT))
-
-
-class GuardsAreLive(unittest.TestCase):
-    """The guards must not pass by having nothing to check."""
-
-    def test_the_guards_are_not_vacuous(self) -> None:
-        if not PACKAGE_ROOT.is_dir():
-            self.skipTest(
-                f"{PACKAGE_NAME} does not exist yet. These guards are deliberately "
-                "in place before the code they guard (ADR-0004 decision 2). ADR-0004 "
-                "§5 sets the archive start gate at 2026-09-05; ADR-0007 §2.4 defines "
-                "the triggering commit and excludes narrator-only work."
-            )
-        modules = python_modules()
-        self.assertNotEqual(
-            modules,
-            [],
-            f"{PACKAGE_ROOT} exists but the scanner found no modules in it. "
-            "The scanner is broken, not the code — every guard below is passing "
-            "vacuously until this is fixed.",
-        )
-
-
-class DependencyRule(unittest.TestCase):
-    """ADR-0005 §3: dependencies point inward, toward the domain."""
-
-    def test_layers_do_not_import_outward(self) -> None:
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            rank = LAYER_RANK.get(layer_of(module) or "")
-            if rank is None:
+def guard(package_root: Path, package_name: str = PACKAGE) -> int:
+    modules = modules_under(package_root, package_name)
+    edges: dict[tuple[str, ...], set[tuple[str, ...]]] = defaultdict(set)
+    violations: list[str] = []
+    standard_library = set(sys.stdlib_module_names) | {"__future__"}
+    for module, source in modules.items():
+        source_context_layer = context_layer(module, package_name)
+        for imported in imports_from(source, module):
+            if not imported:
                 continue
-            for imported in imported_modules(source_file, module):
-                if not is_internal(imported):
-                    continue
-                target = LAYER_RANK.get(layer_of(imported) or "")
-                if target is not None and target > rank:
-                    violations.append(
-                        f"{where(source_file)} ({layer_of(module)}) -> "
-                        f"{'.'.join(imported)} ({layer_of(imported)})"
+            if imported[:1] == ("heritage_production",):
+                violations.append(f"legacy import: {module} -> {imported}")
+            if module[:2] == (package_name, "kernel") and (
+                imported[0] not in standard_library
+                and imported[:2] != (package_name, "kernel")
+            ):
+                violations.append(f"kernel impurity: {module} -> {imported}")
+            if imported in modules:
+                edges[module].add(imported)
+            if source_context_layer is not None:
+                source_context, source_layer = source_context_layer
+                target_context_layer = context_layer(imported, package_name)
+                if target_context_layer is not None:
+                    target_context, target_layer = target_context_layer
+                    if target_context != source_context:
+                        violations.append(f"context crossing: {module} -> {imported}")
+                    elif CONTEXT_LAYERS[target_layer] > CONTEXT_LAYERS[source_layer]:
+                        violations.append(f"outward import: {module} -> {imported}")
+                if source_layer == "domain" and imported[0] not in standard_library:
+                    allowed = (
+                        imported[:2] == (package_name, "kernel")
+                        or context_layer(imported, package_name) == (source_context, "domain")
                     )
-        self.assertEqual(violations, [], f"inward dependency rule broken: {violations}")
-
-    def test_domain_imports_only_stdlib_and_the_kernel(self) -> None:
-        """ADR-0005 §3: domain may import stdlib, the kernel, and its own siblings.
-
-        This is the check that walks the real tree. Keeping the predicate and its
-        enforcement in one test is deliberate — the `heritage_production` original
-        split them, and an audit found the split test at `test_architecture.py:133`
-        would have passed unchanged if every domain module imported numpy.
-        """
-        standard_library = set(sys.stdlib_module_names)
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            if layer_of(module) != "domain":
-                continue
-            for imported in imported_modules(source_file, module):
-                root = imported[0] if imported else ""
-                if root in standard_library or root == "__future__":
-                    continue
-                if is_internal(imported) and (
-                    imported[:2] == (PACKAGE_NAME, "kernel")
-                    or context_of(imported) == context_of(module)
+                    if not allowed:
+                        violations.append(f"domain impurity: {module} -> {imported}")
+                if (
+                    source_layer == "application"
+                    and imported[:2] == (package_name, "platform")
                 ):
-                    continue
-                violations.append(f"{where(source_file)} -> {'.'.join(imported)}")
+                    violations.append(f"application-to-platform import: {module} -> {imported}")
+                if source_layer in {"application", "infrastructure"} and imported[0] not in standard_library:
+                    allowed = imported[:2] == (package_name, "kernel")
+                    if target_context_layer is not None:
+                        target_context, target_layer = target_context_layer
+                        allowed = target_context == source_context and (
+                            CONTEXT_LAYERS[target_layer] <= CONTEXT_LAYERS[source_layer]
+                        )
+                    if source_layer == "infrastructure" and imported[:2] == (package_name, "platform"):
+                        allowed = True
+                    if not allowed:
+                        violations.append(f"context layer impurity: {module} -> {imported}")
+            if module[:2] == (package_name, "platform") and imported[:2] == (package_name, "contexts"):
+                violations.append(f"platform-to-context import: {module} -> {imported}")
+            if module[:2] != (package_name, "composition_root") and imported[:2] == (package_name, "composition_root"):
+                violations.append(f"composition root is not a sink: {module} -> {imported}")
+    visiting: set[tuple[str, ...]] = set()
+    visited: set[tuple[str, ...]] = set()
+
+    def visit(module: tuple[str, ...]) -> None:
+        if module in visiting:
+            violations.append(f"import cycle: {module}")
+            return
+        if module in visited:
+            return
+        visiting.add(module)
+        for target in edges[module]:
+            visit(target)
+        visiting.remove(module)
+        visited.add(module)
+
+    for module in modules:
+        visit(module)
+    if violations:
+        raise ArchitectureViolation("\n".join(violations))
+    return len(modules)
+
+
+class ArchitectureGuardTests(unittest.TestCase):
+    def test_real_kernel_is_scanned_and_is_stdlib_pure(self) -> None:
+        self.assertGreaterEqual(guard(PACKAGE_ROOT, PACKAGE), 8)
+
+    def assert_guard_rejects(self, relative: str, contents: str, expected: str) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / PACKAGE
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(contents, encoding="utf-8")
+            with self.assertRaisesRegex(ArchitectureViolation, expected):
+                guard(root, PACKAGE)
+
+    def test_rejects_domain_outward_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/domain/outward.py",
+            "from heritage_archive.contexts.a.infrastructure import adapter\n",
+            "outward import",
+        )
+
+    def test_rejects_domain_third_party_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/domain/third_party.py", "import requests\n", "domain impurity"
+        )
+
+    def test_rejects_cross_context_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/application/cross.py",
+            "from heritage_archive.contexts.b.domain import model\n",
+            "context crossing",
+        )
+
+    def test_rejects_application_platform_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/application/platform.py",
+            "from heritage_archive.platform.audio import engine\n",
+            "application-to-platform import",
+        )
+
+    def test_rejects_application_third_party_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/application/third_party.py",
+            "import requests\n",
+            "context layer impurity",
+        )
+
+    def test_rejects_infrastructure_third_party_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/infrastructure/third_party.py",
+            "import requests\n",
+            "context layer impurity",
+        )
+
+    def test_rejects_platform_context_import(self) -> None:
+        self.assert_guard_rejects(
+            "platform/audio/forbidden.py",
+            "from heritage_archive.contexts.a.domain import model\n",
+            "platform-to-context import",
+        )
+
+    def test_rejects_non_root_composition_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/domain/composition.py",
+            "from heritage_archive.composition_root import wire\n",
+            "composition root is not a sink",
+        )
+
+    def test_rejects_kernel_third_party_import(self) -> None:
+        self.assert_guard_rejects("kernel/third_party.py", "import requests\n", "kernel impurity")
+
+    def test_rejects_kernel_platform_import(self) -> None:
+        self.assert_guard_rejects(
+            "kernel/platform.py",
+            "from heritage_archive.platform.audio import engine\n",
+            "kernel impurity",
+        )
+
+    def test_rejects_kernel_context_import(self) -> None:
+        self.assert_guard_rejects(
+            "kernel/context.py",
+            "from heritage_archive.contexts.a.domain import model\n",
+            "kernel impurity",
+        )
+
+    def test_rejects_relative_import_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / PACKAGE
+            (root / "kernel").mkdir(parents=True)
+            (root / "kernel" / "first.py").write_text(
+                "from . import second\n", encoding="utf-8"
+            )
+            (root / "kernel" / "second.py").write_text(
+                "from . import first\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ArchitectureViolation, "import cycle"):
+                guard(root, PACKAGE)
+
+    def test_rejects_absolute_package_import_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / PACKAGE
+            (root / "kernel").mkdir(parents=True)
+            (root / "kernel" / "first.py").write_text(
+                "from heritage_archive.kernel import second\n", encoding="utf-8"
+            )
+            (root / "kernel" / "second.py").write_text(
+                "from heritage_archive.kernel import first\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ArchitectureViolation, "import cycle"):
+                guard(root, PACKAGE)
+
+    def test_rejects_platform_root_package_context_import(self) -> None:
+        self.assert_guard_rejects(
+            "platform/audio/forbidden.py",
+            "from heritage_archive import contexts\n",
+            "platform-to-context import",
+        )
+
+    def test_rejects_non_root_root_package_composition_import(self) -> None:
+        self.assert_guard_rejects(
+            "contexts/a/domain/composition.py",
+            "from heritage_archive import composition_root\n",
+            "composition root is not a sink",
+        )
+
+    def test_relative_import_resolver_preserves_bare_alias_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "probe.py"
+            source.write_text("from . import errors\n", encoding="utf-8")
+            imports = imports_from(source, (PACKAGE, "kernel", "probe"))
         self.assertEqual(
-            violations,
-            [],
-            f"domain must be stdlib + kernel + own-context only: {violations}",
+            imports,
+            {(PACKAGE, "kernel"), (PACKAGE, "kernel", "errors")},
         )
 
-    def test_platform_is_reachable_only_from_infrastructure(self) -> None:
-        """ADR-0005 §4: platform is the only place third-party SDKs are imported.
+    def test_scanner_skips_ignored_and_reparse_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / PACKAGE
+            (root / "kernel").mkdir(parents=True)
+            (root / "kernel" / "safe.py").write_text("", encoding="utf-8")
+            (root / ".venv").mkdir()
+            (root / ".venv" / "ignored.py").write_text("import requests\n", encoding="utf-8")
+            (root / "reparse").mkdir()
+            (root / "reparse" / "ignored.py").write_text("import requests\n", encoding="utf-8")
+            original = _is_reparse_point
+            with patch(
+                f"{__name__}._is_reparse_point",
+                side_effect=lambda path: path.name == "reparse" or original(path),
+            ):
+                modules = modules_under(root, PACKAGE)
+        self.assertEqual(set(modules), {(PACKAGE, "kernel", "safe")})
 
-        Letting domain or application reach it would route a third-party dependency
-        into an inner layer through a folder the domain rule does not name.
-        """
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            layer = layer_of(module)
-            if layer not in {"domain", "application"}:
-                continue
-            for imported in imported_modules(source_file, module):
-                if is_internal(imported) and imported[:2] == (PACKAGE_NAME, "platform"):
-                    violations.append(f"{where(source_file)} ({layer}) -> {'.'.join(imported)}")
-        self.assertEqual(violations, [], f"platform reached from an inner layer: {violations}")
-
-
-class ContextBoundaries(unittest.TestCase):
-    """ADR-0005 §4: each context is a mini-hexagon."""
-
-    def test_no_context_imports_another_except_the_composition_root(self) -> None:
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            if is_composition_root(module):
-                continue
-            own = context_of(module)
-            if own is None:
-                continue
-            for imported in imported_modules(source_file, module):
-                other = context_of(imported) if is_internal(imported) else None
-                if other is not None and other != own:
-                    violations.append(f"{where(source_file)} ({own}) -> {'.'.join(imported)} ({other})")
-        self.assertEqual(
-            violations,
-            [],
-            "cross-context imports are forbidden outside the composition root "
-            f"(ADR-0005 §5): {violations}",
-        )
-
-    def test_the_kernel_never_imports_a_context(self) -> None:
-        """The kernel is shared by definition; a context import would invert that."""
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            if module[:2] != (PACKAGE_NAME, "kernel"):
-                continue
-            for imported in imported_modules(source_file, module):
-                if is_internal(imported) and context_of(imported) is not None:
-                    violations.append(f"{where(source_file)} -> {'.'.join(imported)}")
-        self.assertEqual(violations, [], f"kernel depends on a context: {violations}")
-
-    def test_the_kernel_uses_only_the_standard_library(self) -> None:
-        """ADR-0001: the lifted kernel is stdlib-only, and stays that way."""
-        standard_library = set(sys.stdlib_module_names)
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            if module[:2] != (PACKAGE_NAME, "kernel"):
-                continue
-            for imported in imported_modules(source_file, module):
-                root = imported[0] if imported else ""
-                if root in standard_library or root == "__future__" or is_internal(imported):
-                    continue
-                violations.append(f"{where(source_file)} -> {'.'.join(imported)}")
-        self.assertEqual(violations, [], f"third-party import in the kernel: {violations}")
-
-    def test_nothing_imports_the_composition_root(self) -> None:
-        """ADR-0005 §5: 'It's a sink, not a source. Pollution flows in, nothing out.'
-
-        This is the property that makes the cross-context exemption safe. If anything
-        imports the composition root, the exemption stops being contained.
-        """
-        violations: list[str] = []
-        for source_file, module in python_modules():
-            if is_composition_root(module):
-                continue
-            for imported in imported_modules(source_file, module):
-                if is_internal(imported) and is_composition_root(imported):
-                    violations.append(f"{where(source_file)} -> {'.'.join(imported)}")
-        self.assertEqual(violations, [], f"the composition root is imported by: {violations}")
-
-
-class NoCycles(unittest.TestCase):
-    """A cycle means two modules are one module wearing two names.
-
-    `heritage_production` carries a real example: `review.findings` and
-    `review.rounds` import each other, and `rounds.py` defers four imports into
-    function bodies to hide it. ADR-0001 §4 cites that as a reason not to mine the
-    review model. No cycle is grandfathered here — the allowlist starts empty and
-    should stay empty.
-    """
-
-    def test_the_package_import_graph_is_acyclic(self) -> None:
-        graph: dict[str, set[str]] = {}
-        for source_file, module in python_modules():
-            name = ".".join(module)
-            targets = {
-                ".".join(imported)
-                for imported in imported_modules(source_file, module)
-                if is_internal(imported)
-            }
-            graph.setdefault(name, set()).update(targets - {name})
-
-        visiting: set[str] = set()
-        done: set[str] = set()
-        cycles: list[str] = []
-
-        def walk(node: str, trail: tuple[str, ...]) -> None:
-            if node in done:
-                return
-            if node in visiting:
-                # Report the cycle itself, not the path that reached it.
-                cycles.append(" -> ".join((*trail[trail.index(node):], node)))
-                return
-            visiting.add(node)
-            for target in sorted(graph.get(node, ())):
-                walk(target, (*trail, node))
-            visiting.discard(node)
-            done.add(node)
-
-        for node in sorted(graph):
-            walk(node, ())
-
-        self.assertEqual(cycles, [], f"import cycle(s): {cycles}")
-
-    def test_the_relative_import_resolver_sees_intra_package_edges(self) -> None:
-        """The cycle walk is worthless if relative imports are dropped.
-
-        Synthetic rather than pinned to a real file, so it keeps working before any
-        code exists and does not break when files move.
-        """
-        import tempfile
-
-        source_text = (
-            "from . import errors\n"
-            "from ..application import handlers\n"
-            "from .value_objects import Digest\n"
-        )
-        module = (PACKAGE_NAME, "contexts", "archive", "domain", "probe")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            probe = Path(tmp) / "probe.py"
-            probe.write_text(source_text, encoding="utf-8")
-            resolved = imported_modules(probe, module)
-
-        # `from . import errors` must reach the SUBMODULE. Stopping at the package
-        # would make this a self-edge, which the cycle walk filters out -- so the
-        # edge would vanish entirely. This is the case that matters.
-        self.assertIn((PACKAGE_NAME, "contexts", "archive", "domain", "errors"), resolved)
-
-        # When `node.module` is set the alias may be a submodule OR a symbol
-        # re-exported from that package's `__init__`, and nothing in the AST
-        # distinguishes them. The resolver stops at the named module, which is the
-        # conservative choice: it is still a real edge, it still carries the layer
-        # and context, and it cannot invent a module that does not exist.
-        self.assertIn((PACKAGE_NAME, "contexts", "archive", "application"), resolved)
-        self.assertIn(
-            (PACKAGE_NAME, "contexts", "archive", "domain", "value_objects"), resolved
-        )
-        self.assertNotIn(
-            (PACKAGE_NAME, "contexts", "archive", "domain", "value_objects", "Digest"),
-            resolved,
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_scanner_excludes_real_reparse_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory) / PACKAGE
+            target = Path(temporary_directory) / "reparse-target"
+            link = root / "linked"
+            (root / "kernel").mkdir(parents=True)
+            (root / "kernel" / "safe.py").write_text("", encoding="utf-8")
+            target.mkdir()
+            (target / "decoy.py").write_text("import requests\n", encoding="utf-8")
+            try:
+                if os.name == "nt":
+                    result = subprocess.run(
+                        ["cmd.exe", "/d", "/s", "/c", "mklink", "/J", str(link), str(target)],
+                        capture_output=True,
+                        check=False,
+                        text=True,
+                    )
+                    if result.returncode != 0:
+                        self.skipTest(f"Windows refused a temporary junction: {result.stderr}")
+                else:
+                    link.symlink_to(target, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"OS refused a temporary directory link: {error}")
+            self.assertTrue(_is_reparse_point(link))
+            self.assertEqual(set(modules_under(root, PACKAGE)), {(PACKAGE, "kernel", "safe")})
