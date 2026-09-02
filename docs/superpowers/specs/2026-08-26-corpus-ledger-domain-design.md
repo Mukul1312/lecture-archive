@@ -41,6 +41,12 @@ ranking.
 | 4 | Enhance all SSGGSM lecture audio | — | Not yet requested. Expected |
 | 5 | Voice clone of a devotee other than SSGGSM, for EN/HI narration | — | Expected within 1–2 months |
 
+> **Scope clarification (2026-09-02):** Row 5 remains active future work as the
+> non-SSGGSM EN/HI lane. [ADR-0006](../../decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md)
+> added a separate authorized SSGGSM/Odia/diary lane; it did not replace this row.
+> [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md) isolates the
+> two opposite identity policies.
+
 Two of the five are daily production **today**. One has a soft deadline of
 1–2 months. Two are latent. Nothing here is speculative.
 
@@ -340,6 +346,13 @@ around is worse than no rule.
 
 Serves programme 5. It is a genuine second context by § 3.2's evidence, not a
 taxonomy preference.
+
+> **Historical-policy scope:** The `Narrator` and `NarrationTake` model below is the
+> proposal for the non-SSGGSM EN/HI lane only. In particular, its
+> `must-not-resemble SSGGSM` rule, byte-hash take identity and automatic two-gate
+> publication rule are not the aggregate or release policy for authorized
+> SSGGSM/Odia/diary narration. See [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md)
+> and the separate [Odia production design](2026-08-31-cartesia-odia-narration-production-design.md).
 
 #### `Narrator`
 
@@ -700,6 +713,10 @@ entire portfolio stored in the least durable place in the system.**
 A/B review, in the same week.*
 
 ### Increment 3 — the Narrator Voice context. 2–3 days.
+
+> **Historical-policy scope:** This increment describes only the future non-SSGGSM
+> EN/HI lane. Its SSGGSM dissimilarity gate must not be applied to the authorized
+> SSGGSM/Odia/diary lane; ADR-0007 keeps the lanes policy-isolated.
 
 Brought forward from its original position because programme 5 is the only item
 with a stated date (1–2 months), and because publishing a narration before the

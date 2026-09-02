@@ -85,6 +85,14 @@ recorded as provenance and never used to decide narration order.
 - automated speaker-similarity/ASR scores as substitutes for human Odia review;
 - the separate archive rewrite governed by ADR-0004.
 
+This is the first implementation design for the authorized SSGGSM/Odia/diary lane,
+not a replacement for the active future non-SSGGSM EN/HI narration programme.
+[ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md) defines their
+opposite identity policies. Its
+[legacy-script reuse audit](../../narrator-voice-legacy-reuse-audit-2026-09-02.md)
+records which older review and assembly ideas may be extracted without importing the
+old dissimilarity, Hindi/English or VoxCPM/LoRA assumptions.
+
 ## 4. Ubiquitous language
 
 | Term | Meaning |

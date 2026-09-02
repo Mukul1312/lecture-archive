@@ -1,7 +1,7 @@
 # ADR-0004 — The DDD restructure is a clean-room rewrite with cutover, not incremental extraction.
 
 **Date:** 2026-08-29 · **Status:** **Accepted 2026-08-29** · **Governs:** the restructure as a whole
-**Supersedes:** nothing · **Superseded by:** —
+**Supersedes:** nothing · **Superseded by:** [ADR-0007](0007-two-policy-isolated-narration-lanes.md) §2.4, only for the definition of the archive-clock start commit
 
 This is the parent decision. [ADR-0001](0001-reuse-only-the-shared-kernel.md),
 [ADR-0002](0002-one-kernel-two-lifecycle-contexts.md) and

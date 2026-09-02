@@ -140,7 +140,8 @@ class GuardsAreLive(unittest.TestCase):
             self.skipTest(
                 f"{PACKAGE_NAME} does not exist yet. These guards are deliberately "
                 "in place before the code they guard (ADR-0004 decision 2). ADR-0004 "
-                "§5 sets the start gate for that first commit: 2026-09-05."
+                "§5 sets the archive start gate at 2026-09-05; ADR-0007 §2.4 defines "
+                "the triggering commit and excludes narrator-only work."
             )
         modules = python_modules()
         self.assertNotEqual(

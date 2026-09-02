@@ -36,14 +36,17 @@ someone who never runs that workflow.
 | [0004](0004-clean-room-rewrite-with-cutover.md) | Clean-room rewrite then cutover, not incremental extraction | Accepted 2026-08-29 | the restructure as a whole |
 | [0005](0005-code-layout-rulebook.md) | Layout, naming and graduation thresholds, ported from a working DDD codebase | Proposed | the new package's on-disk structure |
 | [0006](0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md) | The authorized Cartesia IVC is the current SSGGSM Odia production voice, with configurable delivery controls | Accepted 2026-08-31 | Narrator Voice for SSGGSM Odia diary narration |
+| [0007](0007-two-policy-isolated-narration-lanes.md) | Narrator Voice has two policy-isolated lanes; authorized SSGGSM Odia does not replace non-SSGGSM EN/HI narration | Accepted 2026-09-02 | Narrator Voice policy scopes and the archive-clock start trigger |
 
 **Reading order** for someone new: 0004 (why a rewrite at all) → 0002 (what the model is)
 → 0005 (where code goes) → 0001 (what is reused) → 0003 (the script cleanup, independent
 of the rest).
 
-For the current narration track, read 0006 and its linked production design. That track
-materialises Narrator Voice from 0002 but is independent of the archive-rewrite sequence
-and stopping rule in 0004.
+For narration, read 0007 first: it separates the active future non-SSGGSM EN/HI
+programme from the authorized SSGGSM/Odia/diary production lane. Then read 0006 and
+its linked production design for the latter. Narrator-only work is independent of the
+archive-rewrite sequence and does not start or consume 0004's clock; 0007 §2.4 gives
+the exact archive-context trigger.
 
 Records 0002 and 0003 were materially revised on 2026-08-29 after an adversarial audit
 refuted specific claims in each; 0001, 0002 and 0004 were revised again the same day

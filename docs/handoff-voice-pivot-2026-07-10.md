@@ -5,7 +5,9 @@
 > superseded **only for authorized SSGGSM Odia diary narration** by
 > [ADR-0006](decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md), after
 > the steward attested direct permission and approved the Cartesia Instant Voice Clone.
-> Its Hindi/English and other historical findings are not silently broadened or erased.
+> [ADR-0007](decisions/0007-two-policy-isolated-narration-lanes.md) clarifies that this
+> exception adds an authorized SSGGSM/Odia lane and does not retire the active future
+> non-SSGGSM EN/HI lane. Its other historical findings are not silently broadened or erased.
 
 **Read this first in the new chat.** It supersedes the "clone GGSM's voice" goal that drove all prior work.
 

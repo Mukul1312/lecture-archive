@@ -1,5 +1,11 @@
 # Voice dissimilarity gate — first measurement (2026-07-20)
 
+> **Scope clarification (2026-09-02):** This is historical gate evidence for the
+> active future **non-SSGGSM EN/HI narration lane**. It must not approve, reject or
+> select takes in the authorized SSGGSM/Odia/diary lane, whose goal is faithful
+> SSGGSM likeness and whose release authority is qualified Odia listening review.
+> See [ADR-0007](decisions/0007-two-policy-isolated-narration-lanes.md).
+
 **Why this exists.** The pivot (`handoff-voice-pivot-2026-07-10.md`) bars GGSM's voice from output.
 Mukul's constraint: a synthetic base voice we generate is usable, *but we must check it doesn't sound
 like him*. That check can't be a threshold we invent — this doc measures it.
