@@ -1,7 +1,7 @@
 # ADR-0006 — The authorized Cartesia Instant Voice Clone is the current SSGGSM Odia production voice, with configurable delivery controls.
 
 **Date:** 2026-08-31 · **Status:** **Accepted 2026-08-31** · **Governs:** the Narrator Voice context for SSGGSM Odia diary narration
-**Supersedes:** the SSGGSM no-clone constraint in [`handoff-voice-pivot-2026-07-10.md`](../handoff-voice-pivot-2026-07-10.md), and only the speaker/language description of programme 5 in [`2026-08-26-corpus-ledger-domain-design.md`](../superpowers/specs/2026-08-26-corpus-ledger-domain-design.md) §2 · **Superseded by:** [ADR-0007](0007-two-policy-isolated-narration-lanes.md) §2.2, for the preceding Programme-5 speaker/language supersession clause only
+**Supersedes:** the SSGGSM no-clone constraint in [`handoff-voice-pivot-2026-07-10.md`](../handoff-voice-pivot-2026-07-10.md), and only the speaker/language description of programme 5 in [`2026-08-26-corpus-ledger-domain-design.md`](../superpowers/specs/2026-08-26-corpus-ledger-domain-design.md) §2 · **Superseded by:** [ADR-0007](0007-two-policy-isolated-narration-lanes.md) §2.2 for the preceding Programme-5 speaker/language supersession clause; [ADR-0008](0008-lane-b-production-boundaries.md) §§2.2 and 2.4 only for the single-profile configuration shape and the undecided-UI statement, retaining this record's values, model pin, voice and scope
 
 Related: [ADR-0002](0002-one-kernel-two-lifecycle-contexts.md) anticipated Narrator
 Voice as the second bounded context. This record materialises that context; it does not

@@ -1,6 +1,8 @@
 # Narrator Voice legacy-script reuse audit — 2026-09-02
 
-**Status:** Recorded input to ADR-0007 and the proposed Odia production design
+**Status:** Recorded input to ADR-0007, the
+[codebase-wide shared-capability audit](narrator-voice-shared-capability-audit-2026-09-02.md)
+and the accepted [Lane-B boundary decision](decisions/0008-lane-b-production-boundaries.md)
 
 **Question:** Which existing English/Hindi-era narration capabilities can safely help
 the authorized SSGGSM/Odia/diary lane without importing the old voice policy?
@@ -56,3 +58,8 @@ The audit does not authorize deletion or rewriting of historical code. The `scri
 entries remain evidence and runnable research history under ADR-0003. That ADR
 explicitly excludes `cloud/`; the two audited `cloud/` narrators remain ungoverned
 historical evidence and are not authorized for either new production lane.
+
+Legacy player, keyboard and compare patterns may inform the localhost operator UI.
+They do not supply its persistence or identity model: every durable command is handled
+server-side with a stable `ActorId`. The publishing-stage reviewer portal is a separate
+authenticated adapter and must not inherit browser `localStorage` as authority.

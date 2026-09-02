@@ -2,9 +2,17 @@
 
 **Date:** 2026-08-31
 
-**Status:** Proposed for steward review
+**Status:** **Superseded for implementation by the
+[2026-09-02 v2 design](2026-09-02-cartesia-odia-narration-production-v2-design.md)**
 
-**Decision authority:** [ADR-0006](../../decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md)
+This file is retained as the historical provider/workflow proposal. Its CLI-only UI,
+single synthesis-profile and embedded mutable-authorization shapes must not be
+implemented. ADR-0008 and the v2 design replace those parts without changing the
+accepted ADR-0006 voice/scope decision.
+
+**Decision authority:** [ADR-0006](../../decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md),
+[ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md) and
+[ADR-0008](../../decisions/0008-lane-b-production-boundaries.md)
 
 **Implementation status:** Documentation only; no Cartesia production code or API call is authorized by this document
 

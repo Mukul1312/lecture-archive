@@ -352,7 +352,7 @@ taxonomy preference.
 > `must-not-resemble SSGGSM` rule, byte-hash take identity and automatic two-gate
 > publication rule are not the aggregate or release policy for authorized
 > SSGGSM/Odia/diary narration. See [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md)
-> and the separate [Odia production design](2026-08-31-cartesia-odia-narration-production-design.md).
+> and the separate [Odia production v2 design](2026-09-02-cartesia-odia-narration-production-v2-design.md).
 
 #### `Narrator`
 
@@ -449,7 +449,9 @@ before, `ledger register-derived` after.
   blind-panel keyboard UI, which is good. Exactly one thing changes: the
   destination of the JSON their existing "Download review" button already
   produces, from browser `localStorage` to `ledger judge`. No UI rewrite, no
-  server.
+  server. **Scope note:** that statement governs these Corpus Ledger/legacy
+  presenters. It does not prohibit the new Lane-B localhost and publishing-stage
+  inbound adapters accepted by [ADR-0008](../../decisions/0008-lane-b-production-boundaries.md).
 - **`cloud/` and `colab/`** — `pod_setup.sh`, `pod_asr.sh`, `pod_train.sh`,
   `pod_infer.sh`, `orchestrate.sh`, `pod_dataprep.py`. GPU class,
   spot-vs-on-demand, region, image, batch size, checkpoint cadence and volume

@@ -18,11 +18,16 @@ The approved production baseline is an authorized Cartesia Sonic 3.6 Instant Voi
 Clone for SSGGSM Odia diary narration. The accepted scope and configurable
 `speed=0.90`, `volume=1.00`, `emotion=calm` defaults are recorded in
 [ADR-0006](docs/decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md).
-The proposed code-controlled, review-gated workflow is in the
-[Cartesia Odia narration production design](docs/superpowers/specs/2026-08-31-cartesia-odia-narration-production-design.md).
 [ADR-0007](docs/decisions/0007-two-policy-isolated-narration-lanes.md) records that
 this Odia lane does not replace the active future non-SSGGSM English/Hindi narration
 programme and prevents their opposite identity policies from leaking across lanes.
+[ADR-0008](docs/decisions/0008-lane-b-production-boundaries.md) records the accepted
+one-job aggregate, split settings, separate authorization lifecycle, localhost
+sole-operator UI and publishing-stage reviewer boundary. The current detailed workflow
+proposal is the [Cartesia Odia narration v2 design](docs/superpowers/specs/2026-09-02-cartesia-odia-narration-production-v2-design.md).
+The [codebase-wide capability audit](docs/narrator-voice-shared-capability-audit-2026-09-02.md)
+supports proposed [ADR-0009](docs/decisions/0009-share-narration-mechanics-not-policy.md),
+which still needs steward review before cross-lane extraction is treated as accepted.
 No production implementation or private audio is added by those documents.
 
 ## Main components

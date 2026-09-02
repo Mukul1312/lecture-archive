@@ -16,9 +16,11 @@ The following paths are therefore local or externally managed:
   blind auditions, QA exports, and final delivery archives.
 - `site-casting/audio/` and `site-odia-check/audio/`: private listening-review
   assets used by the static site templates.
-- Cartesia narration job roots (`CARTESIA_NARRATION_ROOT`): private voice identifiers,
-  detailed/private authorization attestation records and evidence, run manifests,
-  generated takes, reviews and masters.
+- Cartesia narration private root (`CARTESIA_NARRATION_ROOT`): separate private
+  `AuthorizationRecord` history/evidence and narration-job manifests, plus voice
+  identifiers, generated takes, reviews and masters. Jobs retain immutable
+  authorization snapshots/references; they are not the canonical mutable
+  authorization record. See [ADR-0008](decisions/0008-lane-b-production-boundaries.md).
 - `.tmp-*`, `voice_lab/`, and deployment metadata: reproducible local output.
 
 Several retained scripts and templates refer to these paths intentionally.
