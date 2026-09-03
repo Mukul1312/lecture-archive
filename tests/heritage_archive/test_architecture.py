@@ -273,6 +273,17 @@ class ArchitectureGuardTests(unittest.TestCase):
             "platform-to-context import",
         )
 
+    def test_cartesia_dependencies_are_confined_to_the_context_neutral_platform_adapter(self) -> None:
+        provider_dependencies = {"httpx", "defusedxml", "cartesia"}
+        violations = []
+        for module, source in modules_under(PACKAGE_ROOT, PACKAGE).items():
+            if module[:3] == (PACKAGE, "platform", "cartesia"):
+                continue
+            for imported in imports_from(source, module):
+                if imported and imported[0] in provider_dependencies:
+                    violations.append(f"{source.name}: {'.'.join(imported)}")
+        self.assertEqual(violations, [])
+
     def test_rejects_non_root_root_package_composition_import(self) -> None:
         self.assert_guard_rejects(
             "contexts/a/domain/composition.py",
