@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, replace
+from datetime import timedelta
 from pathlib import Path
 import sys
 import unittest
@@ -19,6 +20,7 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
     AttemptWorkspaceEvidence,
     ListeningOutcome,
+    NarrationMasterSnapshot,
     NarrationMaster,
     PassageOffset,
     ReviewAuthority,
@@ -148,6 +150,61 @@ class NarrationJobMasteringTests(unittest.TestCase):
         self.assertFalse(self.job.is_snapshot_current(snapshot, authority_eligible=False))
         self.job.record_narration_master_listening(MasterListeningDecisionId(uuid(319)), master.master_id, self.actor, ListeningOutcome.FAILED, "fake later failure", NOW, expected_revision=self.job.revision)
         self.assertFalse(self.job.is_snapshot_current(snapshot, authority_eligible=True))
+
+    def test_snapshot_current_rejects_a_structurally_valid_snapshot_that_was_never_issued(self) -> None:
+        self.assemble()
+        master = self.job.masters[0]
+        self.job.record_narration_master_listening(
+            MasterListeningDecisionId(uuid(318)), master.master_id, self.actor,
+            ListeningOutcome.PASSED, "fake whole-master pass", NOW,
+            expected_revision=self.job.revision,
+        )
+        issued = self.job.issue_narration_master_snapshot(
+            NarrationMasterSnapshotId(uuid(317)), master.master_id, make_authority(), True,
+            NOW, expected_revision=self.job.revision,
+        )
+
+        never_issued = NarrationMasterSnapshot.create(
+            snapshot_id=issued.snapshot_id,
+            issuing_job_id=issued.issuing_job_id,
+            issuing_job_revision=issued.issuing_job_revision,
+            source_master=master,
+            listening_decision=issued.listening_decision,
+            authority_snapshot=issued.authority_snapshot,
+            role=issued.role,
+            intended_episode_id=issued.intended_episode_id,
+            ordered_passage_ids=issued.ordered_passage_ids,
+            selected_take_ids=issued.selected_take_ids,
+            issued_at=NOW + timedelta(seconds=1),
+        )
+
+        self.assertFalse(self.job.is_snapshot_current(never_issued, authority_eligible=True))
+
+    def test_rehydration_rejects_selection_after_latest_operational_rejection(self) -> None:
+        accepted_at = NOW
+        selected_at = NOW + timedelta(seconds=1)
+        rejected_at = NOW + timedelta(seconds=2)
+        self.job.record_review_decision(
+            ReviewDecisionId(uuid(310)), self.take_a.take_id, self.actor,
+            ReviewAuthority.OPERATIONAL, ReviewOutcome.ACCEPTED, "fake accepted", accepted_at,
+            expected_revision=self.job.revision,
+        )
+        self.job.select_working_take(
+            SelectionDecisionId(uuid(312)), self.passage_a, self.take_a.take_id, self.actor,
+            True, "fake select", selected_at, expected_revision=self.job.revision,
+        )
+        self.job.record_review_decision(
+            ReviewDecisionId(uuid(311)), self.take_a.take_id, self.actor,
+            ReviewAuthority.OPERATIONAL, ReviewOutcome.REJECTED, "fake rejected", rejected_at,
+            expected_revision=self.job.revision,
+        )
+        invalid = replace(
+            self.job.to_snapshot(),
+            selections=(replace(self.job.selections[0], decided_at=rejected_at),),
+        )
+
+        with self.assertRaises(ValidationError):
+            NarrationJob.from_snapshot(invalid)
 
     def test_INV_NJ_18_master_and_issued_snapshot_preserve_explicit_gaps_and_sample_accurate_offsets(self) -> None:
         self.assemble()

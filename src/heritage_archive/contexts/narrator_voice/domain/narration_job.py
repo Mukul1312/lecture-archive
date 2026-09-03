@@ -380,14 +380,23 @@ class NarrationJob:
             raise ValidationError("selection decision identities must be unique")
         for selection in snapshot.selections:
             take = takes.get(selection.take_id)
-            accepted = any(
-                review.take_id == selection.take_id
-                and review.authority is ReviewAuthority.OPERATIONAL
-                and review.outcome is ReviewOutcome.ACCEPTED
-                and review.decided_at <= selection.decided_at
-                for review in snapshot.reviews
+            latest_operational_review = next(
+                (
+                    review
+                    for review in reversed(snapshot.reviews)
+                    if review.take_id == selection.take_id
+                    and review.authority is ReviewAuthority.OPERATIONAL
+                    and review.decided_at <= selection.decided_at
+                ),
+                None,
             )
-            if take is None or selection.passage_id != take.passage_id or selection.passage_id not in passages or not accepted:
+            if (
+                take is None
+                or selection.passage_id != take.passage_id
+                or selection.passage_id not in passages
+                or latest_operational_review is None
+                or latest_operational_review.outcome is not ReviewOutcome.ACCEPTED
+            ):
                 raise ValidationError("selection must reference an owned passage take with prior operational acceptance")
 
         if type(snapshot.assembly_attempts) is not tuple or any(type(value) is not NarrationAssemblyAttempt for value in snapshot.assembly_attempts):
@@ -1500,6 +1509,9 @@ class NarrationJob:
 
     def is_snapshot_current(self, snapshot: NarrationMasterSnapshot, *, authority_eligible: bool) -> bool:
         if type(snapshot) is not NarrationMasterSnapshot or type(authority_eligible) is not bool or not authority_eligible:
+            return False
+        issued = next((value for value in self._issued_snapshots if value.snapshot_id == snapshot.snapshot_id), None)
+        if issued != snapshot:
             return False
         if snapshot.issuing_job_id != self._job_id or snapshot.contract_digest != self._contract.digest:
             return False
