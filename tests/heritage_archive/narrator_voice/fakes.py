@@ -239,49 +239,46 @@ class FakeBudgetLedger:
         self.actions: list[tuple[str, object, object]] = []
         self.deny_reserve = False
         self.states = {}
+        self.finalization_facts = {}
         self.fail_next_finalization = False
+        self.commit_then_raise_next_finalization = False
 
     def reserve(self, reservation_id, estimated_usage) -> None:
         self.actions.append(("reserve", reservation_id, estimated_usage))
         if self.deny_reserve:
             raise BudgetDenied("fake budget denial")
         self.states[reservation_id] = BudgetRecoveryState.RESERVED
+        self.finalization_facts.pop(reservation_id, None)
+
+    def _finalize(self, reservation_id, state, action, fact) -> None:
+        if self.fail_next_finalization:
+            self.fail_next_finalization = False
+            raise RuntimeError("fake budget finalization failure")
+        previous = self.states.get(reservation_id)
+        existing = self.finalization_facts.get(reservation_id)
+        if previous is state:
+            if existing == (action, fact):
+                return
+            raise ValidationError("fake budget finalization facts are immutable")
+        if previous is not BudgetRecoveryState.RESERVED:
+            raise ValidationError("fake budget cannot rewrite a finalized reservation")
+        self.states[reservation_id] = state
+        self.finalization_facts[reservation_id] = (action, fact)
+        if self.commit_then_raise_next_finalization:
+            self.commit_then_raise_next_finalization = False
+            raise RuntimeError("fake budget committed before reporting failure")
 
     def settle(self, reservation_id, actual_usage) -> None:
         self.actions.append(("settle", reservation_id, actual_usage))
-        if self.fail_next_finalization:
-            self.fail_next_finalization = False
-            raise RuntimeError("fake budget finalization failure")
-        previous = self.states.get(reservation_id)
-        if previous is BudgetRecoveryState.SETTLED:
-            return
-        if previous in {BudgetRecoveryState.RELEASED, BudgetRecoveryState.UNKNOWN}:
-            raise ValidationError("fake budget cannot settle an already finalized reservation")
-        self.states[reservation_id] = BudgetRecoveryState.SETTLED
+        self._finalize(reservation_id, BudgetRecoveryState.SETTLED, "settle", actual_usage)
 
     def release(self, reservation_id, reason) -> None:
         self.actions.append(("release", reservation_id, reason))
-        if self.fail_next_finalization:
-            self.fail_next_finalization = False
-            raise RuntimeError("fake budget finalization failure")
-        previous = self.states.get(reservation_id)
-        if previous is BudgetRecoveryState.RELEASED:
-            return
-        if previous in {BudgetRecoveryState.SETTLED, BudgetRecoveryState.UNKNOWN}:
-            raise ValidationError("fake budget cannot rewrite a finalized reservation")
-        self.states[reservation_id] = BudgetRecoveryState.RELEASED
+        self._finalize(reservation_id, BudgetRecoveryState.RELEASED, "release", reason)
 
     def hold(self, reservation_id, reason) -> None:
         self.actions.append(("hold", reservation_id, reason))
-        if self.fail_next_finalization:
-            self.fail_next_finalization = False
-            raise RuntimeError("fake budget finalization failure")
-        previous = self.states.get(reservation_id)
-        if previous is BudgetRecoveryState.UNKNOWN:
-            return
-        if previous in {BudgetRecoveryState.SETTLED, BudgetRecoveryState.RELEASED}:
-            raise ValidationError("fake budget cannot rewrite a finalized reservation")
-        self.states[reservation_id] = BudgetRecoveryState.UNKNOWN
+        self._finalize(reservation_id, BudgetRecoveryState.UNKNOWN, "hold", reason)
 
     def read(self, reservation_id):
         return self.states.get(reservation_id, BudgetRecoveryState.UNKNOWN)
@@ -313,11 +310,15 @@ class FakeArtifactStore:
     def __init__(self, artifact_ids: list[ArtifactId]) -> None:
         self.artifact_ids = list(artifact_ids)
         self.calls = []
+        self.fail_next_publish = False
 
     def publish(self, location, payload, media_type, published_at):
         from heritage_archive.contexts.narrator_voice.domain.evidence import PublishedArtifact
 
         self.calls.append((location, payload, media_type, published_at))
+        if self.fail_next_publish:
+            self.fail_next_publish = False
+            raise RuntimeError("fake artifact publication failure")
         reference = ArtifactRef(self.artifact_ids.pop(0), ContentDigest.from_bytes(payload), len(payload), media_type)
         return PublishedArtifact(reference, location, published_at)
 
@@ -327,9 +328,13 @@ class FakeMediaInspector:
         self.sample_count = sample_count
         self.all_digital_silence = all_digital_silence
         self.calls = []
+        self.fail_next_inspection = False
 
     def inspect_canonical_wav(self, payload):
         self.calls.append(payload)
+        if self.fail_next_inspection:
+            self.fail_next_inspection = False
+            raise RuntimeError("fake media inspection failure")
         return DecodedMediaFacts(
             CanonicalAudioFacts(),
             self.sample_count,

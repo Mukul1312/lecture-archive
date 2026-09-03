@@ -795,6 +795,25 @@ def _workspace(
     )
 
 
+def _independently_sealed_provider_events(events: object) -> tuple[ProviderEventEvidence, ...]:
+    """Keep returned provider events only when their terminal closure is provable."""
+    if (
+        type(events) is not tuple
+        or not events
+        or any(type(event) is not ProviderEventEvidence for event in events)
+        or tuple(event.sequence for event in events) != tuple(range(len(events)))
+    ):
+        return ()
+    terminal = tuple(event for event in events if event.terminal_classification is not None)
+    if (
+        len(terminal) != 1
+        or events[-1] is not terminal[0]
+        or events[-1].kind is not ProviderEventKind.TERMINAL
+    ):
+        return ()
+    return events
+
+
 @dataclass(frozen=True, slots=True)
 class GenerateTakeHandler:
     repository: NarrationJobRepository
@@ -819,14 +838,8 @@ class GenerateTakeHandler:
         generated,
         reason: str,
     ) -> GenerationRunResult:
-        events = (
-            generated.events
-            if type(generated.events) is tuple
-            and all(type(event) is ProviderEventEvidence for event in generated.events)
-            and tuple(event.sequence for event in generated.events) == tuple(range(len(generated.events)))
-            else ()
-        )
-        if not self._persist_workspace_then_finalize_budget(
+        events = _independently_sealed_provider_events(generated.events)
+        disposition = self._persist_workspace_then_finalize_budget(
             command, job, attempt_id, reservation_id,
             _workspace(
                 workspace_id, job, attempt_id, reservation_id, preview,
@@ -834,8 +847,9 @@ class GenerateTakeHandler:
                 effective_input=effective_input, events=events, recovery=(reason,),
             ),
             "settle", generated.usage,
-        ):
-            return self._recovery_required(command, attempt_id, "held")
+        )
+        if disposition is not None:
+            return self._recovery_required(command, attempt_id, disposition)
         previous = job.revision
         job.finalize_generation_outcome(
             attempt_id, AttemptState.FAILED, SubmissionEvidence.COMPLETED,
@@ -871,7 +885,7 @@ class GenerateTakeHandler:
         workspace: AttemptWorkspaceEvidence,
         action: str,
         evidence: object,
-    ) -> bool:
+    ) -> str | None:
         """The post-gateway durable boundary: workspace, budget, then aggregate CAS."""
         try:
             self.workspaces.save(workspace)
@@ -879,8 +893,8 @@ class GenerateTakeHandler:
             try:
                 self.budget.hold(reservation_id, "workspace persistence failed after external work")
             except Exception:
-                pass
-            return False
+                return "unknown"
+            return "held"
         try:
             if action == "settle":
                 self.budget.settle(reservation_id, evidence)
@@ -891,12 +905,10 @@ class GenerateTakeHandler:
             else:
                 raise AssertionError("unknown post-gateway budget action")
         except Exception:
-            try:
-                self.budget.hold(reservation_id, "budget finalization failed after workspace persistence")
-            except Exception:
-                pass
-            return False
-        return True
+            # The adapter can commit and then fail before responding. Its durable
+            # disposition is therefore unknowable here; never issue a downgrade.
+            return "unknown"
+        return None
 
     def __call__(self, command: GenerateTakeCommand) -> GenerationRunResult:
         job = _load_job(self.repository, command.job_id)
@@ -1026,7 +1038,7 @@ class GenerateTakeHandler:
         try:
             generated = self.gateway.synthesize(effective_input)
         except DefinitePreSendFailure as error:
-            if not self._persist_workspace_then_finalize_budget(
+            disposition = self._persist_workspace_then_finalize_budget(
                 command, job, attempt_id, reservation_id,
                 _workspace(
                     workspace_id, job, attempt_id, reservation_id, preview,
@@ -1034,8 +1046,9 @@ class GenerateTakeHandler:
                     effective_input=effective_input, recovery=(str(error),),
                 ),
                 "release", "definite pre-send failure",
-            ):
-                return self._recovery_required(command, attempt_id, "held")
+            )
+            if disposition is not None:
+                return self._recovery_required(command, attempt_id, disposition)
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.BLOCKED, SubmissionEvidence.DEFINITELY_NOT_SENT,
@@ -1046,7 +1059,7 @@ class GenerateTakeHandler:
                 return self._recovery_required(command, attempt_id, "released")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.BLOCKED, None, "released")
         except AmbiguousExternalFailure as error:
-            if not self._persist_workspace_then_finalize_budget(
+            disposition = self._persist_workspace_then_finalize_budget(
                 command, job, attempt_id, reservation_id,
                 _workspace(
                     workspace_id, job, attempt_id, reservation_id, preview,
@@ -1054,8 +1067,9 @@ class GenerateTakeHandler:
                     effective_input=effective_input, recovery=(str(error),),
                 ),
                 "hold", "ambiguous external outcome",
-            ):
-                return self._recovery_required(command, attempt_id, "held")
+            )
+            if disposition is not None:
+                return self._recovery_required(command, attempt_id, disposition)
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
@@ -1066,7 +1080,7 @@ class GenerateTakeHandler:
                 return self._recovery_required(command, attempt_id, "held")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.UNKNOWN, None, "held")
         except ExternalWorkFailed as error:
-            if not self._persist_workspace_then_finalize_budget(
+            disposition = self._persist_workspace_then_finalize_budget(
                 command, job, attempt_id, reservation_id,
                 _workspace(
                     workspace_id, job, attempt_id, reservation_id, preview,
@@ -1074,8 +1088,9 @@ class GenerateTakeHandler:
                     effective_input=effective_input, recovery=(str(error),),
                 ),
                 "hold", "definitive submitted failure awaits usage evidence",
-            ):
-                return self._recovery_required(command, attempt_id, "held")
+            )
+            if disposition is not None:
+                return self._recovery_required(command, attempt_id, disposition)
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.FAILED, SubmissionEvidence.STARTED,
@@ -1117,7 +1132,7 @@ class GenerateTakeHandler:
 
         try:
             media = self.media.inspect_canonical_wav(generated.canonical_wav_bytes)
-        except ValidationError:
+        except Exception:
             return self._record_invalid_provider_result(
                 command,
                 job,
@@ -1129,7 +1144,7 @@ class GenerateTakeHandler:
                 generated,
                 "provider result could not be decoded into exact canonical media facts",
             )
-        if media.all_digital_silence:
+        if type(media) is not DecodedMediaFacts or media.all_digital_silence:
             return self._record_invalid_provider_result(
                 command,
                 job,
@@ -1141,13 +1156,26 @@ class GenerateTakeHandler:
                 generated,
                 "provider result decoded to all digital silence",
             )
-        artifact = self.artifacts.publish(
-            command.artifact_location,
-            generated.canonical_wav_bytes,
-            "audio/wav",
-            self.clock.now(),
-        )
-        if not self._persist_workspace_then_finalize_budget(
+        try:
+            artifact = self.artifacts.publish(
+                command.artifact_location,
+                generated.canonical_wav_bytes,
+                "audio/wav",
+                self.clock.now(),
+            )
+        except Exception:
+            return self._record_invalid_provider_result(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                generated,
+                "canonical artifact publication failed after provider result",
+            )
+        disposition = self._persist_workspace_then_finalize_budget(
             command, job, attempt_id, reservation_id,
             _workspace(
                 workspace_id, job, attempt_id, reservation_id, preview,
@@ -1155,8 +1183,9 @@ class GenerateTakeHandler:
                 effective_input=effective_input, events=generated.events, artifact=artifact,
             ),
             "settle", generated.usage,
-        ):
-            return self._recovery_required(command, attempt_id, "held")
+        )
+        if disposition is not None:
+            return self._recovery_required(command, attempt_id, disposition)
         previous = job.revision
         job.stage_generation_artifacts(attempt_id, generated.events, artifact, media, expected_revision=previous)
         if not self.repository.save(job, previous):
@@ -1324,7 +1353,7 @@ class ReconcileGenerationAttemptHandler:
             _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job recovery")
         if decision.budget is BudgetDisposition.RELEASE and budget_state is BudgetRecoveryState.RESERVED:
             self.budget.release(attempt.budget_reservation_id, decision.reason.value)
-        elif decision.budget is BudgetDisposition.HOLD and budget_state is not BudgetRecoveryState.SETTLED:
+        elif decision.budget is BudgetDisposition.HOLD and budget_state is BudgetRecoveryState.RESERVED:
             self.budget.hold(attempt.budget_reservation_id, decision.reason.value)
         return NarrationMutationResult(command.command_id, job.job_id, job.revision)
 

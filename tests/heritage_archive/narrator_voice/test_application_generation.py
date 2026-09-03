@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 import sys
@@ -205,6 +206,75 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
         self.assertEqual(self.store.calls, [])
 
+    def test_invalid_partial_provider_events_are_discarded_but_a_sealed_failure_terminal_is_retained(self) -> None:
+        partial = replace(
+            self.synthesis_result.events[0],
+            kind=ProviderEventKind.AUDIO,
+            terminal_classification=None,
+        )
+        self.gateway.result = SynthesisResult((partial,), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+
+        self.handler()(self.command())
+
+        self.assertEqual(self.workspaces.load(self.attempt_id).events, ())
+
+    def test_invalid_sealed_failure_terminal_is_retained_as_independent_evidence(self) -> None:
+        failure_terminal = replace(
+            self.synthesis_result.events[0], terminal_classification=ProviderTerminalClass.FAILURE,
+        )
+        self.gateway.result = SynthesisResult((failure_terminal,), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+
+        self.handler()(self.command())
+
+        self.assertEqual(self.workspaces.load(self.attempt_id).events, (failure_terminal,))
+
+    def test_returned_adapter_failures_persist_failed_evidence_and_settle_without_replay(self) -> None:
+        self.inspector.fail_next_inspection = True
+        result = self.handler()(self.command())
+
+        workspace = self.workspaces.load(self.attempt_id)
+        self.assertEqual((result.state, workspace.state, workspace.submission, self.budget.read(self.reservation_id).value), (AttemptState.FAILED, AttemptState.FAILED, "completed", "settled"))
+        self.assertEqual((len(self.gateway.calls), len(self.inspector.calls), len(self.store.calls)), (1, 1, 0))
+
+    def test_artifact_publish_failure_persists_failed_evidence_and_settles_without_replay(self) -> None:
+        self.store.fail_next_publish = True
+        result = self.handler()(self.command())
+
+        workspace = self.workspaces.load(self.attempt_id)
+        self.assertEqual((result.state, workspace.state, workspace.published_artifacts, self.budget.read(self.reservation_id).value), (AttemptState.FAILED, AttemptState.FAILED, (), "settled"))
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 1))
+
+    def test_budget_commit_then_raise_reports_unknown_without_a_downgrade(self) -> None:
+        self.budget.commit_then_raise_next_finalization = True
+        result = self.handler()(self.command())
+
+        self.assertEqual((result.state, result.budget_disposition, self.budget.read(self.reservation_id).value), (AttemptState.UNKNOWN, "unknown", "settled"))
+
+    def test_fake_budget_finalization_is_idempotent_only_for_exact_terminal_facts(self) -> None:
+        self.budget.reserve(self.reservation_id, NonNegativeDecimal("42"))
+        self.budget.settle(self.reservation_id, NonNegativeDecimal("42"))
+        self.budget.settle(self.reservation_id, NonNegativeDecimal("42"))
+
+        with self.assertRaises(ValidationError):
+            self.budget.settle(self.reservation_id, NonNegativeDecimal("43"))
+        with self.assertRaises(ValidationError):
+            self.budget.hold(self.reservation_id, "would downgrade settled usage")
+
+    def test_fake_budget_release_and_hold_require_their_exact_original_reason(self) -> None:
+        released = BudgetReservationId(uuid(930))
+        held = BudgetReservationId(uuid(931))
+        self.budget.reserve(released, NonNegativeDecimal("1"))
+        self.budget.release(released, "not sent")
+        self.budget.release(released, "not sent")
+        self.budget.reserve(held, NonNegativeDecimal("1"))
+        self.budget.hold(held, "ambiguous")
+        self.budget.hold(held, "ambiguous")
+
+        with self.assertRaises(ValidationError):
+            self.budget.release(released, "different reason")
+        with self.assertRaises(ValidationError):
+            self.budget.hold(held, "different reason")
+
     def test_invalid_provider_result_CAS_refusal_preserves_failed_workspace_and_settled_usage(self) -> None:
         self.gateway.result = SynthesisResult((), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
         self.jobs.reject_on_save_calls.add(8)
@@ -334,7 +404,8 @@ class GenerationApplicationTests(unittest.TestCase):
         attempt = self.jobs.load(self.job_id).generation_attempts[-1]
         self.assertEqual((result.state, workspace.state, attempt.state), (AttemptState.UNKNOWN, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.EXTERNAL_WORK_STARTED))
         self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 1))
-        self.assertEqual([action[0] for action in self.budget.actions[-2:]], ["settle", "hold"])
+        self.assertEqual((result.budget_disposition, self.budget.read(self.reservation_id).value), ("unknown", "reserved"))
+        self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
 
 
 if __name__ == "__main__":
