@@ -5,6 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ContentDigest
+from heritage_archive.contexts.narrator_voice.application.commands import (
+    DictionaryOverride,
+    OverrideMode,
+    RecipeAuthoringIntent,
+    RecipeAuthoringMode,
+    TakeSettingsIntent,
+    TextControlOverride,
+)
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AuthoritySnapshot,
     DecodedMediaFacts,
@@ -16,9 +24,13 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     PassageOffset,
     NarrationTake,
     PublishedArtifact,
+    ProviderEventEvidence,
+    ProviderEventKind,
+    ProviderTerminalClass,
 )
 from heritage_archive.contexts.narrator_voice.domain.ids import (
     AuthorizationRecordId,
+    BudgetReservationId,
     DiaryEpisodeId,
     GenerationAttemptId,
     GenerationPreviewId,
@@ -28,6 +40,7 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     NarrationJobId,
     PassageId,
     PassageRenderRecipeId,
+    ProviderEventId,
     TakeId,
 )
 from heritage_archive.contexts.narrator_voice.domain.values import (
@@ -76,6 +89,31 @@ def make_settings(label: str = "a") -> EffectiveTakeSettings:
         ResolvedControl(ControlProvenance.INHERITED, "calm"),
         make_dictionary(label),
         ControlProvenance.INHERITED,
+    )
+
+
+def make_settings_intent() -> TakeSettingsIntent:
+    return TakeSettingsIntent(
+        TextControlOverride(OverrideMode.INHERIT),
+        TextControlOverride(OverrideMode.INHERIT),
+        TextControlOverride(OverrideMode.INHERIT),
+        DictionaryOverride(OverrideMode.INHERIT),
+    )
+
+
+def make_recipe_authoring(
+    *,
+    recipe_index: int = 10,
+    revision: int = 1,
+    controls=(),
+    advanced_source: str | None = None,
+) -> RecipeAuthoringIntent:
+    return RecipeAuthoringIntent(
+        PassageRenderRecipeId(uuid(recipe_index)),
+        revision,
+        RecipeAuthoringMode.ADVANCED if advanced_source is not None else RecipeAuthoringMode.STRUCTURED,
+        tuple(controls),
+        advanced_source,
     )
 
 
@@ -203,6 +241,7 @@ def make_preview(
         normalization="off",
         output_audio=contract.audio,
         billable_rule="fake-billing-v1",
+        billable_characters=len(text.value) + 13,
         estimated_usage=str(len(text.value) + 13),
         issued_at=NOW,
     )
@@ -240,22 +279,73 @@ def make_take(
     )
 
 
+def complete_take(
+    job,
+    take: NarrationTake,
+    *,
+    text: PassageText,
+    recipe: PassageRenderRecipe,
+    contract: ReleaseSynthesisContract,
+    preview_index: int,
+    budget_index: int,
+    event_index: int,
+) -> None:
+    """Drive a take through the real aggregate lifecycle for domain tests."""
+
+    preview = make_preview(
+        job_id=take.job_id,
+        base_revision=job.revision,
+        passage_id=take.passage_id,
+        text=text,
+        recipe=recipe,
+        contract=contract,
+        preview_index=preview_index,
+        settings=take.settings,
+        authority=take.authority_snapshot,
+    )
+    job.issue_generation_preview(preview, expected_revision=job.revision)
+    job.reserve_generation_attempt(
+        take.attempt_id,
+        BudgetReservationId(uuid(budget_index)),
+        preview.preview_id,
+        NOW,
+        expected_revision=job.revision,
+    )
+    job.freeze_generation_input(take.attempt_id, take.effective_input, expected_revision=job.revision)
+    job.mark_generation_external_work_started(take.attempt_id, NOW, expected_revision=job.revision)
+    raw = ArtifactRef(ArtifactId(uuid(event_index)), digest(f"event-{event_index}"), 12, "application/json")
+    event = ProviderEventEvidence(
+        ProviderEventId(uuid(event_index + 1)), 0, ProviderEventKind.TERMINAL,
+        raw, raw.content_digest, NOW, "fake-request", "fake-response", None,
+        take.timing_reference, str(take.effective_input.billable_characters),
+        ProviderTerminalClass.SUCCESS,
+    )
+    job.stage_generation_artifacts(
+        take.attempt_id, (event,), take.artifact, take.media,
+        expected_revision=job.revision,
+    )
+    job.mark_generation_artifacts_published(take.attempt_id, expected_revision=job.revision)
+    job.complete_generation_attempt(take.attempt_id, take, NOW, expected_revision=job.revision)
+
+
 def make_master_snapshot(
     *,
     lane: Lane,
     episode_id: DiaryEpisodeId | None,
     index: int,
     samples: int,
+    passage_text: PassageText | None = None,
 ) -> NarrationMasterSnapshot:
     contract = make_contract(lane=lane, episode_id=episode_id)
     job_id = NarrationJobId(uuid(index))
     passage_id = PassageId(uuid(index + 1))
     take_id = TakeId(uuid(index + 2))
     publication, media = make_artifact(index + 3, f"snapshot-master-{index}", samples=samples)
-    offset = PassageOffset(passage_id, 1, digest(f"snapshot-text-{index}"), 0, samples)
+    passage_text = passage_text or PassageText(f"fake snapshot text {index}")
+    offset = PassageOffset(passage_id, 1, passage_text.digest, 0, samples)
     master = NarrationMaster(
         NarrationMasterId(uuid(index + 4)), job_id, lane, contract.digest,
-        (take_id,), (), (offset,), publication, media, NOW,
+        (take_id,), (), (offset,), (None,), publication, media, NOW,
     )
     listening = NarrationMasterListeningDecision(
         MasterListeningDecisionId(uuid(index + 5)), master.master_id,

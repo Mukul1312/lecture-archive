@@ -187,6 +187,7 @@ def preview() -> GenerationPreview:
         normalization="off",
         output_audio=CanonicalAudioFacts(),
         billable_rule="fake-billing-v1",
+        billable_characters=15,
         estimated_usage="15",
         issued_at=NOW,
     )
@@ -239,8 +240,8 @@ class EvidenceContractTests(unittest.TestCase):
         workspace = AttemptWorkspaceEvidence(
             AttemptWorkspaceId(UUIDS[8]),
             AttemptKind.GENERATION,
-            UUIDS[2],
-            UUIDS[9],
+            NarrationJobId(UUIDS[2]),
+            GenerationAttemptId(UUIDS[9]),
             5,
             BudgetReservationId(UUIDS[10]),
             preview().preview_digest,
@@ -255,6 +256,23 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(workspace.events[0].sequence, 0)
         with self.assertRaises(ValidationError):
             replace(workspace, events=(replace(event, sequence=1),))
+        with self.assertRaises(ValidationError):
+            replace(workspace, aggregate_id=DiaryEpisodeId(UUIDS[2]))
+
+    def test_generation_attempt_states_reject_impossible_completed_or_temporal_facts(self) -> None:
+        with self.assertRaises(ValidationError):
+            GenerationAttempt(
+                GenerationAttemptId(UUIDS[9]), PassageId(UUIDS[3]), 5,
+                BudgetReservationId(UUIDS[10]), GenerationPreviewId(UUIDS[5]),
+                preview().preview_digest, AttemptState.COMPLETED,
+                SubmissionEvidence.COMPLETED, effective_input(), (), None, None,
+                None, None, NOW, NOW,
+            )
+
+    def test_decoded_media_duration_is_the_canonical_projection_of_exact_samples(self) -> None:
+        self.assertEqual(DecodedMediaFacts(CanonicalAudioFacts(), 44_100, 1_000, False).duration_ms, 1_000)
+        with self.assertRaises(ValidationError):
+            DecodedMediaFacts(CanonicalAudioFacts(), 100, 3, False)
 
     def test_media_offset_take_master_snapshot_episode_and_timing_evidence_is_immutable(self) -> None:
         publication, media = artifact(11, "take")
@@ -272,13 +290,13 @@ class EvidenceContractTests(unittest.TestCase):
         )
         selection = SelectionDecision(
             SelectionDecisionId(UUIDS[15]), esi.passage_id, take.take_id,
-            ActorId(UUIDS[14]), eligibility, NOW,
+            ActorId(UUIDS[14]), eligibility, "fake selection reason", NOW,
         )
         offset = PassageOffset(esi.passage_id, esi.text_revision, esi.text.digest, 0, media.sample_count)
         master_artifact, master_media = artifact(16, "master")
         master = NarrationMaster(
             NarrationMasterId(UUIDS[17]), esi.job_id, esi.lane, esi.contract_digest,
-            (take.take_id,), (), (offset,), master_artifact, master_media, NOW,
+            (take.take_id,), (), (offset,), (take.timing_reference,), master_artifact, master_media, NOW,
         )
         listening = NarrationMasterListeningDecision(
             MasterListeningDecisionId(UUIDS[18]), master.master_id, ActorId(UUIDS[14]),
@@ -299,8 +317,14 @@ class EvidenceContractTests(unittest.TestCase):
         )
         intro_digest = digest("intro-snapshot")
         intro_component = ComponentOffset(ComponentRole.INTRO, 0, 50, intro_digest, ())
-        component = ComponentOffset(ComponentRole.DIARY, 50, 50 + master_media.sample_count, snapshot.snapshot_digest, (replace(offset, start_sample=50, end_sample=50 + media.sample_count),))
-        episode_artifact, episode_media = artifact(20, "episode", 150)
+        component = ComponentOffset(
+            ComponentRole.DIARY,
+            100,
+            100 + master_media.sample_count,
+            snapshot.snapshot_digest,
+            (replace(offset, start_sample=100, end_sample=100 + media.sample_count),),
+        )
+        episode_artifact, episode_media = artifact(20, "episode", 200)
         episode_master = EpisodeSpeechMaster(
             EpisodeSpeechMasterId(UUIDS[21]), DiaryEpisodeId(UUIDS[22]),
             (intro_digest, snapshot.snapshot_digest), 50, (intro_component, component), episode_artifact,
@@ -313,7 +337,7 @@ class EvidenceContractTests(unittest.TestCase):
         cue = TimingCue(
             CueId(UUIDS[24]), ComponentRole.DIARY, Lane.B, esi.job_id,
             master.master_id, esi.passage_id, esi.text_revision, esi.text.digest,
-            esi.text.value, None, 50, 150, CueGranularity.PASSAGE,
+            esi.text.value, None, 100, 200, CueGranularity.PASSAGE,
             CueProvenance.DETERMINISTIC_ASSEMBLY, "fake-normalizer", "v1",
             episode_artifact.reference.content_digest, esi.text.digest,
             TimingReviewStatus.VALIDATED,
@@ -331,14 +355,14 @@ class EvidenceContractTests(unittest.TestCase):
             normalized_timing_artifact=None,
             validation_results=("component-and-passage-cues-valid",),
             timing_review_status=TimingReviewStatus.VALIDATED,
-            authority_snapshots=(authority_snapshot(),),
+            authority_snapshots=(authority_snapshot(), authority_snapshot()),
             source_package_digest=None,
             correction_actor_id=None,
             correction_reason=None,
             created_at=NOW,
         )
         self.assertEqual((review.outcome, selection.take_id, snapshot.role, episode_listening.outcome), (ReviewOutcome.ACCEPTED, take.take_id, ComponentRole.DIARY, ListeningOutcome.PASSED))
-        self.assertEqual(package.cues[0].start_sample, 50)
+        self.assertEqual(package.cues[0].start_sample, 100)
         self.assertIsInstance(package.package_digest, ContentDigest)
 
 
@@ -368,6 +392,15 @@ class SchemaV1Tests(unittest.TestCase):
         payload["unknown"] = True
         with self.assertRaises(ValidationError):
             decode_schema_v1(encode_schema_v1(payload), AuthoritySnapshot)
+
+    def test_decoder_rejects_noncanonical_json_bytes_and_alternate_utc_spellings(self) -> None:
+        encoded = encode_schema_v1(authority_snapshot())
+        with self.assertRaises(ValidationError):
+            decode_schema_v1(b" " + encoded, AuthoritySnapshot)
+        alternate_utc = encoded.replace(b"2026-09-02T12:00:00+00:00", b"2026-09-02T12:00:00Z")
+        self.assertNotEqual(alternate_utc, encoded)
+        with self.assertRaises(ValidationError):
+            decode_schema_v1(alternate_utc, AuthoritySnapshot)
 
     def assert_primitives_have_no_float_or_decimal(self, value: object) -> None:
         self.assertNotIsInstance(value, (float, Decimal))

@@ -31,16 +31,21 @@ class DiaryEpisodeCompositionTests(unittest.TestCase):
         self.intro = make_master_snapshot(lane=Lane.C, episode_id=self.episode_id, index=401, samples=100)
         self.diary = make_master_snapshot(lane=Lane.B, episode_id=None, index=410, samples=200)
 
-    def test_INV_DE_1_episode_is_draft_until_exactly_one_intro_then_diary_and_explicit_gap_are_configured(self) -> None:
+    def test_INV_DE_1_episode_is_configured_by_exact_intro_and_diary_while_gap_controls_assembly_readiness(self) -> None:
         self.assertEqual(self.episode.status, EpisodeStatus.DRAFT)
+        self.assertFalse(self.episode.assembly_ready)
         with self.assertRaises(DomainInvariantError):
             self.episode.reserve_assembly_preview(expected_revision=1)
         self.episode.attach_intro(self.intro, NOW, expected_revision=1)
         self.assertEqual((self.episode.status, tuple(value.role for value in self.episode.components)), (EpisodeStatus.DRAFT, (ComponentRole.INTRO,)))
         self.episode.attach_diary(self.diary, NOW, expected_revision=2)
-        self.assertEqual(self.episode.status, EpisodeStatus.DRAFT)
+        self.assertEqual(self.episode.status, EpisodeStatus.CONFIGURED)
+        self.assertFalse(self.episode.assembly_ready)
+        with self.assertRaises(DomainInvariantError):
+            self.episode.reserve_assembly_preview(expected_revision=3)
         self.episode.set_intro_diary_gap(50, NOW, expected_revision=3)
         self.assertEqual((self.episode.status, tuple(value.role for value in self.episode.components)), (EpisodeStatus.CONFIGURED, (ComponentRole.INTRO, ComponentRole.DIARY)))
+        self.assertTrue(self.episode.assembly_ready)
 
     def test_INV_DE_2_components_accept_only_root_issued_role_eligible_snapshots_and_lane_c_episode_binding(self) -> None:
         wrong_episode = make_master_snapshot(lane=Lane.C, episode_id=DiaryEpisodeId(uuid(420)), index=421, samples=100)

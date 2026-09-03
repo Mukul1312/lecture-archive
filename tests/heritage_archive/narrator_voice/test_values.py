@@ -238,6 +238,30 @@ class ContractAndEffectiveInputTests(unittest.TestCase):
                 **{**effective.creation_arguments(), "canonical_projection": "ଅ"}
             )
 
+        with self.assertRaises(ValidationError):
+            replace(effective, request_digest=ContentDigest.from_bytes(b"forged-request"))
+
+        with self.assertRaises(ValidationError):
+            EffectiveSynthesisInput.create(
+                **{
+                    **effective.creation_arguments(),
+                    "authority_scope": self.make_scope(None),
+                }
+            )
+
+    def test_safe_relative_artifact_paths_reject_controls_and_nonportable_segments(self) -> None:
+        self.assertEqual(SafeRelativeArtifactPath("fake/sub-dir/a_b-1.2.wav").value, "fake/sub-dir/a_b-1.2.wav")
+        for invalid in (
+            "fake/control\n.wav",
+            "fake/control\x00.wav",
+            "fake/trailing. ",
+            "fake/NUL.wav",
+            f"fake/{'a' * 256}.wav",
+        ):
+            with self.subTest(invalid=invalid[:40]):
+                with self.assertRaises(ValidationError):
+                    SafeRelativeArtifactPath(invalid)
+
 
 if __name__ == "__main__":
     unittest.main()

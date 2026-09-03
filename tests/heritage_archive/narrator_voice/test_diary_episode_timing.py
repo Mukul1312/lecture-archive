@@ -11,7 +11,9 @@ SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ActorId, ValidationError
+from dataclasses import replace
+
+from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.diary_episode import DiaryEpisode
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     ComponentOffset,
@@ -31,16 +33,18 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     EpisodeSpeechMasterId,
     TimedNarrationPackageId,
 )
-from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole, Lane
-from tests.heritage_archive.narrator_voice.fixtures import NOW, make_artifact, make_master_snapshot, uuid
+from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole, Lane, PassageText
+from tests.heritage_archive.narrator_voice.fixtures import NOW, digest, make_artifact, make_authority, make_master_snapshot, uuid
 
 
 class DiaryEpisodeTimingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.episode_id = DiaryEpisodeId(uuid(600))
         self.episode = DiaryEpisode.prepare(self.episode_id, NOW)
-        self.intro = make_master_snapshot(lane=Lane.C, episode_id=self.episode_id, index=601, samples=100)
-        self.diary = make_master_snapshot(lane=Lane.B, episode_id=None, index=610, samples=200)
+        self.intro_text = PassageText("fake intro display text")
+        self.diary_text = PassageText("fake diary display text")
+        self.intro = make_master_snapshot(lane=Lane.C, episode_id=self.episode_id, index=601, samples=100, passage_text=self.intro_text)
+        self.diary = make_master_snapshot(lane=Lane.B, episode_id=None, index=610, samples=200, passage_text=self.diary_text)
         self.episode.attach_intro(self.intro, NOW, expected_revision=1)
         self.episode.attach_diary(self.diary, NOW, expected_revision=2)
         self.episode.set_intro_diary_gap(50, NOW, expected_revision=3)
@@ -72,14 +76,23 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
             ListeningOutcome.PASSED, "fake timing readiness pass", NOW, expected_revision=10,
         )
 
-    def cue(self, role: ComponentRole, index: int, *, start: int, end: int) -> TimingCue:
+    def cue(
+        self,
+        role: ComponentRole,
+        index: int,
+        *,
+        start: int,
+        end: int,
+        provenance: CueProvenance = CueProvenance.DETERMINISTIC_ASSEMBLY,
+    ) -> TimingCue:
         source = self.intro if role is ComponentRole.INTRO else self.diary
+        display_text = self.intro_text if role is ComponentRole.INTRO else self.diary_text
         source_offset = source.passage_offsets[0]
         return TimingCue(
             CueId(uuid(index)), role, source.lane, source.issuing_job_id, source.source_master_id,
             source_offset.passage_id, source_offset.text_revision, source_offset.text_digest,
-            f"fake {role.value} display text", None, start, end, CueGranularity.PASSAGE,
-            CueProvenance.DETERMINISTIC_ASSEMBLY, "fake deterministic normalizer", "v1",
+            display_text.value, None, start, end, CueGranularity.PASSAGE,
+            provenance, "fake deterministic normalizer", "v1",
             self.master.artifact.reference.content_digest, source_offset.text_digest,
             TimingReviewStatus.VALIDATED,
         )
@@ -94,6 +107,7 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
         source_digest=None,
         correction_actor=None,
         correction_reason=None,
+        authority_snapshots=None,
     ) -> TimedNarrationPackage:
         return TimedNarrationPackage.create(
             package_id=package_id,
@@ -108,7 +122,7 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
             normalized_timing_artifact=None,
             validation_results=("fake offsets checked", "fake passage coverage checked"),
             timing_review_status=TimingReviewStatus.VALIDATED,
-            authority_snapshots=(self.intro.authority_snapshot, self.diary.authority_snapshot),
+            authority_snapshots=authority_snapshots or (self.intro.authority_snapshot, self.diary.authority_snapshot),
             source_package_digest=source_digest,
             correction_actor_id=correction_actor,
             correction_reason=correction_reason,
@@ -119,7 +133,16 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
         cues = (self.cue(ComponentRole.INTRO, 630, start=0, end=100), self.cue(ComponentRole.DIARY, 631, start=150, end=350))
         first = self.package(TimedNarrationPackageId(uuid(632)), 1, cues, episode_revision=11)
         self.episode.record_timed_package(first, expected_revision=11)
-        corrected_cues = (cues[0], self.cue(ComponentRole.DIARY, 633, start=155, end=350))
+        corrected_cues = (
+            cues[0],
+            self.cue(
+                ComponentRole.DIARY,
+                633,
+                start=155,
+                end=350,
+                provenance=CueProvenance.MANUAL_CORRECTION,
+            ),
+        )
         corrected = self.package(
             TimedNarrationPackageId(uuid(634)), 2, corrected_cues, episode_revision=12,
             source_digest=first.package_digest, correction_actor=self.actor,
@@ -135,6 +158,10 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
         self.episode.record_timed_package(package, expected_revision=11)
         self.assertEqual(tuple(cue.granularity for cue in package.cues), (CueGranularity.PASSAGE, CueGranularity.PASSAGE))
         self.assertTrue(all(cue.text_span is None for cue in package.cues))
+        with self.assertRaises(ValidationError):
+            replace(cues[0], display_text="invented text")
+        with self.assertRaises(ValidationError):
+            replace(cues[0], lane=Lane.B)
         with self.assertRaises(ValidationError):
             self.package(
                 TimedNarrationPackageId(uuid(643)), 2,
@@ -161,6 +188,71 @@ class DiaryEpisodeTimingTests(unittest.TestCase):
         )
         with self.assertRaises(ValidationError):
             self.episode.record_timed_package(wrong_source, expected_revision=12)
+
+    def test_package_digest_binds_raw_timing_provenance_and_correction_requires_manual_cues(self) -> None:
+        cues = (self.cue(ComponentRole.INTRO, 660, start=0, end=100), self.cue(ComponentRole.DIARY, 661, start=150, end=350))
+        first = self.package(TimedNarrationPackageId(uuid(662)), 1, cues, episode_revision=11)
+        raw = ArtifactRef(ArtifactId(uuid(663)), digest("raw timing"), 12, "application/json")
+        with self.assertRaises(ValidationError):
+            replace(first, raw_timing_artifacts=(raw,))
+        self.episode.record_timed_package(first, expected_revision=11)
+        invalid_correction = self.package(
+            TimedNarrationPackageId(uuid(664)), 2,
+            (cues[0], self.cue(ComponentRole.DIARY, 665, start=155, end=350)),
+            episode_revision=12, source_digest=first.package_digest,
+            correction_actor=self.actor, correction_reason="fake manual correction",
+        )
+        with self.assertRaises(ValidationError):
+            self.episode.record_timed_package(invalid_correction, expected_revision=12)
+
+    def test_rehydration_rejects_spliced_episode_and_timing_history_graphs(self) -> None:
+        cues = (self.cue(ComponentRole.INTRO, 670, start=0, end=100), self.cue(ComponentRole.DIARY, 671, start=150, end=350))
+        first = self.package(TimedNarrationPackageId(uuid(672)), 1, cues, episode_revision=11)
+        self.episode.record_timed_package(first, expected_revision=11)
+        snapshot = self.episode.to_snapshot()
+        corrected_cues = (
+            cues[0],
+            self.cue(
+                ComponentRole.DIARY,
+                673,
+                start=155,
+                end=350,
+                provenance=CueProvenance.MANUAL_CORRECTION,
+            ),
+        )
+        wrong_lineage = self.package(
+            TimedNarrationPackageId(uuid(674)), 2, corrected_cues,
+            episode_revision=12, source_digest=digest("not-the-latest-package"),
+            correction_actor=self.actor, correction_reason="fake correction",
+        )
+        foreign_authority = self.package(
+            TimedNarrationPackageId(uuid(675)), 1, cues, episode_revision=11,
+            authority_snapshots=(
+                make_authority(lane=Lane.C, episode_id=self.episode_id, revision=2),
+                make_authority(lane=Lane.B, revision=2),
+            ),
+        )
+        broken_snapshots = (
+            replace(
+                snapshot,
+                component_history=(
+                    replace(snapshot.component_history[0], resulting_revision=snapshot.revision + 1),
+                    *snapshot.component_history[1:],
+                ),
+            ),
+            replace(snapshot, gap_history=(replace(snapshot.gap_history[0], resulting_revision=snapshot.revision + 1),)),
+            replace(
+                snapshot,
+                assembly_attempts=(replace(snapshot.assembly_attempts[0], reservation_revision=snapshot.revision + 1),),
+            ),
+            replace(snapshot, listening_decisions=()),
+            replace(snapshot, revision=13, timing_packages=(first, wrong_lineage)),
+            replace(snapshot, timing_packages=(foreign_authority,)),
+        )
+        for broken in broken_snapshots:
+            with self.subTest(broken=broken):
+                with self.assertRaises(ValidationError):
+                    DiaryEpisode.from_snapshot(broken)
 
 
 if __name__ == "__main__":

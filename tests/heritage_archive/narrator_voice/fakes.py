@@ -6,16 +6,41 @@ from datetime import datetime
 from typing import TypeVar
 
 from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ContentDigest
-from heritage_archive.contexts.narrator_voice.application.ports import AuthorityObservation
-from heritage_archive.contexts.narrator_voice.application.ports import DryAssemblyResult, PreviewCompilerResult, SynthesisResult
+from heritage_archive.contexts.narrator_voice.application.ports import (
+    AuthorityObservation,
+    DryAssemblyResult,
+    PreviewCompilerResult,
+    PrincipalAuthority,
+    RecipeAuthoringResult,
+    ReleasePolicyResolution,
+    SynthesisResult,
+    VerifiedArtifactRecoveryFacts,
+    VerifiedProviderRecoveryFacts,
+    VerifiedWorkspaceRecoveryFacts,
+)
+from heritage_archive.contexts.narrator_voice.application.recovery import (
+    BudgetRecoveryState,
+    RecoveryStage,
+)
 from heritage_archive.contexts.narrator_voice.domain.errors import (
     AmbiguousExternalFailure,
     BudgetDenied,
     DefinitePreSendFailure,
     ExternalWorkFailed,
 )
-from heritage_archive.contexts.narrator_voice.domain.evidence import DecodedMediaFacts
-from heritage_archive.contexts.narrator_voice.domain.values import CanonicalAudioFacts, NonNegativeDecimal
+from heritage_archive.contexts.narrator_voice.domain.evidence import (
+    AttemptKind,
+    AttemptState,
+    DecodedMediaFacts,
+    ReviewAuthority,
+    SubmissionEvidence,
+    TimingReviewStatus,
+)
+from heritage_archive.contexts.narrator_voice.domain.values import (
+    CanonicalAudioFacts,
+    NonNegativeDecimal,
+    PassageRenderRecipe,
+)
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord, AuthorizationStatus
 from heritage_archive.contexts.narrator_voice.domain.diary_episode import DiaryEpisode
 from heritage_archive.contexts.narrator_voice.domain.ids import AuthorizationRecordId, DiaryEpisodeId, NarrationJobId
@@ -26,13 +51,31 @@ T = TypeVar("T")
 
 
 class FakeActorResolver:
-    def __init__(self, actors: dict[str, ActorId]) -> None:
-        self.actors = dict(actors)
+    def __init__(
+        self,
+        actors: dict[str, ActorId],
+        *,
+        profiles: dict[str, PrincipalAuthority] | None = None,
+    ) -> None:
+        self.profiles = dict(profiles or {
+            principal: PrincipalAuthority(
+                actor_id,
+                True,
+                ReviewAuthority.OPERATIONAL,
+                TimingReviewStatus.HUMAN_REVIEWED,
+            )
+            for principal, actor_id in actors.items()
+        })
         self.calls: list[str] = []
 
-    def resolve_actor(self, principal: str) -> ActorId:
+    def resolve_principal(self, principal: str) -> PrincipalAuthority:
         self.calls.append(principal)
-        return self.actors[principal]
+        return self.profiles[principal]
+
+    def resolve_actor(self, principal: str) -> ActorId:
+        """Legacy seam retained only so RED tests expose missing policy enforcement as a failure."""
+        self.calls.append(principal)
+        return self.profiles[principal].actor_id
 
 
 class FakeClock:
@@ -105,6 +148,30 @@ class FakeDiaryEpisodeRepository(_CasRepository):
         return super().load(identity)
 
 
+class FakeReleasePolicyResolver:
+    def __init__(
+        self,
+        *,
+        lane_b: ReleasePolicyResolution | None = None,
+        lane_c: ReleasePolicyResolution | None = None,
+    ) -> None:
+        self.lane_b = lane_b
+        self.lane_c = lane_c
+        self.calls: list[tuple[str, DiaryEpisodeId | None]] = []
+
+    def resolve_lane_b_diary(self) -> ReleasePolicyResolution:
+        self.calls.append(("lane_b", None))
+        if self.lane_b is None:
+            raise AssertionError("fake Lane-B release policy was not configured")
+        return self.lane_b
+
+    def resolve_lane_c_intro(self, intended_episode_id: DiaryEpisodeId) -> ReleasePolicyResolution:
+        self.calls.append(("lane_c", intended_episode_id))
+        if self.lane_c is None:
+            raise AssertionError("fake Lane-C release policy was not configured")
+        return self.lane_c
+
+
 class FakeAuthorizationStatusReader:
     def __init__(self, repository: FakeAuthorizationRepository) -> None:
         self.repository = repository
@@ -126,7 +193,29 @@ class FakeAuthorizationStatusReader:
 class FakeRecipeCompiler:
     def __init__(self, syntax_families: list[str] | None = None) -> None:
         self.calls = []
+        self.recipe_calls = []
         self.syntax_families = list(syntax_families or [])
+        self.advanced_controls = {}
+
+    def compile_recipe(self, request):
+        self.recipe_calls.append(request)
+        controls = (
+            request.structured_controls
+            if request.advanced_source is None
+            else self.advanced_controls[request.advanced_source]
+        )
+        return RecipeAuthoringResult(
+            PassageRenderRecipe(
+                request.recipe_id,
+                request.recipe_revision,
+                request.text_revision,
+                request.text.digest,
+                "fake-compiler-v1",
+                controls,
+            ),
+            request.text.value,
+            (),
+        )
 
     def compile(self, request):
         self.calls.append(request)
@@ -139,6 +228,7 @@ class FakeRecipeCompiler:
             True,
             "off",
             "fake-billing-v1",
+            len(request.text.value),
             NonNegativeDecimal(str(len(request.text.value) + 13)),
         )
 
@@ -147,20 +237,28 @@ class FakeBudgetLedger:
     def __init__(self) -> None:
         self.actions: list[tuple[str, object, object]] = []
         self.deny_reserve = False
+        self.states = {}
 
     def reserve(self, reservation_id, estimated_usage) -> None:
         self.actions.append(("reserve", reservation_id, estimated_usage))
         if self.deny_reserve:
             raise BudgetDenied("fake budget denial")
+        self.states[reservation_id] = BudgetRecoveryState.RESERVED
 
     def settle(self, reservation_id, actual_usage) -> None:
         self.actions.append(("settle", reservation_id, actual_usage))
+        self.states[reservation_id] = BudgetRecoveryState.SETTLED
 
     def release(self, reservation_id, reason) -> None:
         self.actions.append(("release", reservation_id, reason))
+        self.states[reservation_id] = BudgetRecoveryState.RELEASED
 
     def hold(self, reservation_id, reason) -> None:
         self.actions.append(("hold", reservation_id, reason))
+        self.states[reservation_id] = BudgetRecoveryState.UNKNOWN
+
+    def read(self, reservation_id):
+        return self.states.get(reservation_id, BudgetRecoveryState.UNKNOWN)
 
 
 class FakeSynthesisGateway:
@@ -199,13 +297,19 @@ class FakeArtifactStore:
 
 
 class FakeMediaInspector:
-    def __init__(self, sample_count: int = 100) -> None:
+    def __init__(self, sample_count: int = 100, *, all_digital_silence: bool = False) -> None:
         self.sample_count = sample_count
+        self.all_digital_silence = all_digital_silence
         self.calls = []
 
     def inspect_canonical_wav(self, payload):
         self.calls.append(payload)
-        return DecodedMediaFacts(CanonicalAudioFacts(), self.sample_count, max(1, self.sample_count * 1000 // 44_100), False)
+        return DecodedMediaFacts(
+            CanonicalAudioFacts(),
+            self.sample_count,
+            max(1, self.sample_count * 1000 // 44_100),
+            self.all_digital_silence,
+        )
 
 
 class FakeWorkspaceStore:
@@ -219,6 +323,52 @@ class FakeWorkspaceStore:
     def save(self, workspace) -> None:
         self.values[workspace.attempt_id] = workspace
         self.saves.append(workspace)
+
+
+class FakeAttemptWorkspaceVerifier:
+    def __init__(self, *, force_workspace_match: bool | None = None) -> None:
+        self.force_workspace_match = force_workspace_match
+
+    def verify(self, workspace, target, attempt_state, reservation_revision):
+        matches = (
+            workspace is not None
+            and workspace.attempt_id == target.attempt_id
+            and workspace.reservation_revision == reservation_revision
+        )
+        if self.force_workspace_match is not None:
+            matches = self.force_workspace_match
+        if workspace is None:
+            return VerifiedWorkspaceRecoveryFacts(False, False, RecoveryStage.RESERVED, SubmissionEvidence.NOT_STARTED)
+        stage = {
+            AttemptState.RESERVED: RecoveryStage.RESERVED,
+            AttemptState.INPUT_FROZEN: RecoveryStage.INPUT_FROZEN,
+            AttemptState.EXTERNAL_WORK_STARTED: RecoveryStage.EXTERNAL_WORK_STARTED,
+            AttemptState.ARTIFACTS_STAGED: RecoveryStage.ARTIFACTS_STAGED,
+            AttemptState.ARTIFACTS_PUBLISHED: RecoveryStage.ARTIFACTS_PUBLISHED,
+        }.get(workspace.state, RecoveryStage.ARTIFACTS_PUBLISHED)
+        return VerifiedWorkspaceRecoveryFacts(matches, matches, stage, workspace.submission)
+
+
+class FakeProviderEventVerifier:
+    def verify(self, workspace):
+        if workspace is None:
+            return VerifiedProviderRecoveryFacts(None, False)
+        if workspace.attempt_kind is not AttemptKind.GENERATION:
+            return VerifiedProviderRecoveryFacts(None, True)
+        terminal = workspace.events[-1] if workspace.events else None
+        return VerifiedProviderRecoveryFacts(
+            None if terminal is None else terminal.terminal_classification,
+            terminal is not None and terminal.kind.value == "terminal",
+        )
+
+
+class FakeArtifactEvidenceVerifier:
+    def verify(self, workspace):
+        if workspace is None:
+            return VerifiedArtifactRecoveryFacts(False, False, False, False)
+        observed = bool(workspace.staged_artifacts)
+        published = bool(workspace.published_artifacts)
+        return VerifiedArtifactRecoveryFacts(observed, observed, published, published)
 
 
 class FakeDryPcmAssembler:
@@ -272,24 +422,19 @@ class FakeTimingNormalizer:
             TimingCue,
             TimingReviewStatus,
         )
-        from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole
-
         self.calls.append(request)
-        cues = []
-        for role, snapshot, component in (
-            (ComponentRole.INTRO, request.intro_snapshot, request.component_offsets[0]),
-            (ComponentRole.DIARY, request.diary_snapshot, request.component_offsets[1]),
-        ):
-            for offset in component.passage_offsets:
-                cues.append(TimingCue(
-                    self.cue_ids.pop(0), role, snapshot.lane, snapshot.issuing_job_id,
-                    snapshot.source_master_id, offset.passage_id, offset.text_revision,
-                    offset.text_digest, f"fake {role.value} passage", None,
-                    offset.start_sample, offset.end_sample, CueGranularity.PASSAGE,
-                    CueProvenance.DETERMINISTIC_ASSEMBLY, "fake timing fallback", "v1",
-                    request.master_artifact.reference.content_digest, offset.text_digest,
-                    TimingReviewStatus.VALIDATED,
-                ))
+        cues = [
+            TimingCue(
+                self.cue_ids.pop(0), source.role, source.lane, source.source_job_id,
+                source.source_master_id, source.passage_id, source.text_revision,
+                source.text_digest, source.display_text, None,
+                source.start_sample, source.end_sample, CueGranularity.PASSAGE,
+                CueProvenance.DETERMINISTIC_ASSEMBLY, "fake timing fallback", "v1",
+                request.master_artifact.reference.content_digest, source.text_digest,
+                TimingReviewStatus.VALIDATED,
+            )
+            for source in request.source_passages
+        ]
         return TimingNormalizationResult(
             tuple(cues), None, ("fake monotonic bounds pass", "fake passage coverage pass"),
             TimingReviewStatus.VALIDATED,

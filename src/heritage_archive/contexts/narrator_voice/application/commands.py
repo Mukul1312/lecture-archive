@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
-from heritage_archive.kernel import ArtifactRef, ContentDigest
+from heritage_archive.kernel import ContentDigest
 
 from ..domain.evidence import (
-    AttemptState,
-    CueProvenance,
     ListeningOutcome,
     NarrationMasterSnapshot,
-    ReviewAuthority,
     ReviewOutcome,
     TimingCue,
-    TimingReviewStatus,
 )
 from ..domain.ids import (
     AuthorizationRecordId,
@@ -35,13 +32,52 @@ from ..domain.ids import (
 from ..domain.narration_job import PassageDraft
 from ..domain.values import (
     AuthorityScope,
+    DictionaryBinding,
     DeliveryControlDefaults,
-    EffectiveTakeSettings,
-    PassageRenderRecipe,
     PassageText,
-    ReleaseSynthesisContract,
+    RenderControl,
     SafeRelativeArtifactPath,
 )
+
+
+class OverrideMode(str, Enum):
+    INHERIT = "inherit"
+    SET = "set"
+    OMIT = "omit"
+
+
+@dataclass(frozen=True, slots=True)
+class TextControlOverride:
+    mode: OverrideMode
+    value: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DictionaryOverride:
+    mode: OverrideMode
+    value: DictionaryBinding | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TakeSettingsIntent:
+    speed: TextControlOverride
+    volume: TextControlOverride
+    emotion: TextControlOverride
+    dictionary: DictionaryOverride
+
+
+class RecipeAuthoringMode(str, Enum):
+    STRUCTURED = "structured"
+    ADVANCED = "advanced"
+
+
+@dataclass(frozen=True, slots=True)
+class RecipeAuthoringIntent:
+    recipe_id: PassageRenderRecipeId
+    recipe_revision: int
+    mode: RecipeAuthoringMode
+    structured_controls: tuple[RenderControl, ...] = ()
+    advanced_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,16 +108,14 @@ class ShowAuthorizationStatusCommand:
 @dataclass(frozen=True, slots=True)
 class PrepareDiaryNarrationCommand:
     command_id: CommandId
-    contract: ReleaseSynthesisContract
-    defaults: DeliveryControlDefaults
     passages: tuple[PassageDraft, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class PrepareIntroNarrationCommand:
     command_id: CommandId
-    contract: ReleaseSynthesisContract
-    defaults: DeliveryControlDefaults
+    intended_episode_id: DiaryEpisodeId
+    expected_episode_revision: int
     passages: tuple[PassageDraft, ...]
 
 
@@ -115,7 +149,7 @@ class ValidateRenderRecipeCommand:
     command_id: CommandId
     job_id: NarrationJobId
     passage_id: PassageId
-    recipe: PassageRenderRecipe
+    authoring: RecipeAuthoringIntent
     expected_revision: int
 
 
@@ -143,7 +177,7 @@ class EstimateGenerationCommand:
     job_id: NarrationJobId
     passage_id: PassageId
     recipe_id: PassageRenderRecipeId
-    settings: EffectiveTakeSettings
+    settings_intent: TakeSettingsIntent
     expected_revision: int
 
 
@@ -163,6 +197,7 @@ class GeneratePendingPassagesCommand:
     preview_ids: tuple[GenerationPreviewId, ...]
     expected_revision: int
     artifact_locations: tuple[SafeRelativeArtifactPath, ...]
+    accepted_billable_character_cap: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +206,6 @@ class RecordReviewDecisionCommand:
     principal: str
     job_id: NarrationJobId
     take_id: TakeId
-    authority: ReviewAuthority
     outcome: ReviewOutcome
     notes: str
     expected_revision: int
@@ -227,8 +261,6 @@ class ReconcileGenerationAttemptCommand:
     command_id: CommandId
     job_id: NarrationJobId
     attempt_id: GenerationAttemptId
-    outcome: AttemptState
-    recorded_evidence: str
     expected_revision: int
 
 
@@ -237,8 +269,6 @@ class ReconcileNarrationAssemblyAttemptCommand:
     command_id: CommandId
     job_id: NarrationJobId
     attempt_id: NarrationAssemblyAttemptId
-    outcome: AttemptState
-    recorded_evidence: str
     expected_revision: int
 
 
@@ -295,7 +325,6 @@ class BuildTimedNarrationPackageCommand:
     command_id: CommandId
     episode_id: DiaryEpisodeId
     master_id: EpisodeSpeechMasterId
-    raw_timing_artifacts: tuple[ArtifactRef, ...]
     expected_revision: int
 
 
@@ -307,7 +336,6 @@ class RecordTimingCorrectionCommand:
     source_package_id: TimedNarrationPackageId
     corrected_cues: tuple[TimingCue, ...]
     reason: str
-    review_status: TimingReviewStatus
     expected_revision: int
 
 
@@ -329,6 +357,4 @@ class ReconcileEpisodeAssemblyAttemptCommand:
     command_id: CommandId
     episode_id: DiaryEpisodeId
     attempt_id: EpisodeAssemblyAttemptId
-    outcome: AttemptState
-    recorded_evidence: str
     expected_revision: int

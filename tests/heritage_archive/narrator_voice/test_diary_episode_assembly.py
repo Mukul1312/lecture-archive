@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 import sys
 import unittest
@@ -12,16 +12,21 @@ SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ActorId
+from heritage_archive.kernel import ActorId, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.diary_episode import DiaryEpisode
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
+    AttemptKind,
     AttemptState,
+    AttemptWorkspaceEvidence,
     ComponentOffset,
+    EpisodeSpeechMaster,
     ListeningOutcome,
     PassageOffset,
+    SubmissionEvidence,
 )
 from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, DomainInvariantError
 from heritage_archive.contexts.narrator_voice.domain.ids import (
+    AttemptWorkspaceId,
     DiaryEpisodeId,
     EpisodeAssemblyAttemptId,
     EpisodeListeningDecisionId,
@@ -76,6 +81,15 @@ class DiaryEpisodeAssemblyTests(unittest.TestCase):
         with self.assertRaises(FrozenInstanceError):
             master.gap_samples = 0  # type: ignore[misc]
 
+    def test_episode_master_value_rejects_forged_component_placement_and_silent_media(self) -> None:
+        self.assemble()
+        master = self.episode.speech_masters[0]
+        intro, diary = master.component_offsets
+        with self.assertRaises(ValidationError):
+            replace(master, component_offsets=(intro, replace(diary, start_sample=diary.start_sample + 1)))
+        with self.assertRaises(ValidationError):
+            replace(master, media=replace(master.media, all_digital_silence=True))
+
     def test_INV_DE_6_new_gap_preserves_old_master_and_requires_another_master_identity(self) -> None:
         self.assemble()
         old_master = self.episode.speech_masters[0]
@@ -90,6 +104,17 @@ class DiaryEpisodeAssemblyTests(unittest.TestCase):
         second = self.episode.record_episode_listening(EpisodeListeningDecisionId(uuid(525)), master.master_id, actor, ListeningOutcome.FAILED, "fake later issue", NOW, expected_revision=11)
         self.assertEqual(self.episode.listening_decisions, (first, second))
 
+    def test_rehydration_rejects_a_completed_attempt_or_master_without_its_exact_counterpart(self) -> None:
+        self.assemble()
+        snapshot = self.episode.to_snapshot()
+        for broken in (
+            replace(snapshot, speech_masters=()),
+            replace(snapshot, assembly_attempts=()),
+        ):
+            with self.subTest(broken=broken):
+                with self.assertRaises(ValidationError):
+                    DiaryEpisode.from_snapshot(broken)
+
     def test_episode_unknown_attempt_reconciles_only_from_recorded_evidence_to_conservative_terminal(self) -> None:
         self.episode.reserve_episode_assembly(self.attempt_id, True, NOW, expected_revision=4)
         self.episode.finalize_episode_assembly_outcome(self.attempt_id, AttemptState.UNKNOWN, "fake ambiguous assembly", NOW, expected_revision=5)
@@ -97,6 +122,69 @@ class DiaryEpisodeAssemblyTests(unittest.TestCase):
         self.assertEqual((self.episode.revision, self.episode.assembly_attempts[0].state), (7, AttemptState.QUARANTINED))
         with self.assertRaises(DomainInvariantError):
             self.episode.reconcile_episode_assembly(self.attempt_id, AttemptState.FAILED, "cannot rewrite terminal", NOW, expected_revision=7)
+
+    def test_unknown_episode_assembly_recovers_exact_master_once_from_workspace_evidence(self) -> None:
+        self.episode.reserve_episode_assembly(self.attempt_id, True, NOW, expected_revision=4)
+        self.episode.freeze_episode_assembly_input(self.attempt_id, expected_revision=5)
+        self.episode.mark_episode_assembly_work_started(self.attempt_id, expected_revision=6)
+        self.episode.finalize_episode_assembly_outcome(
+            self.attempt_id, AttemptState.UNKNOWN, "fake aggregate finalization ambiguity", NOW,
+            expected_revision=7,
+        )
+        artifact, media = make_artifact(530, "recovered-episode-master", samples=350)
+        intro_passage = self.intro.passage_offsets[0]
+        diary_passage = self.diary.passage_offsets[0]
+        offsets = (
+            ComponentOffset(
+                ComponentRole.INTRO, 0, 100, self.intro.snapshot_digest,
+                (intro_passage,),
+            ),
+            ComponentOffset(
+                ComponentRole.DIARY, 150, 350, self.diary.snapshot_digest,
+                (PassageOffset(
+                    diary_passage.passage_id, diary_passage.text_revision,
+                    diary_passage.text_digest, 150, 350,
+                ),),
+            ),
+        )
+        attempt = self.episode.episode_assembly_attempt(self.attempt_id)
+        master = EpisodeSpeechMaster(
+            EpisodeSpeechMasterId(uuid(531)), self.episode_id,
+            attempt.component_snapshot_digests, attempt.gap_samples,
+            offsets, artifact, media, NOW,
+        )
+        workspace = AttemptWorkspaceEvidence(
+            AttemptWorkspaceId(uuid(532)), AttemptKind.EPISODE_ASSEMBLY,
+            self.episode_id, self.attempt_id, attempt.reservation_revision,
+            None, None, None, SubmissionEvidence.COMPLETED, (),
+            (artifact.reference,), (artifact,),
+            ("fake verifier sealed exact workspace evidence",), AttemptState.COMPLETED,
+        )
+
+        before = self.episode.to_snapshot()
+        with self.assertRaises(AuthorizationDenied):
+            self.episode.recover_episode_assembly_completion(
+                self.attempt_id, workspace, master, False, NOW,
+                expected_revision=self.episode.revision,
+            )
+        with self.assertRaises(ValidationError):
+            self.episode.recover_episode_assembly_completion(
+                self.attempt_id, replace(workspace, staged_artifacts=()), master, True, NOW,
+                expected_revision=self.episode.revision,
+            )
+        self.assertEqual(self.episode.to_snapshot(), before)
+
+        recovered = self.episode.recover_episode_assembly_completion(
+            self.attempt_id, workspace, master, True, NOW,
+            expected_revision=self.episode.revision,
+        )
+        completed_revision = self.episode.revision
+        again = self.episode.recover_episode_assembly_completion(
+            self.attempt_id, workspace, master, True, NOW,
+            expected_revision=completed_revision,
+        )
+        self.assertEqual((recovered, again), (master, master))
+        self.assertEqual((self.episode.revision, self.episode.speech_masters), (completed_revision, (master,)))
 
 
 if __name__ == "__main__":

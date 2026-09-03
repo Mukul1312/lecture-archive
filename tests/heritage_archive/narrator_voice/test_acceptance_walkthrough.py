@@ -61,7 +61,7 @@ class CompleteNoNetworkAcceptanceTests(unittest.TestCase):
             flow.episodes, flow.jobs, flow.authority, flow.clock, flow.ids, normalizer,
         )(
             BuildTimedNarrationPackageCommand(
-                CommandId(uuid(1404)), episode_id, assembled.master_id, (), listened.revision,
+                CommandId(uuid(1404)), episode_id, assembled.master_id, listened.revision,
             )
         )
         first = flow.episodes.load(episode_id).timing_packages[-1]
@@ -80,8 +80,7 @@ class CompleteNoNetworkAcceptanceTests(unittest.TestCase):
         )(
             RecordTimingCorrectionCommand(
                 CommandId(uuid(1406)), "fake-operator", episode_id, timed.package_id,
-                corrected_cues, "fake qualified correction", TimingReviewStatus.HUMAN_REVIEWED,
-                timed.revision,
+                corrected_cues, "fake qualified correction", timed.revision,
             )
         )
         handoff = ExportPresentationHandoffHandler(flow.episodes, flow.jobs, flow.authority, flow.clock)(
@@ -207,7 +206,7 @@ class CompleteNoNetworkAcceptanceTests(unittest.TestCase):
                 ExportPresentationHandoffCommand(CommandId(uuid(1422)), episode_id, corrected.package_id)
             )
 
-        # A separate ambiguous provider run is held, then only explicit recorded evidence
+        # A separate ambiguous provider run is held, then trusted workspace evidence
         # reconciles it to a conservative immutable terminal outcome.
         ambiguous = generation_fixture.GenerationApplicationTests(
             "test_ambiguous_failure_holds_budget_until_explicit_conservative_reconciliation"
@@ -216,10 +215,19 @@ class CompleteNoNetworkAcceptanceTests(unittest.TestCase):
         ambiguous.gateway.mode = "ambiguous"
         unknown = ambiguous.handler()(ambiguous.command())
         self.assertEqual((unknown.state, ambiguous.budget.actions[-1][0]), (AttemptState.UNKNOWN, "hold"))
-        reconciled = ReconcileGenerationAttemptHandler(ambiguous.jobs, ambiguous.clock)(
+        reconciled = ReconcileGenerationAttemptHandler(
+            ambiguous.jobs,
+            ambiguous.reader,
+            ambiguous.clock,
+            ambiguous.workspaces,
+            ambiguous.workspace_verifier,
+            ambiguous.provider_event_verifier,
+            ambiguous.artifact_verifier,
+            ambiguous.budget,
+            ambiguous.budget,
+        )(
             ReconcileGenerationAttemptCommand(
-                CommandId(uuid(1413)), ambiguous.job_id, ambiguous.attempt_id,
-                AttemptState.QUARANTINED, "fake recovery evidence", unknown.revision,
+                CommandId(uuid(1413)), ambiguous.job_id, ambiguous.attempt_id, unknown.revision,
             )
         )
         self.assertEqual(ambiguous.jobs.load(ambiguous.job_id).generation_attempts[-1].state, AttemptState.QUARANTINED)

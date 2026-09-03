@@ -19,6 +19,7 @@ from heritage_archive.contexts.narrator_voice.application.commands import (
     AttachIntroMasterCommand,
     BuildTimedNarrationPackageCommand,
     ExportPresentationHandoffCommand,
+    IssueNarrationMasterSnapshotCommand,
     PrepareDiaryEpisodeCommand,
     RecordEpisodeListeningCommand,
     RecordTimingCorrectionCommand,
@@ -32,6 +33,7 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     AttachIntroMasterHandler,
     BuildTimedNarrationPackageHandler,
     ExportPresentationHandoffHandler,
+    IssueNarrationMasterSnapshotHandler,
     PrepareDiaryEpisodeHandler,
     RecordEpisodeListeningHandler,
     RecordTimingCorrectionHandler,
@@ -54,6 +56,7 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     EpisodeAssemblyAttemptId,
     EpisodeListeningDecisionId,
     EpisodeSpeechMasterId,
+    NarrationMasterSnapshotId,
     TimedNarrationPackageId,
 )
 from heritage_archive.contexts.narrator_voice.domain.values import Lane, PassageText, SafeRelativeArtifactPath
@@ -72,6 +75,15 @@ class EpisodeApplicationTests(unittest.TestCase):
         )
         intro = flow.produce_source(Lane.C, episode_id=episode_id, base=1310)
         diary = flow.produce_source(Lane.B, base=1350)
+        # A later issuance changes the root revision without changing the old snapshot's
+        # eligibility facts; attachment must not treat the whole revision as authority.
+        flow.add(NarrationMasterSnapshotId, NarrationMasterSnapshotId(uuid(1391)))
+        diary_job = flow.jobs.load(diary.issuing_job_id)
+        IssueNarrationMasterSnapshotHandler(flow.jobs, flow.authority, flow.clock, flow.ids)(
+            IssueNarrationMasterSnapshotCommand(
+                CommandId(uuid(1392)), diary.issuing_job_id, diary.source_master_id, diary_job.revision,
+            )
+        )
         attached_intro = AttachIntroMasterHandler(flow.episodes, flow.jobs, flow.authority, flow.clock)(
             AttachIntroMasterCommand(CommandId(uuid(1302)), episode_id, intro, prepared.revision)
         )
@@ -114,7 +126,7 @@ class EpisodeApplicationTests(unittest.TestCase):
             flow.episodes, flow.jobs, flow.authority, flow.clock, flow.ids, normalizer,
         )(
             BuildTimedNarrationPackageCommand(
-                CommandId(uuid(1383)), episode_id, assembled.master_id, (), listened.revision,
+                CommandId(uuid(1383)), episode_id, assembled.master_id, listened.revision,
             )
         )
         first = flow.episodes.load(episode_id).timing_packages[-1]
@@ -133,22 +145,42 @@ class EpisodeApplicationTests(unittest.TestCase):
         )(
             RecordTimingCorrectionCommand(
                 CommandId(uuid(1385)), "fake-operator", episode_id, timed.package_id,
-                corrected_cues, "fake qualified timing correction",
-                TimingReviewStatus.HUMAN_REVIEWED, timed.revision,
+                corrected_cues, "fake qualified timing correction", timed.revision,
             )
         )
         handoff = ExportPresentationHandoffHandler(flow.episodes, flow.jobs, flow.authority, flow.clock)(
             ExportPresentationHandoffCommand(CommandId(uuid(1386)), episode_id, corrected.package_id)
         )
-        status = ShowEpisodeStatusHandler(flow.episodes)(
+        status = ShowEpisodeStatusHandler(flow.episodes, flow.jobs, flow.authority, flow.clock)(
             ShowEpisodeStatusCommand(CommandId(uuid(1387)), episode_id)
         )
         episode = flow.episodes.load(episode_id)
         master = episode.speech_masters[-1]
+        corrected_package = episode.timing_packages[-1]
         self.assertEqual((master.gap_samples, master.media.sample_count), (50, 250))
-        self.assertEqual((handoff.cue_count, status.timing_versions, corrected.version), (2, 2, 2))
+        self.assertEqual((handoff.cue_count, len(status.timing), corrected.version), (2, 2, 2))
         self.assertEqual((len(flow.assembler.episode_calls), handoff.episode_master_id), (1, master.master_id))
         self.assertEqual(len(flow.gateways), 2)
+        self.assertEqual(
+            normalizer.calls[0].raw_timing_artifacts,
+            tuple(
+                reference
+                for snapshot in (intro, diary)
+                for reference in snapshot.timing_references
+                if reference is not None
+            ),
+        )
+        self.assertEqual(
+            tuple(source.display_text for source in normalizer.calls[0].source_passages),
+            tuple(
+                flow.jobs.load(snapshot.issuing_job_id).take(take_id).effective_input.text.value
+                for snapshot in (intro, diary)
+                for take_id in snapshot.selected_take_ids
+            ),
+        )
+        self.assertTrue(all(cue.provenance is CueProvenance.MANUAL_CORRECTION for cue in corrected_package.cues))
+        self.assertTrue(all(cue.review_status is TimingReviewStatus.HUMAN_REVIEWED for cue in corrected_package.cues))
+        self.assertEqual(corrected_package.timing_review_status, TimingReviewStatus.HUMAN_REVIEWED)
 
     def test_stale_source_job_or_episode_CAS_refusal_prevents_dry_assembly_and_publication(self) -> None:
         flow, episode_id, intro, diary, configured = self.configured()
@@ -181,10 +213,18 @@ class EpisodeApplicationTests(unittest.TestCase):
             flow.clock.now(), expected_revision=episode.revision,
         )
         self.assertTrue(flow.episodes.save(episode, configured.revision))
-        result = ReconcileEpisodeAssemblyAttemptHandler(flow.episodes, flow.clock)(
+        result = ReconcileEpisodeAssemblyAttemptHandler(
+            flow.episodes,
+            flow.jobs,
+            flow.authority,
+            flow.clock,
+            flow.workspaces,
+            flow.workspace_verifier,
+            flow.provider_event_verifier,
+            flow.artifact_verifier,
+        )(
             ReconcileEpisodeAssemblyAttemptCommand(
-                CommandId(uuid(1390)), episode_id, attempt_id, AttemptState.QUARANTINED,
-                "fake recovered workspace evidence", episode.revision,
+                CommandId(uuid(1390)), episode_id, attempt_id, episode.revision,
             )
         )
         self.assertEqual((result.revision, flow.episodes.load(episode_id).assembly_attempts[-1].state), (episode.revision + 1, AttemptState.QUARANTINED))

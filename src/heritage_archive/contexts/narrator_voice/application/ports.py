@@ -11,6 +11,7 @@ from heritage_archive.kernel import ActorId, ArtifactRef, ContentDigest
 from ..domain.authorization import AuthorizationRecord, AuthorizationStatus
 from ..domain.diary_episode import DiaryEpisode
 from ..domain.evidence import (
+    AttemptState,
     AttemptWorkspaceEvidence,
     AuthoritySnapshot,
     ComponentOffset,
@@ -18,26 +19,40 @@ from ..domain.evidence import (
     NarrationMasterSnapshot,
     PassageOffset,
     ProviderEventEvidence,
+    ProviderTerminalClass,
+    ReviewAuthority,
     PublishedArtifact,
     TimingCue,
     TimingReviewStatus,
+    SubmissionEvidence,
 )
 from ..domain.ids import (
     AuthorizationRecordId,
     BudgetReservationId,
     DiaryEpisodeId,
+    EpisodeAssemblyAttemptId,
+    GenerationAttemptId,
+    NarrationAssemblyAttemptId,
     NarrationJobId,
+    NarrationMasterId,
+    PassageId,
+    PassageRenderRecipeId,
 )
 from ..domain.narration_job import NarrationJob
 from ..domain.values import (
+    DeliveryControlDefaults,
+    ComponentRole,
     EffectiveSynthesisInput,
     EffectiveTakeSettings,
+    Lane,
     NonNegativeDecimal,
     PassageRenderRecipe,
     PassageText,
+    RenderControl,
     ReleaseSynthesisContract,
     SafeRelativeArtifactPath,
 )
+from .recovery import BudgetRecoveryState, RecoveryStage, RecoveryTarget
 
 
 IdT = TypeVar("IdT")
@@ -59,6 +74,21 @@ class DiaryEpisodeRepository(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class ReleasePolicyResolution:
+    contract: ReleaseSynthesisContract
+    initial_defaults: DeliveryControlDefaults
+
+
+class NarrationReleasePolicyResolver(Protocol):
+    def resolve_lane_b_diary(self) -> ReleasePolicyResolution: ...
+
+    def resolve_lane_c_intro(
+        self,
+        intended_episode_id: DiaryEpisodeId,
+    ) -> ReleasePolicyResolution: ...
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorityObservation:
     record_id: AuthorizationRecordId
     status: AuthorizationStatus | None
@@ -73,8 +103,16 @@ class AuthorizationStatusReader(Protocol):
     def read(self, record_id: AuthorizationRecordId, observed_at: datetime) -> AuthorityObservation: ...
 
 
+@dataclass(frozen=True, slots=True)
+class PrincipalAuthority:
+    actor_id: ActorId
+    can_administer_authority: bool
+    review_authority: ReviewAuthority | None
+    timing_review_status: TimingReviewStatus | None
+
+
 class ActorResolver(Protocol):
-    def resolve_actor(self, principal: str) -> ActorId: ...
+    def resolve_principal(self, principal: str) -> PrincipalAuthority: ...
 
 
 class Clock(Protocol):
@@ -97,6 +135,26 @@ class RecipeCompileRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RecipeAuthoringRequest:
+    job_id: NarrationJobId
+    passage_id: PassageId
+    text_revision: int
+    text: PassageText
+    recipe_id: PassageRenderRecipeId
+    recipe_revision: int
+    structured_controls: tuple[RenderControl, ...]
+    advanced_source: str | None
+    contract: ReleaseSynthesisContract
+
+
+@dataclass(frozen=True, slots=True)
+class RecipeAuthoringResult:
+    recipe: PassageRenderRecipe
+    canonical_projection: str
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PreviewCompilerResult:
     compiler_version: str
     endpoint: str
@@ -105,10 +163,13 @@ class PreviewCompilerResult:
     timestamps_requested: bool
     normalization: str
     billable_rule: str
+    billable_characters: int
     estimated_usage: NonNegativeDecimal
 
 
 class RecipeCompiler(Protocol):
+    def compile_recipe(self, request: RecipeAuthoringRequest) -> RecipeAuthoringResult: ...
+
     def compile(self, request: RecipeCompileRequest) -> PreviewCompilerResult: ...
 
 
@@ -135,8 +196,65 @@ class ImmutableArtifactStore(Protocol):
 
 
 class AttemptWorkspaceStore(Protocol):
-    def load(self, attempt_id: str) -> AttemptWorkspaceEvidence | None: ...
+    def load(
+        self,
+        attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId,
+    ) -> AttemptWorkspaceEvidence | None: ...
     def save(self, workspace: AttemptWorkspaceEvidence) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedWorkspaceRecoveryFacts:
+    """Trusted binding and progression facts read from an attempt workspace."""
+
+    workspace_matches_attempt: bool
+    frozen_plan_matches: bool
+    last_confirmed_stage: RecoveryStage
+    submission: SubmissionEvidence
+
+
+class AttemptWorkspaceVerifier(Protocol):
+    """Verifies a private attempt workspace against its aggregate attempt."""
+
+    def verify(
+        self,
+        workspace: AttemptWorkspaceEvidence | None,
+        target: RecoveryTarget,
+        attempt_state: AttemptState,
+        reservation_revision: int,
+    ) -> VerifiedWorkspaceRecoveryFacts: ...
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedProviderRecoveryFacts:
+    """Provider-event facts derived from sealed private evidence, never caller text."""
+
+    provider_terminal: ProviderTerminalClass | None
+    events_sealed: bool
+
+
+class ProviderEventVerifier(Protocol):
+    def verify(self, workspace: AttemptWorkspaceEvidence | None) -> VerifiedProviderRecoveryFacts: ...
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedArtifactRecoveryFacts:
+    """Artifact and publication verification against immutable backing storage."""
+
+    artifact_observed: bool
+    artifact_verified: bool
+    publication_observed: bool
+    publication_verified: bool
+
+
+class ArtifactEvidenceVerifier(Protocol):
+    def verify(self, workspace: AttemptWorkspaceEvidence | None) -> VerifiedArtifactRecoveryFacts: ...
+
+
+class BudgetReservationStatusReader(Protocol):
+    """Reads the ledger's trusted state; this port has no reserve/settle side effect."""
+
+    def read(self, reservation_id: BudgetReservationId) -> BudgetRecoveryState: ...
 
 
 class MediaInspector(Protocol):
@@ -178,6 +296,21 @@ class DryPcmAssembler(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class TimingSourcePassage:
+    role: ComponentRole
+    lane: Lane
+    source_job_id: NarrationJobId
+    source_master_id: NarrationMasterId
+    passage_id: PassageId
+    text_revision: int
+    text_digest: ContentDigest
+    display_text: str
+    timing_reference: ArtifactRef | None
+    start_sample: int
+    end_sample: int
+
+
+@dataclass(frozen=True, slots=True)
 class TimingNormalizationRequest:
     episode_id: DiaryEpisodeId
     episode_revision: int
@@ -186,6 +319,7 @@ class TimingNormalizationRequest:
     component_offsets: tuple[ComponentOffset, ...]
     intro_snapshot: NarrationMasterSnapshot
     diary_snapshot: NarrationMasterSnapshot
+    source_passages: tuple[TimingSourcePassage, ...]
     raw_timing_artifacts: tuple[ArtifactRef, ...]
 
 

@@ -15,14 +15,18 @@ if str(SOURCE_ROOT) not in sys.path:
 from heritage_archive.kernel import ArtifactId, ArtifactRef, ValidationError
 from heritage_archive.contexts.narrator_voice.application.schema_v1 import decode_schema_v1, encode_schema_v1
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
+    AttemptKind,
     AttemptState,
+    AttemptWorkspaceEvidence,
+    DecodedMediaFacts,
     ProviderEventEvidence,
     ProviderEventKind,
     ProviderTerminalClass,
     SubmissionEvidence,
 )
-from heritage_archive.contexts.narrator_voice.domain.errors import DomainInvariantError, RevisionConflict
+from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, DomainInvariantError, RevisionConflict
 from heritage_archive.contexts.narrator_voice.domain.ids import (
+    AttemptWorkspaceId,
     BudgetReservationId,
     GenerationAttemptId,
     NarrationJobId,
@@ -106,6 +110,42 @@ class NarrationJobAttemptTests(unittest.TestCase):
         self.assertEqual(self.job.takes, (take,))
         self.assertEqual(take.effective_input.request_digest, esi.request_digest)
 
+    def test_generation_staging_rejects_silence_and_non_success_terminal_streams(self) -> None:
+        self.reserve()
+        esi = make_esi(job_id=self.job_id, passage_id=self.passage_id, text=self.text, recipe=self.recipe, contract=self.contract)
+        self.job.freeze_generation_input(self.attempt_id, esi, expected_revision=4)
+        self.job.mark_generation_external_work_started(self.attempt_id, NOW, expected_revision=5)
+        raw = ArtifactRef(ArtifactId(uuid(210)), digest("fake-failed-event"), 12, "application/json")
+        failed = ProviderEventEvidence(
+            ProviderEventId(uuid(211)), 0, ProviderEventKind.ERROR, raw,
+            raw.content_digest, NOW, "fake-request", None, None, None, None,
+            ProviderTerminalClass.FAILURE,
+        )
+        take = make_take(job_id=self.job_id, passage_id=self.passage_id, text=self.text, recipe=self.recipe, contract=self.contract, take_index=212, attempt_index=204)
+        silent = DecodedMediaFacts(take.media.audio, take.media.sample_count, take.media.duration_ms, True)
+        with self.assertRaises(ValidationError):
+            self.job.stage_generation_artifacts(self.attempt_id, (failed,), take.artifact, take.media, expected_revision=6)
+        with self.assertRaises(ValidationError):
+            self.job.stage_generation_artifacts(self.attempt_id, (), take.artifact, silent, expected_revision=6)
+
+    def test_rehydration_rejects_completed_attempt_without_its_exact_take(self) -> None:
+        self.reserve()
+        esi = make_esi(job_id=self.job_id, passage_id=self.passage_id, text=self.text, recipe=self.recipe, contract=self.contract)
+        self.job.freeze_generation_input(self.attempt_id, esi, expected_revision=4)
+        self.job.mark_generation_external_work_started(self.attempt_id, NOW, expected_revision=5)
+        raw = ArtifactRef(ArtifactId(uuid(213)), digest("fake-success-event"), 12, "application/json")
+        event = ProviderEventEvidence(
+            ProviderEventId(uuid(214)), 0, ProviderEventKind.TERMINAL, raw,
+            raw.content_digest, NOW, "fake-request", "fake-response", None, None,
+            "15", ProviderTerminalClass.SUCCESS,
+        )
+        take = make_take(job_id=self.job_id, passage_id=self.passage_id, text=self.text, recipe=self.recipe, contract=self.contract, take_index=215, attempt_index=204)
+        self.job.stage_generation_artifacts(self.attempt_id, (event,), take.artifact, take.media, expected_revision=6)
+        self.job.mark_generation_artifacts_published(self.attempt_id, expected_revision=7)
+        self.job.complete_generation_attempt(self.attempt_id, take, NOW, expected_revision=8)
+        with self.assertRaises(ValidationError):
+            NarrationJob.from_snapshot(replace(self.job.to_snapshot(), takes=()))
+
     def test_INV_NJ_3_take_and_terminal_attempt_history_are_immutable(self) -> None:
         self.reserve()
         self.job.finalize_generation_outcome(
@@ -143,6 +183,11 @@ class NarrationJobAttemptTests(unittest.TestCase):
             self.attempt_id, AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
             "fake ambiguous outcome", NOW, expected_revision=6,
         )
+        with self.assertRaises(DomainInvariantError):
+            self.job.finalize_generation_outcome(
+                self.attempt_id, AttemptState.FAILED, SubmissionEvidence.COMPLETED,
+                "cannot bypass reconciliation", NOW, expected_revision=7,
+            )
         self.job.reconcile_generation_attempt(
             self.attempt_id, AttemptState.QUARANTINED, "recorded fake provider evidence",
             NOW, expected_revision=7,
@@ -153,6 +198,63 @@ class NarrationJobAttemptTests(unittest.TestCase):
                 self.attempt_id, AttemptState.COMPLETED, "cannot rewrite terminal",
                 NOW, expected_revision=8,
             )
+
+    def test_unknown_generation_recovers_exact_completed_take_once_from_workspace_evidence(self) -> None:
+        self.reserve()
+        esi = make_esi(
+            job_id=self.job_id, passage_id=self.passage_id, text=self.text,
+            recipe=self.recipe, contract=self.contract,
+        )
+        self.job.freeze_generation_input(self.attempt_id, esi, expected_revision=4)
+        self.job.mark_generation_external_work_started(self.attempt_id, NOW, expected_revision=5)
+        self.job.finalize_generation_outcome(
+            self.attempt_id, AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
+            "fake aggregate finalization ambiguity", NOW, expected_revision=6,
+        )
+        raw = ArtifactRef(ArtifactId(uuid(216)), digest("recovered-event"), 12, "application/json")
+        event = ProviderEventEvidence(
+            ProviderEventId(uuid(217)), 0, ProviderEventKind.TERMINAL, raw,
+            raw.content_digest, NOW, "fake-request", "fake-response", None, None,
+            "15", ProviderTerminalClass.SUCCESS,
+        )
+        take = make_take(
+            job_id=self.job_id, passage_id=self.passage_id, text=self.text,
+            recipe=self.recipe, contract=self.contract, take_index=218, attempt_index=204,
+        )
+        attempt = self.job.generation_attempt(self.attempt_id)
+        workspace = AttemptWorkspaceEvidence(
+            AttemptWorkspaceId(uuid(219)), AttemptKind.GENERATION, self.job_id,
+            self.attempt_id, attempt.reservation_revision, self.budget_id,
+            self.preview.preview_digest, esi.request_digest, SubmissionEvidence.COMPLETED,
+            (event,), (take.artifact.reference,), (take.artifact,),
+            ("fake verifier sealed exact workspace evidence",), AttemptState.COMPLETED,
+        )
+
+        before = self.job.to_snapshot()
+        with self.assertRaises(AuthorizationDenied):
+            self.job.recover_generation_completion(
+                self.attempt_id, workspace, take, False, NOW,
+                expected_revision=self.job.revision,
+            )
+        with self.assertRaises(ValidationError):
+            self.job.recover_generation_completion(
+                self.attempt_id, replace(workspace, effective_input_digest=digest("wrong")),
+                take, True, NOW, expected_revision=self.job.revision,
+            )
+        self.assertEqual(self.job.to_snapshot(), before)
+
+        recovered = self.job.recover_generation_completion(
+            self.attempt_id, workspace, take, True, NOW,
+            expected_revision=self.job.revision,
+        )
+        completed_revision = self.job.revision
+        again = self.job.recover_generation_completion(
+            self.attempt_id, workspace, take, True, NOW,
+            expected_revision=completed_revision,
+        )
+        self.assertEqual((recovered, again), (take, take))
+        self.assertEqual((self.job.revision, self.job.takes), (completed_revision, (take,)))
+        self.assertEqual(self.job.generation_attempt(self.attempt_id).state, AttemptState.COMPLETED)
 
     def test_schema_v1_round_trip_freezes_job_attempt_preview_esi_event_and_take_histories(self) -> None:
         self.reserve()

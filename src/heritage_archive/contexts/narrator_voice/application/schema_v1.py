@@ -81,6 +81,8 @@ def _decode(value: JsonValue, annotation: object) -> object:
             raise ValidationError("invalid schema-v1 datetime") from error
         if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
             raise ValidationError("schema-v1 datetime must be UTC")
+        if parsed.isoformat() != value:
+            raise ValidationError("schema-v1 datetime must use its exact canonical UTC spelling")
         return parsed
     if isinstance(annotation, type) and issubclass(annotation, Enum):
         if type(value) is not str:
@@ -94,6 +96,15 @@ def _decode(value: JsonValue, annotation: object) -> object:
     if origin in {tuple, list, frozenset, set}:
         if type(value) is not list:
             raise ValidationError("expected schema-v1 array")
+        if origin is tuple and arguments and (
+            len(arguments) != 2 or arguments[1] is not Ellipsis
+        ):
+            if len(value) != len(arguments):
+                raise ValidationError("fixed schema-v1 tuple has the wrong length")
+            return tuple(
+                _decode(member, member_type)
+                for member, member_type in zip(value, arguments)
+            )
         member_type = arguments[0] if arguments else Any
         decoded = [_decode(member, member_type) for member in value]
         if origin is tuple:
@@ -144,6 +155,8 @@ def _decode(value: JsonValue, annotation: object) -> object:
 
 def decode_schema_v1(raw: bytes, record_type: type[Any]) -> Any:
     envelope = parse_strict_json(raw)
+    if canonical_json(envelope) != raw:
+        raise ValidationError("schema-v1 input bytes must already be canonical JSON")
     if type(envelope) is not dict or set(envelope) != {"schema_version", "record_type", "payload"}:
         raise ValidationError("schema-v1 envelope has unknown or missing fields")
     if envelope["schema_version"] != SCHEMA_VERSION:

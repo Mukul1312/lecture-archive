@@ -29,14 +29,13 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     SelectWorkingTakeHandler,
     ValidateRenderRecipeHandler,
 )
-from heritage_archive.contexts.narrator_voice.application.ports import SynthesisResult
+from heritage_archive.contexts.narrator_voice.application.ports import ReleasePolicyResolution, SynthesisResult
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     ListeningOutcome,
     ProviderEventEvidence,
     ProviderEventKind,
     ProviderTerminalClass,
-    ReviewAuthority,
     ReviewOutcome,
 )
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -61,13 +60,14 @@ from heritage_archive.contexts.narrator_voice.domain.narration_job import Passag
 from heritage_archive.contexts.narrator_voice.domain.values import (
     Lane,
     NonNegativeDecimal,
-    PassageRenderRecipe,
     PassageText,
     SafeRelativeArtifactPath,
 )
 from tests.heritage_archive.narrator_voice.fakes import (
     FakeActorResolver,
     FakeArtifactStore,
+    FakeArtifactEvidenceVerifier,
+    FakeAttemptWorkspaceVerifier,
     FakeAuthorizationRepository,
     FakeAuthorizationStatusReader,
     FakeBudgetLedger,
@@ -78,7 +78,9 @@ from tests.heritage_archive.narrator_voice.fakes import (
     FakeMediaInspector,
     FakeNarrationJobRepository,
     FakeRecipeCompiler,
+    FakeReleasePolicyResolver,
     FakeSynthesisGateway,
+    FakeProviderEventVerifier,
     FakeWorkspaceStore,
 )
 from tests.heritage_archive.narrator_voice.fixtures import (
@@ -87,7 +89,8 @@ from tests.heritage_archive.narrator_voice.fixtures import (
     make_contract,
     make_defaults,
     make_scope,
-    make_settings,
+    make_recipe_authoring,
+    make_settings_intent,
     uuid,
 )
 
@@ -101,10 +104,14 @@ class NoNetworkWorkflow:
         self.clock = FakeClock(NOW)
         self.ids = FakeIdentifierSource({})
         self.compiler = FakeRecipeCompiler(["structured-fake", "advanced-fake"])
+        self.policies = FakeReleasePolicyResolver()
         self.budget = FakeBudgetLedger()
         self.artifacts = FakeArtifactStore([ArtifactId(uuid(index)) for index in range(1200, 1230)])
         self.media = FakeMediaInspector(100)
         self.workspaces = FakeWorkspaceStore()
+        self.workspace_verifier = FakeAttemptWorkspaceVerifier()
+        self.provider_event_verifier = FakeProviderEventVerifier()
+        self.artifact_verifier = FakeArtifactEvidenceVerifier()
         self.assembler = FakeDryPcmAssembler()
         self.actor = ActorId(uuid(1231))
         self.actors = FakeActorResolver({"fake-operator": self.actor})
@@ -115,6 +122,12 @@ class NoNetworkWorkflow:
 
     def produce_source(self, lane: Lane, *, episode_id=None, base: int):
         contract = make_contract(lane=lane, episode_id=episode_id)
+        defaults = make_defaults(f"{base}")
+        resolution = ReleasePolicyResolution(contract, defaults)
+        if lane is Lane.C:
+            self.policies.lane_c = resolution
+        else:
+            self.policies.lane_b = resolution
         scope = make_scope(lane=lane, episode_id=episode_id)
         record = AuthorizationRecord.register(
             contract.authority_record_id, self.actor, scope, digest(f"fake authority {base}"), NOW
@@ -134,26 +147,36 @@ class NoNetworkWorkflow:
         )
         self.add(NarrationJobId, job_id)
         prepare = (
-            PrepareIntroNarrationHandler(self.jobs, self.authority, self.clock, self.ids)
+            PrepareIntroNarrationHandler(
+                self.jobs, self.episodes, self.policies, self.authority, self.clock, self.ids,
+            )
             if lane is Lane.C
-            else PrepareDiaryNarrationHandler(self.jobs, self.authority, self.clock, self.ids)
+            else PrepareDiaryNarrationHandler(self.jobs, self.policies, self.authority, self.clock, self.ids)
         )
         prepare_command = (
-            PrepareIntroNarrationCommand(CommandId(uuid(base + 7)), contract, make_defaults(f"{base}"), (PassageDraft(passage_id, 0, text),))
+            PrepareIntroNarrationCommand(
+                CommandId(uuid(base + 7)), episode_id, self.episodes.load(episode_id).revision,
+                (PassageDraft(passage_id, 0, text),),
+            )
             if lane is Lane.C
-            else PrepareDiaryNarrationCommand(CommandId(uuid(base + 7)), contract, make_defaults(f"{base}"), (PassageDraft(passage_id, 0, text),))
+            else PrepareDiaryNarrationCommand(CommandId(uuid(base + 7)), (PassageDraft(passage_id, 0, text),))
         )
         prepared = prepare(prepare_command)
-        recipe = PassageRenderRecipe(recipe_id, 1, 1, text.digest, "fake-compiler-v1", ())
-        ValidateRenderRecipeHandler(self.jobs)(
-            ValidateRenderRecipeCommand(CommandId(uuid(base + 8)), job_id, passage_id, recipe, prepared.revision)
+        ValidateRenderRecipeHandler(self.jobs, self.compiler)(
+            ValidateRenderRecipeCommand(
+                CommandId(uuid(base + 8)), job_id, passage_id,
+                make_recipe_authoring(recipe_index=base + 2), prepared.revision,
+            )
         )
         required = RequireRenderRecipeHandler(self.jobs)(
             RequireRenderRecipeCommand(CommandId(uuid(base + 9)), job_id, passage_id, recipe_id, prepared.revision + 1)
         )
         self.add(GenerationPreviewId, preview_id)
         estimated = EstimateGenerationHandler(self.jobs, self.authority, self.compiler, self.clock, self.ids)(
-            EstimateGenerationCommand(CommandId(uuid(base + 10)), job_id, passage_id, recipe_id, make_settings(f"{base}"), required.revision)
+            EstimateGenerationCommand(
+                CommandId(uuid(base + 10)), job_id, passage_id, recipe_id,
+                make_settings_intent(), required.revision,
+            )
         )
         raw = ArtifactRef(ArtifactId(uuid(base + 11)), digest(f"fake event {base}"), 20, "application/json")
         timing = ArtifactRef(ArtifactId(uuid(base + 12)), digest(f"fake timing {base}"), 20, "application/json")
@@ -183,8 +206,7 @@ class NoNetworkWorkflow:
         reviewed = RecordReviewDecisionHandler(self.jobs, self.actors, self.clock, self.ids)(
             RecordReviewDecisionCommand(
                 CommandId(uuid(base + 17)), "fake-operator", job_id, generated.take_id,
-                ReviewAuthority.OPERATIONAL, ReviewOutcome.ACCEPTED,
-                "fake operational pass", generated.revision,
+                ReviewOutcome.ACCEPTED, "fake operational pass", generated.revision,
             )
         )
         self.add(SelectionDecisionId, SelectionDecisionId(uuid(base + 18)))

@@ -372,6 +372,71 @@ class NarratorVoiceArchitectureTests(unittest.TestCase):
         self.assertIn("class PrepareIntroNarrationHandler", handler_source)
         self.assertNotIn("prepare_job_for_lane", narration_source)
 
+    def test_preparation_commands_cannot_assert_release_contract_or_private_defaults(self) -> None:
+        application = self.NARRATOR_ROOT / "application"
+        command_tree = ast.parse((application / "commands.py").read_text(encoding="utf-8"))
+        command_classes = {
+            node.name: node
+            for node in command_tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+
+        def annotated_fields(class_name: str) -> tuple[str, ...]:
+            return tuple(
+                node.target.id
+                for node in command_classes[class_name].body
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            )
+
+        self.assertEqual(
+            annotated_fields("PrepareDiaryNarrationCommand"),
+            ("command_id", "passages"),
+        )
+        self.assertEqual(
+            annotated_fields("PrepareIntroNarrationCommand"),
+            ("command_id", "intended_episode_id", "expected_episode_revision", "passages"),
+        )
+        port_classes = self._classes(application / "ports.py")
+        self.assertIn("NarrationReleasePolicyResolver", port_classes)
+        self.assertNotIn("NarrationReleasePolicyResolver", self._classes(application / "ports.py", "Repository"))
+
+    def test_application_policy_commands_accept_intent_not_server_derived_authority_or_evidence(self) -> None:
+        application = self.NARRATOR_ROOT / "application"
+        command_tree = ast.parse((application / "commands.py").read_text(encoding="utf-8"))
+        command_classes = {
+            node.name: node
+            for node in command_tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+
+        def annotated_fields(class_name: str) -> tuple[str, ...]:
+            return tuple(
+                node.target.id
+                for node in command_classes[class_name].body
+                if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            )
+
+        self.assertEqual(
+            annotated_fields("ValidateRenderRecipeCommand"),
+            ("command_id", "job_id", "passage_id", "authoring", "expected_revision"),
+        )
+        self.assertEqual(
+            annotated_fields("EstimateGenerationCommand"),
+            ("command_id", "job_id", "passage_id", "recipe_id", "settings_intent", "expected_revision"),
+        )
+        self.assertNotIn("authority", annotated_fields("RecordReviewDecisionCommand"))
+        self.assertIn("accepted_billable_character_cap", annotated_fields("GeneratePendingPassagesCommand"))
+        self.assertNotIn("raw_timing_artifacts", annotated_fields("BuildTimedNarrationPackageCommand"))
+        self.assertNotIn("review_status", annotated_fields("RecordTimingCorrectionCommand"))
+
+        port_classes = self._classes(application / "ports.py")
+        self.assertIn("PrincipalAuthority", port_classes)
+        self.assertIn("RecipeAuthoringRequest", port_classes)
+        self.assertIn("RecipeAuthoringResult", port_classes)
+
+        handler_source = (application / "handlers.py").read_text(encoding="utf-8")
+        self.assertIn("job.is_snapshot_current", handler_source)
+
     def test_narrator_domain_and_application_have_no_legacy_provider_web_filesystem_or_ffmpeg_import(self) -> None:
         forbidden_roots = {
             "heritage_production", "requests", "httpx", "urllib", "socket", "aiohttp",
@@ -414,6 +479,8 @@ class NarratorVoiceArchitectureTests(unittest.TestCase):
         self.assertTrue(all(name.removesuffix("Handler") + "Command" in command_classes for name in expected))
         for collection in (command_classes.values(), result_classes.values()):
             for node in collection:
+                if any(ast.unparse(base).endswith("Enum") for base in node.bases):
+                    continue
                 decorator_text = {ast.unparse(value) for value in node.decorator_list}
                 self.assertTrue(
                     any("dataclass" in value and "frozen=True" in value and "slots=True" in value for value in decorator_text),

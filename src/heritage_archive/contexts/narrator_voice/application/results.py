@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from heritage_archive.kernel import ActorId, ArtifactRef, ContentDigest
 
 from ..domain.authorization import AuthorizationStatus
-from ..domain.diary_episode import EpisodeStatus
 from ..domain.evidence import AttemptState, GenerationPreview, NarrationMasterSnapshot, PublishedArtifact
 from ..domain.ids import (
     AuthorizationRecordId,
@@ -22,7 +21,17 @@ from ..domain.ids import (
     TakeId,
     TimedNarrationPackageId,
 )
-from ..domain.values import Lane, NonNegativeDecimal
+from ..domain.values import Lane, NonNegativeDecimal, PassageRenderRecipe
+from .status import (
+    AuthorizationHistoryProjection,
+    EpisodeStatusProjection,
+    NarrationStatusProjection,
+)
+
+
+AuthorizationStatusResult = AuthorizationHistoryProjection
+NarrationStatusResult = NarrationStatusProjection
+EpisodeStatusResult = EpisodeStatusProjection
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,15 +40,6 @@ class AuthorizationResult:
     record_id: AuthorizationRecordId
     revision: int
     status: AuthorizationStatus
-
-
-@dataclass(frozen=True, slots=True)
-class AuthorizationStatusResult:
-    command_id: CommandId
-    record_id: AuthorizationRecordId
-    revision: int | None
-    status: AuthorizationStatus | None
-    observed_snapshot_digest: ContentDigest | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +52,14 @@ class NarrationMutationResult:
 @dataclass(frozen=True, slots=True)
 class NarrationPreparedResult(NarrationMutationResult):
     lane: Lane
+    contract_digest: ContentDigest
+
+
+@dataclass(frozen=True, slots=True)
+class RenderRecipeValidatedResult(NarrationMutationResult):
+    recipe: PassageRenderRecipe
+    canonical_projection: str
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,18 +108,6 @@ class SnapshotIssuedResult:
 
 
 @dataclass(frozen=True, slots=True)
-class NarrationStatusResult:
-    command_id: CommandId
-    job_id: NarrationJobId
-    revision: int
-    lane: Lane
-    passage_count: int
-    take_count: int
-    master_count: int
-    snapshot_count: int
-
-
-@dataclass(frozen=True, slots=True)
 class EpisodeMutationResult:
     command_id: CommandId
     episode_id: DiaryEpisodeId
@@ -136,17 +132,6 @@ class TimedPackageResult:
     package_id: TimedNarrationPackageId
     version: int
     package_digest: ContentDigest
-
-
-@dataclass(frozen=True, slots=True)
-class EpisodeStatusResult:
-    command_id: CommandId
-    episode_id: DiaryEpisodeId
-    revision: int
-    status: EpisodeStatus
-    has_master: bool
-    has_passing_listen: bool
-    timing_versions: int
 
 
 @dataclass(frozen=True, slots=True)

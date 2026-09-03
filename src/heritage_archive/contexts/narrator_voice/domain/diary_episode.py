@@ -10,14 +10,18 @@ from heritage_archive.kernel import ActorId, ContentDigest, ValidationError
 
 from .errors import AuthorizationDenied, DomainInvariantError, NotFound, RevisionConflict
 from .evidence import (
+    AttemptKind,
     AttemptState,
+    AttemptWorkspaceEvidence,
     ComponentOffset,
+    CueProvenance,
     DecodedMediaFacts,
     EpisodeAssemblyAttempt,
     EpisodeListeningDecision,
     EpisodeSpeechMaster,
     ListeningOutcome,
     NarrationMasterSnapshot,
+    PassageOffset,
     PublishedArtifact,
     TimedNarrationPackage,
     TimingReviewStatus,
@@ -101,6 +105,11 @@ class DiaryEpisode:
             self._validate_component(ComponentRole.DIARY, snapshot.diary_snapshot, snapshot.episode_id)
         if type(snapshot.component_history) is not tuple or any(type(value) is not EpisodeComponentAttachment for value in snapshot.component_history):
             raise ValidationError("episode component history must be immutable")
+        component_revisions = tuple(value.resulting_revision for value in snapshot.component_history)
+        if tuple(sorted(set(component_revisions))) != component_revisions or any(value > snapshot.revision for value in component_revisions):
+            raise ValidationError("episode component revisions must be strictly increasing within the root revision")
+        for attachment in snapshot.component_history:
+            self._validate_component(attachment.role, attachment.snapshot, snapshot.episode_id)
         latest_intro = next((value.snapshot for value in reversed(snapshot.component_history) if value.role is ComponentRole.INTRO), None)
         latest_diary = next((value.snapshot for value in reversed(snapshot.component_history) if value.role is ComponentRole.DIARY), None)
         if latest_intro != snapshot.intro_snapshot or latest_diary != snapshot.diary_snapshot:
@@ -109,12 +118,18 @@ class DiaryEpisode:
             raise ValidationError("episode current gap must be nonnegative integer samples or null")
         if type(snapshot.gap_history) is not tuple or any(type(value) is not EpisodeGapRevision for value in snapshot.gap_history):
             raise ValidationError("episode gap history must be immutable")
+        gap_revisions = tuple(value.resulting_revision for value in snapshot.gap_history)
+        if tuple(sorted(set(gap_revisions))) != gap_revisions or any(value > snapshot.revision for value in gap_revisions):
+            raise ValidationError("episode gap revisions must be strictly increasing within the root revision")
+        if set(component_revisions) & set(gap_revisions):
+            raise ValidationError("component and gap changes cannot claim the same root revision")
         latest_gap = snapshot.gap_history[-1].gap_samples if snapshot.gap_history else None
         if latest_gap != snapshot.gap_samples:
             raise ValidationError("episode current gap must equal latest append-only gap revision")
         for field in ("assembly_attempts", "speech_masters", "listening_decisions", "timing_packages"):
             if type(getattr(snapshot, field)) is not tuple:
                 raise ValidationError(f"episode {field} must be immutable")
+        self._validate_assembly_history(snapshot)
         _utc(snapshot.prepared_at, "episode preparation time")
         for field in DiaryEpisodeSnapshot.__dataclass_fields__:
             object.__setattr__(self, f"_{field}", getattr(snapshot, field))
@@ -129,6 +144,181 @@ class DiaryEpisode:
                 raise ValidationError("intro snapshot must be Lane C and bound to this exact episode")
         elif snapshot.lane is not Lane.B or snapshot.intended_episode_id is not None:
             raise ValidationError("diary snapshot must be Lane B and unbound to another episode")
+
+    @staticmethod
+    def _attachment_at(
+        snapshot: DiaryEpisodeSnapshot,
+        role: ComponentRole,
+        revision: int,
+    ) -> NarrationMasterSnapshot | None:
+        matching = tuple(
+            value.snapshot
+            for value in snapshot.component_history
+            if value.role is role and value.resulting_revision <= revision
+        )
+        return None if not matching else matching[-1]
+
+    @staticmethod
+    def _gap_at(snapshot: DiaryEpisodeSnapshot, revision: int) -> int | None:
+        matching = tuple(value.gap_samples for value in snapshot.gap_history if value.resulting_revision <= revision)
+        return None if not matching else matching[-1]
+
+    @staticmethod
+    def _component_matches_snapshot(component: ComponentOffset, source: NarrationMasterSnapshot) -> bool:
+        shifted = tuple(
+            PassageOffset(
+                value.passage_id,
+                value.text_revision,
+                value.text_digest,
+                value.start_sample + component.start_sample,
+                value.end_sample + component.start_sample,
+            )
+            for value in source.passage_offsets
+        )
+        return (
+            component.snapshot_digest == source.snapshot_digest
+            and component.end_sample - component.start_sample == source.media.sample_count
+            and component.passage_offsets == shifted
+        )
+
+    @staticmethod
+    def _validate_assembly_history(snapshot: DiaryEpisodeSnapshot) -> None:
+        if any(type(value) is not EpisodeAssemblyAttempt for value in snapshot.assembly_attempts):
+            raise ValidationError("episode assembly history must contain typed attempts")
+        if any(type(value) is not EpisodeSpeechMaster for value in snapshot.speech_masters):
+            raise ValidationError("episode master history must contain typed masters")
+        attempts = {value.attempt_id: value for value in snapshot.assembly_attempts}
+        masters = {value.master_id: value for value in snapshot.speech_masters}
+        if len(attempts) != len(snapshot.assembly_attempts) or len(masters) != len(snapshot.speech_masters):
+            raise ValidationError("episode attempt and master identities must be unique")
+        for attempt in snapshot.assembly_attempts:
+            intro = DiaryEpisode._attachment_at(snapshot, ComponentRole.INTRO, attempt.reservation_revision)
+            diary = DiaryEpisode._attachment_at(snapshot, ComponentRole.DIARY, attempt.reservation_revision)
+            gap = DiaryEpisode._gap_at(snapshot, attempt.reservation_revision)
+            if (
+                attempt.reservation_revision >= snapshot.revision
+                or intro is None
+                or diary is None
+                or gap is None
+                or attempt.component_snapshot_digests != (intro.snapshot_digest, diary.snapshot_digest)
+                or attempt.gap_samples != gap
+            ):
+                raise ValidationError("episode assembly must bind exact historical component and gap revisions")
+            if attempt.artifact is not None:
+                if (
+                    len(attempt.component_offsets) != 2
+                    or not DiaryEpisode._component_matches_snapshot(attempt.component_offsets[0], intro)
+                    or not DiaryEpisode._component_matches_snapshot(attempt.component_offsets[1], diary)
+                ):
+                    raise ValidationError("episode assembly offsets must exactly preserve both source snapshots")
+            master = None if attempt.master_id is None else masters.get(attempt.master_id)
+            if attempt.state is AttemptState.COMPLETED:
+                if (
+                    master is None
+                    or master.episode_id != snapshot.episode_id
+                    or master.component_snapshot_digests != attempt.component_snapshot_digests
+                    or master.gap_samples != attempt.gap_samples
+                    or master.component_offsets != attempt.component_offsets
+                    or master.artifact != attempt.artifact
+                    or master.media != attempt.media
+                ):
+                    raise ValidationError("completed episode attempt must link its exact immutable master")
+            elif master is not None:
+                raise ValidationError("only completed episode attempts may link masters")
+        completed_master_ids = {
+            value.master_id for value in snapshot.assembly_attempts
+            if value.state is AttemptState.COMPLETED
+        }
+        if set(masters) != completed_master_ids:
+            raise ValidationError("every episode master must be owned by one completed assembly attempt")
+        if any(type(value) is not EpisodeListeningDecision or value.master_id not in masters for value in snapshot.listening_decisions):
+            raise ValidationError("episode listening history must reference exact owned masters")
+        if len({value.decision_id for value in snapshot.listening_decisions}) != len(snapshot.listening_decisions):
+            raise ValidationError("episode listening decision identities must be unique")
+        if any(type(value) is not TimedNarrationPackage or value.episode_id != snapshot.episode_id or value.episode_master_id not in masters for value in snapshot.timing_packages):
+            raise ValidationError("episode timing history must reference exact owned masters")
+        if tuple(value.version for value in snapshot.timing_packages) != tuple(range(1, len(snapshot.timing_packages) + 1)):
+            raise ValidationError("episode timing package versions must be contiguous")
+        if len({value.package_id for value in snapshot.timing_packages}) != len(snapshot.timing_packages):
+            raise ValidationError("episode timing package identities must be unique")
+        package_revisions = tuple(value.episode_revision for value in snapshot.timing_packages)
+        if (
+            tuple(sorted(set(package_revisions))) != package_revisions
+            or any(value >= snapshot.revision for value in package_revisions)
+        ):
+            raise ValidationError("timing packages must bind strictly increasing prior episode revisions")
+        master_attempts = {
+            value.master_id: value
+            for value in snapshot.assembly_attempts
+            if value.state is AttemptState.COMPLETED and value.master_id is not None
+        }
+        previous_package: TimedNarrationPackage | None = None
+        for package in snapshot.timing_packages:
+            master = masters[package.episode_master_id]
+            attempt = master_attempts[master.master_id]
+            intro = DiaryEpisode._attachment_at(snapshot, ComponentRole.INTRO, attempt.reservation_revision)
+            diary = DiaryEpisode._attachment_at(snapshot, ComponentRole.DIARY, attempt.reservation_revision)
+            assert intro is not None and diary is not None
+            passing_listen = any(
+                value.master_id == master.master_id
+                and value.outcome is ListeningOutcome.PASSED
+                and value.decided_at <= package.created_at
+                for value in snapshot.listening_decisions
+            )
+            if (
+                package.episode_artifact != master.artifact
+                or package.episode_media != master.media
+                or package.intro_snapshot_digest != intro.snapshot_digest
+                or package.diary_snapshot_digest != diary.snapshot_digest
+                or package.gap_samples != master.gap_samples
+                or package.component_offsets != master.component_offsets
+                or package.authority_snapshots != (intro.authority_snapshot, diary.authority_snapshot)
+                or package.timing_review_status not in {TimingReviewStatus.VALIDATED, TimingReviewStatus.HUMAN_REVIEWED}
+                or not passing_listen
+            ):
+                raise ValidationError("timing package must bind exact master, source snapshots, authority and passing listening")
+            components = (
+                (ComponentRole.INTRO, intro, package.component_offsets[0]),
+                (ComponentRole.DIARY, diary, package.component_offsets[1]),
+            )
+            for role, source, component in components:
+                for carried in component.passage_offsets:
+                    matching = any(
+                        cue.role is role
+                        and cue.lane is source.lane
+                        and cue.source_job_id == source.issuing_job_id
+                        and cue.source_master_id == source.source_master_id
+                        and cue.passage_id == carried.passage_id
+                        and cue.text_revision == carried.text_revision
+                        and cue.text_digest == carried.text_digest
+                        and cue.start_sample >= carried.start_sample
+                        and cue.end_sample <= carried.end_sample
+                        for cue in package.cues
+                    )
+                    if not matching:
+                        raise ValidationError("timing package cues must cover every exact historical source passage")
+            if previous_package is None:
+                if any(
+                    value is not None
+                    for value in (package.source_package_digest, package.correction_actor_id, package.correction_reason)
+                ):
+                    raise ValidationError("initial timing package cannot claim correction lineage")
+            else:
+                changed_cues = tuple(
+                    cue
+                    for index, cue in enumerate(package.cues)
+                    if index >= len(previous_package.cues) or cue != previous_package.cues[index]
+                )
+                if (
+                    package.source_package_digest != previous_package.package_digest
+                    or package.correction_actor_id is None
+                    or package.correction_reason is None
+                    or package.episode_master_id != previous_package.episode_master_id
+                    or not changed_cues
+                    or any(cue.provenance is not CueProvenance.MANUAL_CORRECTION for cue in changed_cues)
+                ):
+                    raise ValidationError("timing correction history must link the latest package and changed manual cues")
+            previous_package = package
 
     @classmethod
     def prepare(cls, episode_id: DiaryEpisodeId, prepared_at: datetime) -> DiaryEpisode:
@@ -180,9 +370,13 @@ class DiaryEpisode:
 
     @property
     def status(self) -> EpisodeStatus:
-        if self._intro_snapshot is not None and self._diary_snapshot is not None and self._gap_samples is not None:
+        if self._intro_snapshot is not None and self._diary_snapshot is not None:
             return EpisodeStatus.CONFIGURED
         return EpisodeStatus.DRAFT
+
+    @property
+    def assembly_ready(self) -> bool:
+        return self.status is EpisodeStatus.CONFIGURED and self._gap_samples is not None
 
     @property
     def assembly_attempts(self) -> tuple[EpisodeAssemblyAttempt, ...]:
@@ -236,7 +430,7 @@ class DiaryEpisode:
 
     def reserve_assembly_preview(self, *, expected_revision: int) -> tuple[ContentDigest, ContentDigest, int]:
         self._check_revision(expected_revision)
-        if self.status is not EpisodeStatus.CONFIGURED:
+        if not self.assembly_ready:
             # INV-DE-1: only configured exact intro+diary+gap input is assembly-ready.
             raise DomainInvariantError("episode is not configured for assembly")
         assert self._intro_snapshot is not None and self._diary_snapshot is not None and self._gap_samples is not None
@@ -266,7 +460,7 @@ class DiaryEpisode:
         if sources_eligible is not True:
             # INV-DE-3: current source jobs and current authority are mandatory.
             raise AuthorizationDenied("current source-job and authority eligibility is required for episode assembly")
-        if self.status is not EpisodeStatus.CONFIGURED:
+        if not self.assembly_ready:
             raise DomainInvariantError("episode is not configured for assembly")
         if type(attempt_id) is not EpisodeAssemblyAttemptId or any(
             value.attempt_id == attempt_id for value in self._assembly_attempts
@@ -292,7 +486,7 @@ class DiaryEpisode:
         self._revision += 1
 
     def _current_assembly_input(self) -> tuple[ContentDigest, ContentDigest, int]:
-        if self.status is not EpisodeStatus.CONFIGURED:
+        if not self.assembly_ready:
             raise DomainInvariantError("episode is not configured for assembly")
         assert self._intro_snapshot is not None and self._diary_snapshot is not None and self._gap_samples is not None
         return self._intro_snapshot.snapshot_digest, self._diary_snapshot.snapshot_digest, self._gap_samples
@@ -476,6 +670,78 @@ class DiaryEpisode:
         )
         self._revision += 1
 
+    def recover_episode_assembly_completion(
+        self,
+        attempt_id: EpisodeAssemblyAttemptId,
+        workspace: AttemptWorkspaceEvidence,
+        master: EpisodeSpeechMaster,
+        sources_eligible: bool,
+        recovered_at: datetime,
+        *,
+        expected_revision: int,
+    ) -> EpisodeSpeechMaster:
+        """Bind an exact dry episode master from verified workspace evidence."""
+
+        self._check_revision(expected_revision)
+        _utc(recovered_at, "episode assembly recovery completion time")
+        if sources_eligible is not True:
+            raise AuthorizationDenied("current source jobs and authority are required for recovered episode assembly")
+        attempt = self.episode_assembly_attempt(attempt_id)
+        if type(workspace) is not AttemptWorkspaceEvidence or type(master) is not EpisodeSpeechMaster:
+            raise ValidationError("episode recovery requires typed workspace and master evidence")
+        if not workspace.matches_completion_binding(
+            attempt_kind=AttemptKind.EPISODE_ASSEMBLY,
+            aggregate_id=self._episode_id,
+            attempt_id=attempt.attempt_id,
+            reservation_revision=attempt.reservation_revision,
+            artifact=master.artifact,
+            budget_reservation_id=None,
+            preview_digest=None,
+            effective_input_digest=None,
+        ) or workspace.events:
+            raise ValidationError("episode workspace does not prove the exact assembly publication")
+        history = self.to_snapshot()
+        intro = self._attachment_at(history, ComponentRole.INTRO, attempt.reservation_revision)
+        diary = self._attachment_at(history, ComponentRole.DIARY, attempt.reservation_revision)
+        if intro is None or diary is None:
+            raise ValidationError("recovered episode attempt has no exact historical source snapshots")
+        if (
+            master.episode_id != self._episode_id
+            or master.component_snapshot_digests != attempt.component_snapshot_digests
+            or master.gap_samples != attempt.gap_samples
+            or len(master.component_offsets) != 2
+            or not self._component_matches_snapshot(master.component_offsets[0], intro)
+            or not self._component_matches_snapshot(master.component_offsets[1], diary)
+            or (attempt.artifact is not None and attempt.artifact != master.artifact)
+            or (attempt.media is not None and attempt.media != master.media)
+            or (attempt.component_offsets and attempt.component_offsets != master.component_offsets)
+        ):
+            raise ValidationError("recovered episode master does not exactly match attempt-owned source evidence")
+        if attempt.state is AttemptState.COMPLETED:
+            assert attempt.master_id is not None
+            existing = self.speech_master(attempt.master_id)
+            if existing != master:
+                raise ValidationError("completed episode recovery replay must name the exact existing master")
+            return existing
+        if attempt.state is not AttemptState.UNKNOWN:
+            raise DomainInvariantError("only unknown episode assembly may complete from recovery evidence")
+        if any(value.master_id == master.master_id for value in self._speech_masters):
+            raise ValidationError("recovered episode master identity belongs to another attempt")
+        completed = replace(
+            attempt,
+            state=AttemptState.COMPLETED,
+            artifact=master.artifact,
+            media=master.media,
+            component_offsets=master.component_offsets,
+            master_id=master.master_id,
+            reason=None,
+            updated_at=recovered_at,
+        )
+        self._replace_assembly_attempt(completed)
+        self._speech_masters = (*self._speech_masters, master)
+        self._revision += 1
+        return master
+
     def speech_master(self, master_id: EpisodeSpeechMasterId) -> EpisodeSpeechMaster:
         for master in self._speech_masters:
             if master.master_id == master_id:
@@ -582,5 +848,12 @@ class DiaryEpisode:
                 or package.episode_master_id != latest.episode_master_id
             ):
                 raise ValidationError("timing correction must name the exact latest package, actor, reason and master")
+            changed_cues = tuple(
+                cue
+                for index, cue in enumerate(package.cues)
+                if index >= len(latest.cues) or cue != latest.cues[index]
+            )
+            if not changed_cues or any(cue.provenance is not CueProvenance.MANUAL_CORRECTION for cue in changed_cues):
+                raise ValidationError("timing correction must carry manually attributed changed cues")
         self._timing_packages = (*self._timing_packages, package)
         self._revision += 1

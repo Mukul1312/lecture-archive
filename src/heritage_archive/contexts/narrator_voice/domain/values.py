@@ -365,11 +365,21 @@ class SafeRelativeArtifactPath:
     def __post_init__(self) -> None:
         value = _required_text(self.value, "artifact location")
         parts = value.split("/")
+        windows_reserved = {
+            "CON", "PRN", "AUX", "NUL",
+            *(f"COM{index}" for index in range(1, 10)),
+            *(f"LPT{index}" for index in range(1, 10)),
+        }
         if (
             "\\" in value
             or ":" in value
             or value.startswith("/")
             or any(part in {"", ".", ".."} for part in parts)
+            or len(value.encode("utf-8")) > 1_024
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+            or any(len(part.encode("utf-8")) > 255 for part in parts)
+            or any(part.endswith((" ", ".")) for part in parts)
+            or any(part.split(".", 1)[0].upper() in windows_reserved for part in parts)
         ):
             raise ValidationError("artifact location must be a canonical safe relative POSIX path")
 
@@ -563,7 +573,31 @@ class EffectiveSynthesisInput:
             raise ValidationError("advanced compiler output must not exceed 16,384 UTF-8 bytes")
         rendered_digest = ContentDigest.from_bytes(raw)
         projection_digest = ContentDigest.from_bytes(projection.encode("utf-8"))
-        payload = {
+        payload = cls._digest_payload(
+            arguments,
+            rendered_byte_length=len(raw),
+            rendered_digest=rendered_digest,
+            projection_digest=projection_digest,
+        )
+        request_digest = semantic_digest("narrator_voice.effective_synthesis_input.v1", payload)
+        return cls(
+            **arguments,
+            rendered_transcript_byte_length=len(raw),
+            rendered_transcript_digest=rendered_digest,
+            canonical_projection_digest=projection_digest,
+            request_digest=request_digest,
+        )
+
+    @staticmethod
+    def _digest_payload(
+        arguments: dict[str, object],
+        *,
+        rendered_byte_length: int,
+        rendered_digest: ContentDigest,
+        projection_digest: ContentDigest,
+    ) -> dict[str, object]:
+        text = arguments["text"]
+        return {
             "job_id": arguments["job_id"].value,
             "lane": arguments["lane"].value,
             "passage_id": arguments["passage_id"].value,
@@ -582,7 +616,7 @@ class EffectiveSynthesisInput:
             "endpoint": arguments["endpoint"],
             "api_schema": arguments["api_schema"],
             "capability_snapshot": arguments["capability_snapshot"],
-            "rendered_transcript_byte_length": len(raw),
+            "rendered_transcript_byte_length": rendered_byte_length,
             "rendered_transcript_digest": rendered_digest.hex_digest,
             "canonical_projection_digest": projection_digest.hex_digest,
             "timestamps_requested": arguments["timestamps_requested"],
@@ -591,17 +625,9 @@ class EffectiveSynthesisInput:
             "billable_rule": arguments["billable_rule"],
             "billable_characters": arguments["billable_characters"],
         }
-        request_digest = semantic_digest("narrator_voice.effective_synthesis_input.v1", payload)
-        return cls(
-            **arguments,
-            rendered_transcript_byte_length=len(raw),
-            rendered_transcript_digest=rendered_digest,
-            canonical_projection_digest=projection_digest,
-            request_digest=request_digest,
-        )
 
     def __post_init__(self) -> None:
-        if type(self.job_id) is not NarrationJobId or type(self.passage_id) is not PassageId:
+        if type(self.job_id) is not NarrationJobId or type(self.passage_id) is not PassageId or type(self.text) is not PassageText:
             raise ValidationError("effective input requires exact job and passage IDs")
         if type(self.lane) is not Lane:
             raise ValidationError("effective input lane is invalid")
@@ -615,6 +641,13 @@ class EffectiveSynthesisInput:
         if type(self.authority_scope) is not AuthorityScope or type(self.authority_digest) is not ContentDigest:
             raise ValidationError("effective input authority binding is invalid")
         _utc(self.authority_observed_at, "authority observation time")
+        if not self.authority_scope.covers(AuthorityOperation.GENERATE, self.authority_observed_at):
+            raise ValidationError("effective input authority scope must cover generation when observed")
+        if (
+            (self.lane is Lane.B and self.authority_scope.intended_episode_id is not None)
+            or (self.lane is Lane.C and self.authority_scope.intended_episode_id is None)
+        ):
+            raise ValidationError("effective input lane and authority episode binding must match")
         for field, value in (("compiler version", self.compiler_version), ("endpoint", self.endpoint), ("API schema", self.api_schema), ("capability snapshot", self.capability_snapshot), ("rendered transcript", self.rendered_transcript), ("canonical projection", self.canonical_projection), ("normalization", self.normalization), ("billable rule", self.billable_rule)):
             _required_text(value, field)
         if type(self.timestamps_requested) is not bool:
@@ -632,6 +665,18 @@ class EffectiveSynthesisInput:
             raise ValidationError("canonical projection does not match PassageText")
         if type(self.request_digest) is not ContentDigest:
             raise ValidationError("effective input request_digest must be a ContentDigest")
+        arguments = self.creation_arguments()
+        expected = semantic_digest(
+            "narrator_voice.effective_synthesis_input.v1",
+            self._digest_payload(
+                arguments,
+                rendered_byte_length=self.rendered_transcript_byte_length,
+                rendered_digest=self.rendered_transcript_digest,
+                projection_digest=self.canonical_projection_digest,
+            ),
+        )
+        if self.request_digest != expected:
+            raise ValidationError("effective input request digest does not match its exact semantic facts")
 
     @property
     def rendered_transcript_bytes(self) -> bytes:

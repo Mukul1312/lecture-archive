@@ -63,7 +63,7 @@ class SourceWorkflowApplicationTests(unittest.TestCase):
         reviewed = RecordReviewDecisionHandler(fixture.jobs, actors, fixture.clock, fixture.ids)(
             RecordReviewDecisionCommand(
                 CommandId(uuid(937)), "fake-reviewer", fixture.job_id, generated.take_id,
-                ReviewAuthority.OPERATIONAL, ReviewOutcome.ACCEPTED, "fake operational pass", generated.revision,
+                ReviewOutcome.ACCEPTED, "fake operational pass", generated.revision,
             )
         )
         selected = SelectWorkingTakeHandler(fixture.jobs, fixture.reader, actors, fixture.clock, fixture.ids)(
@@ -93,9 +93,20 @@ class SourceWorkflowApplicationTests(unittest.TestCase):
                 CommandId(uuid(942)), fixture.job_id, assembled.master_id, listened.revision,
             )
         )
-        status = ShowNarrationStatusHandler(fixture.jobs)(ShowNarrationStatusCommand(CommandId(uuid(943)), fixture.job_id))
-        self.assertEqual((issued.snapshot.source_master_id, status.master_count, status.snapshot_count), (assembled.master_id, 1, 1))
+        status = ShowNarrationStatusHandler(fixture.jobs, fixture.reader, fixture.clock)(
+            ShowNarrationStatusCommand(CommandId(uuid(943)), fixture.job_id)
+        )
+        self.assertEqual(
+            (
+                issued.snapshot.source_master_id,
+                len(status.masters),
+                status.masters[0].issued_snapshot_count,
+            ),
+            (assembled.master_id, 1, 1),
+        )
         self.assertEqual((len(assembler.narration_calls), issued.snapshot.passage_offsets[0].start_sample), (1, 0))
+        self.assertEqual(fixture.jobs.load(fixture.job_id).reviews[-1].authority, ReviewAuthority.OPERATIONAL)
+        self.assertEqual(fixture.jobs.load(fixture.job_id).selections[-1].reason, "fake working selection")
         self.assertEqual(actors.calls, ["fake-reviewer", "fake-reviewer", "fake-reviewer"])
 
 

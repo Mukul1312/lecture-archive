@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from heritage_archive.kernel import ValidationError
 
 from ..domain.authorization import AuthorizationRecord
-from ..domain.diary_episode import DiaryEpisode
+from ..domain.diary_episode import DiaryEpisode, EpisodeStatus
 from ..domain.errors import (
     AmbiguousExternalFailure,
     AuthorizationDenied,
@@ -21,10 +21,19 @@ from ..domain.evidence import (
     AttemptKind,
     AttemptState,
     AttemptWorkspaceEvidence,
+    ComponentOffset,
+    CueProvenance,
+    DecodedMediaFacts,
+    EpisodeSpeechMaster,
     GenerationPreview,
     ListeningOutcome,
     NarrationTake,
+    NarrationMaster,
     PassageOffset,
+    ProviderEventEvidence,
+    ProviderEventKind,
+    ProviderTerminalClass,
+    TimingReviewStatus,
     TimedNarrationPackage,
     SubmissionEvidence,
 )
@@ -50,7 +59,17 @@ from ..domain.ids import (
     TimedNarrationPackageId,
 )
 from ..domain.narration_job import prepare_lane_b_diary_job, prepare_lane_c_intro_job
-from ..domain.values import AuthorityOperation, EffectiveSynthesisInput, Lane, NonNegativeDecimal
+from ..domain.values import (
+    AuthorityOperation,
+    ControlProvenance,
+    ComponentRole,
+    EffectiveSynthesisInput,
+    EffectiveTakeSettings,
+    FixedTwoDecimal,
+    Lane,
+    NonNegativeDecimal,
+    ResolvedControl,
+)
 from .commands import (
     EstimateGenerationCommand,
     AssembleNarrationMasterCommand,
@@ -70,6 +89,8 @@ from .commands import (
     RecordTimingCorrectionCommand,
     RecordReviewDecisionCommand,
     RecordAuthorizationChangeCommand,
+    OverrideMode,
+    RecipeAuthoringMode,
     ReconcileGenerationAttemptCommand,
     ReconcileNarrationAssemblyAttemptCommand,
     ReconcileEpisodeAssemblyAttemptCommand,
@@ -89,9 +110,13 @@ from .commands import (
 from .ports import (
     ActorResolver,
     AuthorizationRecordRepository,
+    AuthorityObservation,
     AuthorizationStatusReader,
     Clock,
     AttemptWorkspaceStore,
+    AttemptWorkspaceVerifier,
+    ArtifactEvidenceVerifier,
+    BudgetReservationStatusReader,
     GenerationBudgetLedger,
     DryPcmAssembler,
     DryPcmSource,
@@ -99,12 +124,28 @@ from .ports import (
     ImmutableArtifactStore,
     MediaInspector,
     NarrationJobRepository,
+    NarrationReleasePolicyResolver,
     DiaryEpisodeRepository,
     RecipeCompileRequest,
     RecipeCompiler,
     SynthesisGateway,
     TimingNormalizer,
     TimingNormalizationRequest,
+    TimingSourcePassage,
+    RecipeAuthoringRequest,
+    ProviderEventVerifier,
+)
+from .recovery import (
+    BudgetDisposition,
+    BudgetRecoveryState,
+    EpisodeAssemblyRecoveryTarget,
+    GenerationRecoveryTarget,
+    NarrationAssemblyRecoveryTarget,
+    RecoveryDecision,
+    RecoveryDisposition,
+    RecoveryFacts,
+    RecoveryStage,
+    decide_target_recovery,
 )
 from .results import (
     AuthorizationResult,
@@ -116,12 +157,18 @@ from .results import (
     NarrationAssemblyResult,
     NarrationPreparedResult,
     NarrationStatusResult,
+    RenderRecipeValidatedResult,
     EpisodeAssemblyResult,
     EpisodeMutationResult,
     EpisodeStatusResult,
     PresentationHandoffResult,
     SnapshotIssuedResult,
     TimedPackageResult,
+)
+from .status import (
+    project_authorization_history,
+    project_episode_status,
+    project_narration_status,
 )
 
 
@@ -138,7 +185,10 @@ class RegisterAuthorizationHandler:
     identifiers: IdentifierSource
 
     def __call__(self, command: RegisterAuthorizationCommand) -> AuthorizationResult:
-        actor_id = self.actors.resolve_actor(command.principal)
+        principal = self.actors.resolve_principal(command.principal)
+        if not principal.can_administer_authority:
+            raise AuthorizationDenied("authority administration requires the configured steward")
+        actor_id = principal.actor_id
         now = self.clock.now()
         record_id = self.identifiers.new_id(AuthorizationRecordId)
         record = AuthorizationRecord.register(record_id, actor_id, command.scope, command.evidence_digest, now)
@@ -157,7 +207,10 @@ class RecordAuthorizationChangeHandler:
         record = self.repository.load(command.record_id)
         if record is None:
             raise NotFound(f"authorization record {command.record_id} was not found")
-        actor_id = self.actors.resolve_actor(command.principal)
+        principal = self.actors.resolve_principal(command.principal)
+        if not principal.can_administer_authority:
+            raise AuthorizationDenied("authority administration requires the configured steward")
+        actor_id = principal.actor_id
         now = self.clock.now()
         change_id = self.identifiers.new_id(AuthorityChangeId)
         if command.withdraw:
@@ -194,18 +247,25 @@ class RecordAuthorizationChangeHandler:
 
 @dataclass(frozen=True, slots=True)
 class ShowAuthorizationStatusHandler:
-    reader: AuthorizationStatusReader
+    repository: AuthorizationRecordRepository
     clock: Clock
 
     def __call__(self, command: ShowAuthorizationStatusCommand) -> AuthorizationStatusResult:
-        observation = self.reader.read(command.record_id, self.clock.now())
-        return AuthorizationStatusResult(
-            command.command_id,
-            command.record_id,
-            None if observation.snapshot is None else observation.snapshot.record_revision,
-            observation.status,
-            None if observation.snapshot is None else observation.snapshot.snapshot_digest,
-        )
+        record = self.repository.load(command.record_id)
+        if record is None:
+            raise NotFound(f"authorization record {command.record_id} was not found")
+        return project_authorization_history(record, self.clock.now())
+
+
+def _status_authority_observation(
+    reader: AuthorizationStatusReader,
+    record_id: AuthorizationRecordId,
+    observed_at,
+) -> AuthorityObservation:
+    try:
+        return reader.read(record_id, observed_at)
+    except Exception:
+        return AuthorityObservation(record_id, None, None)
 
 
 def _active_authority(
@@ -233,6 +293,157 @@ def _active_authority(
     return observation.snapshot
 
 
+def _recovery_authority_covers(
+    reader: AuthorizationStatusReader,
+    contract,
+    operation: AuthorityOperation,
+    observed_at,
+) -> bool:
+    try:
+        _active_authority(reader, contract, operation, observed_at)
+    except Exception:
+        return False
+    return True
+
+
+def _trusted_recovery_facts(
+    *,
+    workspaces: AttemptWorkspaceStore,
+    workspace_verifier: AttemptWorkspaceVerifier,
+    provider_events: ProviderEventVerifier,
+    artifacts: ArtifactEvidenceVerifier,
+    target,
+    attempt_state: AttemptState,
+    reservation_revision: int,
+    requires_budget: bool,
+    budget_state: BudgetRecoveryState,
+    authority_covers_completion: bool,
+) -> RecoveryFacts:
+    """Build recovery facts only from adapters that verify private durable evidence.
+
+    Any missing/corrupt/unreadable source becomes a mismatch, which the reducer
+    quarantines; reconciliation never falls back to a caller-provided outcome.
+    """
+    try:
+        workspace = workspaces.load(target.attempt_id)
+        workspace_facts = workspace_verifier.verify(
+            workspace, target, attempt_state, reservation_revision
+        )
+        provider_facts = provider_events.verify(workspace)
+        artifact_facts = artifacts.verify(workspace)
+        return RecoveryFacts(
+            attempt_state=attempt_state,
+            last_confirmed_stage=workspace_facts.last_confirmed_stage,
+            workspace_matches_attempt=workspace_facts.workspace_matches_attempt,
+            frozen_plan_matches=workspace_facts.frozen_plan_matches,
+            submission=workspace_facts.submission,
+            provider_terminal=provider_facts.provider_terminal,
+            events_sealed=provider_facts.events_sealed,
+            artifact_observed=artifact_facts.artifact_observed,
+            artifact_verified=artifact_facts.artifact_verified,
+            publication_observed=artifact_facts.publication_observed,
+            publication_verified=artifact_facts.publication_verified,
+            authority_covers_completion=authority_covers_completion,
+            requires_budget=requires_budget,
+            budget_state=budget_state,
+        )
+    except Exception:
+        return RecoveryFacts(
+            attempt_state=attempt_state,
+            last_confirmed_stage=RecoveryStage.RESERVED,
+            workspace_matches_attempt=False,
+            frozen_plan_matches=False,
+            submission=SubmissionEvidence.NOT_STARTED,
+            provider_terminal=None,
+            events_sealed=False,
+            artifact_observed=False,
+            artifact_verified=False,
+            publication_observed=False,
+            publication_verified=False,
+            authority_covers_completion=False,
+            requires_budget=requires_budget,
+            budget_state=budget_state,
+        )
+
+
+def _recovery_submission(disposition: RecoveryDisposition, observed: SubmissionEvidence) -> SubmissionEvidence:
+    if disposition is RecoveryDisposition.BLOCKED:
+        return SubmissionEvidence.DEFINITELY_NOT_SENT
+    if disposition is RecoveryDisposition.UNKNOWN:
+        return SubmissionEvidence.AMBIGUOUS
+    return observed
+
+
+def _recovery_transition_required(decision: RecoveryDecision, attempt_state: AttemptState) -> bool:
+    if decision.disposition is RecoveryDisposition.COMPLETED:
+        return attempt_state is not AttemptState.COMPLETED
+    if attempt_state is AttemptState.UNKNOWN:
+        return decision.disposition in {
+            RecoveryDisposition.BLOCKED,
+            RecoveryDisposition.FAILED,
+            RecoveryDisposition.QUARANTINED,
+        }
+    return not attempt_state.terminal
+
+
+def _verified_completion_workspace(
+    workspaces: AttemptWorkspaceStore,
+    workspace_verifier: AttemptWorkspaceVerifier,
+    artifact_evidence: ArtifactEvidenceVerifier,
+    target,
+    attempt_state: AttemptState,
+    reservation_revision: int,
+) -> AttemptWorkspaceEvidence:
+    """Re-read and verify the exact durable evidence immediately before completion."""
+    workspace = workspaces.load(target.attempt_id)
+    verified = workspace_verifier.verify(workspace, target, attempt_state, reservation_revision)
+    artifact = artifact_evidence.verify(workspace)
+    if (
+        workspace is None
+        or not verified.workspace_matches_attempt
+        or not verified.frozen_plan_matches
+        or not artifact.artifact_observed
+        or not artifact.artifact_verified
+        or not artifact.publication_observed
+        or not artifact.publication_verified
+    ):
+        raise ValidationError("recovery completion requires a freshly verified workspace publication")
+    return workspace
+
+
+def _verified_workspace_artifact_and_media(
+    artifact_evidence: ArtifactEvidenceVerifier,
+    workspace: AttemptWorkspaceEvidence,
+):
+    if len(workspace.published_artifacts) != 1:
+        raise ValidationError("recovery completion requires exactly one published output artifact")
+    artifact = workspace.published_artifacts[0]
+    read_media = getattr(artifact_evidence, "recover_media", None)
+    if not callable(read_media):
+        raise ValidationError("artifact verifier must provide verified decoded media for recovery completion")
+    media = read_media(workspace, artifact)
+    if type(media) is not DecodedMediaFacts or media.all_digital_silence:
+        raise ValidationError("recovery completion requires verified non-silent decoded media")
+    return artifact, media
+
+
+def _recovery_id(identifiers: IdentifierSource | None, kind: type):
+    if identifiers is None:
+        raise ValidationError("recovery completion requires the server-side identity source")
+    return identifiers.new_id(kind)
+
+
+def _historical_episode_snapshot(episode, role: ComponentRole, revision: int):
+    candidates = tuple(
+        item.snapshot
+        for item in episode.component_history
+        if item.role is role and item.resulting_revision <= revision
+    )
+    if not candidates:
+        raise ValidationError("episode recovery has no source snapshot at the attempt reservation revision")
+    return candidates[-1]
+
+
 def _load_job(repository: NarrationJobRepository, job_id):
     job = repository.load(job_id)
     if job is None:
@@ -243,48 +454,157 @@ def _load_job(repository: NarrationJobRepository, job_id):
 @dataclass(frozen=True, slots=True)
 class PrepareDiaryNarrationHandler:
     repository: NarrationJobRepository
+    policies: NarrationReleasePolicyResolver
     authority: AuthorizationStatusReader
     clock: Clock
     identifiers: IdentifierSource
 
     def __call__(self, command: PrepareDiaryNarrationCommand) -> NarrationPreparedResult:
-        if command.contract.lane is not Lane.B:
-            raise ValidationError("diary preparation accepts only an explicit Lane-B contract")
+        policy = self.policies.resolve_lane_b_diary()
+        if policy.contract.lane is not Lane.B:
+            raise ValidationError("Lane-B release policy resolved a non-diary contract")
         now = self.clock.now()
-        _active_authority(self.authority, command.contract, AuthorityOperation.PREFLIGHT, now)
+        _active_authority(self.authority, policy.contract, AuthorityOperation.PREFLIGHT, now)
         job_id = self.identifiers.new_id(NarrationJobId)
-        job = prepare_lane_b_diary_job(job_id, command.contract, command.defaults, command.passages, now)
+        job = prepare_lane_b_diary_job(
+            job_id,
+            policy.contract,
+            policy.initial_defaults,
+            command.passages,
+            now,
+        )
         _cas_or_conflict(self.repository.save(job, None), "narration job")
-        return NarrationPreparedResult(command.command_id, job_id, job.revision, Lane.B)
+        return NarrationPreparedResult(
+            command.command_id,
+            job_id,
+            job.revision,
+            Lane.B,
+            policy.contract.digest,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class PrepareIntroNarrationHandler:
     repository: NarrationJobRepository
+    episodes: DiaryEpisodeRepository
+    policies: NarrationReleasePolicyResolver
     authority: AuthorizationStatusReader
     clock: Clock
     identifiers: IdentifierSource
 
     def __call__(self, command: PrepareIntroNarrationCommand) -> NarrationPreparedResult:
-        if command.contract.lane is not Lane.C:
-            raise ValidationError("intro preparation accepts only an explicit Lane-C contract")
+        episode = _load_episode(self.episodes, command.intended_episode_id)
+        if episode.revision != command.expected_episode_revision:
+            raise RevisionConflict(
+                f"expected diary episode revision {command.expected_episode_revision!r}, "
+                f"current is {episode.revision}"
+            )
+        if episode.status is not EpisodeStatus.DRAFT:
+            raise ValidationError("Lane-C intro preparation requires an existing draft diary episode")
+
+        policy = self.policies.resolve_lane_c_intro(command.intended_episode_id)
+        if (
+            policy.contract.lane is not Lane.C
+            or policy.contract.intended_episode_id != command.intended_episode_id
+        ):
+            raise ValidationError("Lane-C release policy does not bind the intended diary episode")
         now = self.clock.now()
-        _active_authority(self.authority, command.contract, AuthorityOperation.PREFLIGHT, now)
+        _active_authority(self.authority, policy.contract, AuthorityOperation.PREFLIGHT, now)
+
+        current_episode = _load_episode(self.episodes, command.intended_episode_id)
+        if (
+            current_episode.revision != command.expected_episode_revision
+            or current_episode.status is not EpisodeStatus.DRAFT
+        ):
+            raise RevisionConflict("diary episode changed during Lane-C intro preparation")
+
         job_id = self.identifiers.new_id(NarrationJobId)
-        job = prepare_lane_c_intro_job(job_id, command.contract, command.defaults, command.passages, now)
+        job = prepare_lane_c_intro_job(
+            job_id,
+            policy.contract,
+            policy.initial_defaults,
+            command.passages,
+            now,
+        )
         _cas_or_conflict(self.repository.save(job, None), "narration job")
-        return NarrationPreparedResult(command.command_id, job_id, job.revision, Lane.C)
+        return NarrationPreparedResult(
+            command.command_id,
+            job_id,
+            job.revision,
+            Lane.C,
+            policy.contract.digest,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ValidateRenderRecipeHandler:
     repository: NarrationJobRepository
+    compiler: RecipeCompiler
 
-    def __call__(self, command: ValidateRenderRecipeCommand) -> NarrationMutationResult:
+    def __call__(self, command: ValidateRenderRecipeCommand) -> RenderRecipeValidatedResult:
         job = _load_job(self.repository, command.job_id)
-        job.record_render_recipe(command.passage_id, command.recipe, expected_revision=command.expected_revision)
-        _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job")
-        return NarrationMutationResult(command.command_id, command.job_id, job.revision)
+        if job.revision != command.expected_revision:
+            raise RevisionConflict(
+                f"expected narration revision {command.expected_revision!r}, current is {job.revision}"
+            )
+        passage = job.passage(command.passage_id)
+        current_text = passage.current_text_revision
+        authoring = command.authoring
+        if authoring.mode is RecipeAuthoringMode.STRUCTURED:
+            if authoring.advanced_source is not None:
+                raise ValidationError("structured recipe authoring cannot include Advanced source")
+            advanced_source = None
+        elif authoring.mode is RecipeAuthoringMode.ADVANCED:
+            if not authoring.advanced_source or authoring.structured_controls:
+                raise ValidationError("Advanced recipe authoring requires source and no caller-compiled controls")
+            advanced_source = authoring.advanced_source
+        else:
+            raise ValidationError("recipe authoring mode is invalid")
+
+        compiled = self.compiler.compile_recipe(
+            RecipeAuthoringRequest(
+                job.job_id,
+                passage.passage_id,
+                current_text.revision,
+                current_text.text,
+                authoring.recipe_id,
+                authoring.recipe_revision,
+                authoring.structured_controls,
+                advanced_source,
+                job.contract,
+            )
+        )
+        if (
+            compiled.canonical_projection != current_text.text.value
+            or compiled.recipe.recipe_id != authoring.recipe_id
+            or compiled.recipe.revision != authoring.recipe_revision
+            or compiled.recipe.text_revision != current_text.revision
+            or compiled.recipe.text_digest != current_text.text.digest
+        ):
+            raise ValidationError("recipe compiler output is not lexically or revision equivalent")
+        compiled.recipe.validate_for(current_text.text)
+
+        current_job = _load_job(self.repository, command.job_id)
+        current_passage = current_job.passage(command.passage_id)
+        if (
+            current_job.revision != command.expected_revision
+            or current_passage.current_text_revision != current_text
+        ):
+            raise RevisionConflict("narration job changed during authoritative recipe compilation")
+        current_job.record_render_recipe(
+            command.passage_id,
+            compiled.recipe,
+            expected_revision=command.expected_revision,
+        )
+        _cas_or_conflict(self.repository.save(current_job, command.expected_revision), "narration job")
+        return RenderRecipeValidatedResult(
+            command.command_id,
+            command.job_id,
+            current_job.revision,
+            compiled.recipe,
+            compiled.canonical_projection,
+            compiled.warnings,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +616,54 @@ class RequireRenderRecipeHandler:
         job.require_render_recipe(command.passage_id, command.recipe_id, expected_revision=command.expected_revision)
         _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job")
         return NarrationMutationResult(command.command_id, command.job_id, job.revision)
+
+
+def _resolve_text_control(intent, inherited_value: str | None, field: str, *, omittable: bool):
+    if type(intent.mode) is not OverrideMode:
+        raise ValidationError(f"{field} override mode is invalid")
+    if intent.mode is OverrideMode.INHERIT:
+        if intent.value is not None:
+            raise ValidationError(f"inherited {field} cannot carry a caller-resolved value")
+        if inherited_value is None:
+            raise ValidationError(f"{field} has no current default to inherit")
+        return ResolvedControl(ControlProvenance.INHERITED, inherited_value)
+    if intent.mode is OverrideMode.OMIT:
+        if intent.value is not None or not omittable:
+            raise ValidationError(f"{field} cannot be omitted or carry an omitted value")
+        return ResolvedControl(ControlProvenance.EXPLICITLY_OMITTED, None)
+    if intent.mode is not OverrideMode.SET or intent.value is None:
+        raise ValidationError(f"explicit {field} override requires a value")
+    value = intent.value
+    if field in {"speed", "volume"}:
+        value = FixedTwoDecimal(value).value
+    return ResolvedControl(ControlProvenance.EXPLICITLY_SET, value)
+
+
+def _resolve_take_settings(defaults, intent) -> EffectiveTakeSettings:
+    speed = _resolve_text_control(intent.speed, defaults.speed.value, "speed", omittable=False)
+    volume = _resolve_text_control(intent.volume, defaults.volume.value, "volume", omittable=False)
+    emotion = _resolve_text_control(intent.emotion, defaults.emotion, "emotion", omittable=True)
+    dictionary_intent = intent.dictionary
+    if type(dictionary_intent.mode) is not OverrideMode:
+        raise ValidationError("dictionary override mode is invalid")
+    if dictionary_intent.mode is OverrideMode.INHERIT:
+        if dictionary_intent.value is not None:
+            raise ValidationError("inherited dictionary cannot carry a caller-resolved binding")
+        if defaults.dictionary is None:
+            raise ValidationError("dictionary has no current default to inherit")
+        dictionary = defaults.dictionary
+        dictionary_provenance = ControlProvenance.INHERITED
+    elif dictionary_intent.mode is OverrideMode.OMIT:
+        if dictionary_intent.value is not None:
+            raise ValidationError("omitted dictionary cannot carry a binding")
+        dictionary = None
+        dictionary_provenance = ControlProvenance.EXPLICITLY_OMITTED
+    elif dictionary_intent.mode is OverrideMode.SET and dictionary_intent.value is not None:
+        dictionary = dictionary_intent.value
+        dictionary_provenance = ControlProvenance.EXPLICITLY_SET
+    else:
+        raise ValidationError("explicit dictionary override requires a binding")
+    return EffectiveTakeSettings(speed, volume, emotion, dictionary, dictionary_provenance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,11 +684,12 @@ class EstimateGenerationHandler:
         recipe = passage.recipe(command.recipe_id)
         if passage.required_recipe_id != command.recipe_id:
             raise ValidationError("generation estimate must use the passage's explicitly required recipe")
+        settings = _resolve_take_settings(job.defaults, command.settings_intent)
         if (
             passage.required_dictionary_digest is not None
             and (
-                command.settings.dictionary is None
-                or command.settings.dictionary.content_digest != passage.required_dictionary_digest
+                settings.dictionary is None
+                or settings.dictionary.content_digest != passage.required_dictionary_digest
             )
         ):
             raise ValidationError("generation estimate settings do not satisfy the required dictionary digest")
@@ -332,7 +701,7 @@ class EstimateGenerationHandler:
                 passage.current_text_revision.revision,
                 passage.current_text_revision.text,
                 recipe,
-                command.settings,
+                settings,
                 job.contract,
                 authority,
             )
@@ -346,7 +715,7 @@ class EstimateGenerationHandler:
             recipe_id=recipe.recipe_id,
             recipe_revision=recipe.revision,
             recipe_digest=recipe.digest,
-            settings=command.settings,
+            settings=settings,
             contract_digest=job.contract.digest,
             authority_snapshot=authority,
             compiler_version=compiled.compiler_version,
@@ -358,6 +727,7 @@ class EstimateGenerationHandler:
             normalization=compiled.normalization,
             output_audio=job.contract.audio,
             billable_rule=compiled.billable_rule,
+            billable_characters=compiled.billable_characters,
             estimated_usage=compiled.estimated_usage.value,
             issued_at=now,
         )
@@ -406,9 +776,9 @@ def _workspace(
     return AttemptWorkspaceEvidence(
         workspace_id,
         AttemptKind.GENERATION,
-        job.job_id.value,
-        attempt_id.value,
-        preview.base_job_revision,
+        job.job_id,
+        attempt_id,
+        job.generation_attempt(attempt_id).reservation_revision,
         reservation_id,
         preview.preview_digest,
         None if effective_input is None else effective_input.request_digest,
@@ -432,6 +802,60 @@ class GenerateTakeHandler:
     artifacts: ImmutableArtifactStore
     media: MediaInspector
     workspaces: AttemptWorkspaceStore
+
+    def _record_invalid_provider_result(
+        self,
+        command: GenerateTakeCommand,
+        job,
+        attempt_id,
+        reservation_id,
+        workspace_id,
+        preview,
+        effective_input,
+        generated,
+        reason: str,
+    ) -> GenerationRunResult:
+        previous = job.revision
+        job.finalize_generation_outcome(
+            attempt_id,
+            AttemptState.FAILED,
+            SubmissionEvidence.COMPLETED,
+            reason,
+            self.clock.now(),
+            expected_revision=previous,
+        )
+        _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        self.budget.settle(reservation_id, generated.usage)
+        self.workspaces.save(
+            _workspace(
+                workspace_id,
+                job,
+                attempt_id,
+                reservation_id,
+                preview,
+                AttemptState.FAILED,
+                SubmissionEvidence.COMPLETED,
+                effective_input=effective_input,
+                events=(
+                    generated.events
+                    if type(generated.events) is tuple
+                    and all(type(event) is ProviderEventEvidence for event in generated.events)
+                    and tuple(event.sequence for event in generated.events)
+                    == tuple(range(len(generated.events)))
+                    else ()
+                ),
+                recovery=(reason,),
+            )
+        )
+        return GenerationRunResult(
+            command.command_id,
+            job.job_id,
+            job.revision,
+            attempt_id,
+            AttemptState.FAILED,
+            None,
+            "settled",
+        )
 
     def _record_post_external_cas_unknown(
         self,
@@ -539,7 +963,6 @@ class GenerateTakeHandler:
             )
 
         passage = job.passage(preview.passage_id)
-        billable_characters = int(preview.estimated_usage) if preview.estimated_usage.isdigit() else len(preview.canonical_projection)
         effective_input = EffectiveSynthesisInput.create(
             job_id=job.job_id,
             lane=job.lane,
@@ -565,7 +988,7 @@ class GenerateTakeHandler:
             normalization=preview.normalization,
             output_audio=preview.output_audio,
             billable_rule=preview.billable_rule,
-            billable_characters=billable_characters,
+            billable_characters=preview.billable_characters,
         )
         previous = job.revision
         job.freeze_generation_input(attempt_id, effective_input, expected_revision=previous)
@@ -652,7 +1075,61 @@ class GenerateTakeHandler:
             )
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.FAILED, None, "held")
 
-        media = self.media.inspect_canonical_wav(generated.canonical_wav_bytes)
+        event_stream_is_contiguous = (
+            type(generated.events) is tuple
+            and all(type(event) is ProviderEventEvidence for event in generated.events)
+            and tuple(event.sequence for event in generated.events)
+            == tuple(range(len(generated.events)))
+        )
+        terminal_events = tuple(
+            event for event in generated.events if event.terminal_classification is not None
+        ) if event_stream_is_contiguous else ()
+        if not (
+            event_stream_is_contiguous
+            and generated.events
+            and len(terminal_events) == 1
+            and generated.events[-1] is terminal_events[0]
+            and generated.events[-1].kind is ProviderEventKind.TERMINAL
+            and generated.events[-1].terminal_classification is ProviderTerminalClass.SUCCESS
+        ):
+            return self._record_invalid_provider_result(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                generated,
+                "provider result lacked one final successful terminal event",
+            )
+
+        try:
+            media = self.media.inspect_canonical_wav(generated.canonical_wav_bytes)
+        except ValidationError:
+            return self._record_invalid_provider_result(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                generated,
+                "provider result could not be decoded into exact canonical media facts",
+            )
+        if media.all_digital_silence:
+            return self._record_invalid_provider_result(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                generated,
+                "provider result decoded to all digital silence",
+            )
         artifact = self.artifacts.publish(
             command.artifact_location,
             generated.canonical_wav_bytes,
@@ -733,18 +1210,118 @@ class GenerateTakeHandler:
 @dataclass(frozen=True, slots=True)
 class ReconcileGenerationAttemptHandler:
     repository: NarrationJobRepository
+    authority: AuthorizationStatusReader
     clock: Clock
+    workspaces: AttemptWorkspaceStore
+    workspace_verifier: AttemptWorkspaceVerifier
+    provider_events: ProviderEventVerifier
+    artifact_evidence: ArtifactEvidenceVerifier
+    budget_status: BudgetReservationStatusReader
+    budget: GenerationBudgetLedger
+    identifiers: IdentifierSource | None = None
 
     def __call__(self, command: ReconcileGenerationAttemptCommand) -> NarrationMutationResult:
         job = _load_job(self.repository, command.job_id)
-        job.reconcile_generation_attempt(
-            command.attempt_id,
-            command.outcome,
-            command.recorded_evidence,
-            self.clock.now(),
-            expected_revision=command.expected_revision,
+        attempt = job.generation_attempt(command.attempt_id)
+        if job.revision != command.expected_revision:
+            raise RevisionConflict("generation recovery expected revision is stale")
+        try:
+            budget_state = self.budget_status.read(attempt.budget_reservation_id)
+        except Exception:
+            budget_state = BudgetRecoveryState.UNKNOWN
+        target = GenerationRecoveryTarget(job.job_id, attempt.attempt_id, attempt.budget_reservation_id)
+        facts = _trusted_recovery_facts(
+            workspaces=self.workspaces,
+            workspace_verifier=self.workspace_verifier,
+            provider_events=self.provider_events,
+            artifacts=self.artifact_evidence,
+            target=target,
+            attempt_state=attempt.state,
+            reservation_revision=attempt.reservation_revision,
+            requires_budget=True,
+            budget_state=budget_state,
+            authority_covers_completion=_recovery_authority_covers(
+                self.authority, job.contract, AuthorityOperation.GENERATE, self.clock.now()
+            ),
         )
-        _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job")
+        decision = decide_target_recovery(target, facts)
+        if decision.disposition is RecoveryDisposition.COMPLETED:
+            workspace = _verified_completion_workspace(
+                self.workspaces,
+                self.workspace_verifier,
+                self.artifact_evidence,
+                target,
+                attempt.state,
+                attempt.reservation_revision,
+            )
+            if attempt.state is AttemptState.COMPLETED:
+                assert attempt.take_id is not None
+                take = job.take(attempt.take_id)
+            else:
+                if attempt.effective_input is None:
+                    raise ValidationError("generation recovery completion requires the frozen effective input")
+                artifact, media = _verified_workspace_artifact_and_media(self.artifact_evidence, workspace)
+                preview = _find_preview(job, attempt.preview_id)
+                timing_reference = next(
+                    (event.timing_reference for event in workspace.events if event.timing_reference is not None),
+                    None,
+                )
+                effective_input = attempt.effective_input
+                take = NarrationTake(
+                    _recovery_id(self.identifiers, TakeId),
+                    attempt.attempt_id,
+                    job.job_id,
+                    job.lane,
+                    effective_input.passage_id,
+                    effective_input.text_revision,
+                    effective_input.text.digest,
+                    effective_input.recipe_id,
+                    effective_input.recipe_revision,
+                    effective_input.recipe_digest,
+                    effective_input.settings,
+                    effective_input.contract_digest,
+                    preview.authority_snapshot,
+                    effective_input,
+                    artifact,
+                    media,
+                    timing_reference,
+                    self.clock.now(),
+                )
+            previous = job.revision
+            job.recover_generation_completion(
+                attempt.attempt_id,
+                workspace,
+                take,
+                facts.authority_covers_completion,
+                self.clock.now(),
+                expected_revision=previous,
+            )
+            if job.revision != previous:
+                _cas_or_conflict(self.repository.save(job, previous), "narration generation recovery")
+            return NarrationMutationResult(command.command_id, job.job_id, job.revision)
+        if _recovery_transition_required(decision, attempt.state):
+            if attempt.state is AttemptState.UNKNOWN:
+                job.reconcile_generation_attempt(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            else:
+                job.finalize_generation_outcome(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    _recovery_submission(decision.disposition, facts.submission),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job recovery")
+        if decision.budget is BudgetDisposition.RELEASE and budget_state is BudgetRecoveryState.RESERVED:
+            self.budget.release(attempt.budget_reservation_id, decision.reason.value)
+        elif decision.budget is BudgetDisposition.HOLD and budget_state is not BudgetRecoveryState.SETTLED:
+            self.budget.hold(attempt.budget_reservation_id, decision.reason.value)
         return NarrationMutationResult(command.command_id, job.job_id, job.revision)
 
 
@@ -755,6 +1332,20 @@ class GeneratePendingPassagesHandler:
     def __call__(self, command: GeneratePendingPassagesCommand) -> GenerationBatchResult:
         if len(command.preview_ids) != len(command.artifact_locations):
             raise ValidationError("sequential generation requires one artifact location per preview")
+        if (
+            type(command.accepted_billable_character_cap) is not int
+            or command.accepted_billable_character_cap < 0
+        ):
+            raise ValidationError("accepted billable character cap must be a non-negative integer")
+        if len(set(command.preview_ids)) != len(command.preview_ids):
+            raise ValidationError("sequential generation preview ids must be unique")
+        job = _load_job(self.single.repository, command.job_id)
+        if job.revision != command.expected_revision:
+            raise RevisionConflict("generation batch expected revision is stale")
+        previews = tuple(_find_preview(job, preview_id) for preview_id in command.preview_ids)
+        exact_total = sum(preview.billable_characters for preview in previews)
+        if exact_total > command.accepted_billable_character_cap:
+            raise ValidationError("exact batch billable characters exceed the caller-accepted cap")
         revision = command.expected_revision
         runs = []
         for preview_id, location in zip(command.preview_ids, command.artifact_locations):
@@ -829,11 +1420,14 @@ class RecordReviewDecisionHandler:
 
     def __call__(self, command: RecordReviewDecisionCommand) -> NarrationMutationResult:
         job = _load_job(self.repository, command.job_id)
+        principal = self.actors.resolve_principal(command.principal)
+        if principal.review_authority is None:
+            raise AuthorizationDenied("principal has no configured narration-review authority")
         job.record_review_decision(
             self.identifiers.new_id(ReviewDecisionId),
             command.take_id,
-            self.actors.resolve_actor(command.principal),
-            command.authority,
+            principal.actor_id,
+            principal.review_authority,
             command.outcome,
             command.notes,
             self.clock.now(),
@@ -853,14 +1447,16 @@ class SelectWorkingTakeHandler:
 
     def __call__(self, command: SelectWorkingTakeCommand) -> NarrationMutationResult:
         job = _load_job(self.repository, command.job_id)
+        principal = self.actors.resolve_principal(command.principal)
         now = self.clock.now()
         _active_authority(self.authority, job.contract, AuthorityOperation.GENERATE, now)
         job.select_working_take(
             self.identifiers.new_id(SelectionDecisionId),
             command.passage_id,
             command.take_id,
-            self.actors.resolve_actor(command.principal),
+            principal.actor_id,
             True,
+            command.reason,
             now,
             expected_revision=command.expected_revision,
         )
@@ -880,8 +1476,8 @@ def _narration_assembly_workspace(
     return AttemptWorkspaceEvidence(
         workspace_id,
         AttemptKind.NARRATION_ASSEMBLY,
-        job.job_id.value,
-        attempt_id.value,
+        job.job_id,
+        attempt_id,
         job.narration_assembly_attempt(attempt_id).reservation_revision,
         None,
         None,
@@ -904,6 +1500,44 @@ class AssembleNarrationMasterHandler:
     assembler: DryPcmAssembler
     artifacts: ImmutableArtifactStore
     workspaces: AttemptWorkspaceStore
+
+    def _record_post_artifact_cas_unknown(
+        self,
+        command: AssembleNarrationMasterCommand,
+        attempt_id: NarrationAssemblyAttemptId,
+        workspace_id: AttemptWorkspaceId,
+        artifact,
+    ) -> NarrationAssemblyResult:
+        recovered = _load_job(self.repository, command.job_id)
+        attempt = recovered.narration_assembly_attempt(attempt_id)
+        if not attempt.state.terminal:
+            previous = recovered.revision
+            recovered.finalize_narration_assembly_outcome(
+                attempt_id,
+                AttemptState.UNKNOWN,
+                "repository CAS failed after immutable artifact publication",
+                self.clock.now(),
+                expected_revision=previous,
+            )
+            _cas_or_conflict(self.repository.save(recovered, previous), "narration assembly recovery")
+        self.workspaces.save(
+            _narration_assembly_workspace(
+                workspace_id,
+                recovered,
+                attempt_id,
+                AttemptState.UNKNOWN,
+                artifact=artifact,
+                recovery=("post-artifact repository CAS conflict",),
+            )
+        )
+        return NarrationAssemblyResult(
+            command.command_id,
+            recovered.job_id,
+            recovered.revision,
+            attempt_id,
+            AttemptState.UNKNOWN,
+            None,
+        )
 
     def __call__(self, command: AssembleNarrationMasterCommand) -> NarrationAssemblyResult:
         job = _load_job(self.repository, command.job_id)
@@ -954,10 +1588,12 @@ class AssembleNarrationMasterHandler:
         job.stage_narration_master(
             attempt_id, artifact, assembled.media, assembled.passage_offsets, expected_revision=previous
         )
-        _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        if not self.repository.save(job, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         previous = job.revision
         job.mark_narration_master_published(attempt_id, expected_revision=previous)
-        _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        if not self.repository.save(job, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         try:
             _active_authority(self.authority, job.contract, AuthorityOperation.ASSEMBLE, self.clock.now())
         except AuthorizationDenied as error:
@@ -966,7 +1602,8 @@ class AssembleNarrationMasterHandler:
                 attempt_id, AttemptState.QUARANTINED, "authority changed during dry assembly",
                 self.clock.now(), expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(job, previous), "narration job")
+            if not self.repository.save(job, previous):
+                return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
             self.workspaces.save(
                 _narration_assembly_workspace(
                     workspace_id, job, attempt_id, AttemptState.QUARANTINED,
@@ -977,7 +1614,8 @@ class AssembleNarrationMasterHandler:
         master_id = self.identifiers.new_id(NarrationMasterId)
         previous = job.revision
         job.complete_narration_assembly(attempt_id, master_id, self.clock.now(), expected_revision=previous)
-        _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        if not self.repository.save(job, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         self.workspaces.save(
             _narration_assembly_workspace(
                 workspace_id, job, attempt_id, AttemptState.COMPLETED, artifact=artifact
@@ -995,10 +1633,11 @@ class RecordNarrationMasterListeningHandler:
 
     def __call__(self, command: RecordNarrationMasterListeningCommand) -> NarrationMutationResult:
         job = _load_job(self.repository, command.job_id)
+        principal = self.actors.resolve_principal(command.principal)
         job.record_narration_master_listening(
             self.identifiers.new_id(MasterListeningDecisionId),
             command.master_id,
-            self.actors.resolve_actor(command.principal),
+            principal.actor_id,
             command.outcome,
             command.notes,
             self.clock.now(),
@@ -1034,27 +1673,123 @@ class IssueNarrationMasterSnapshotHandler:
 @dataclass(frozen=True, slots=True)
 class ShowNarrationStatusHandler:
     repository: NarrationJobRepository
+    authority: AuthorizationStatusReader
+    clock: Clock
 
     def __call__(self, command: ShowNarrationStatusCommand) -> NarrationStatusResult:
         job = _load_job(self.repository, command.job_id)
-        return NarrationStatusResult(
-            command.command_id, job.job_id, job.revision, job.lane,
-            len(job.passages), len(job.takes), len(job.masters), len(job.issued_snapshots),
+        observed_at = self.clock.now()
+        observation = _status_authority_observation(
+            self.authority, job.contract.authority_record_id, observed_at
         )
+        return project_narration_status(job, observation, observed_at)
 
 
 @dataclass(frozen=True, slots=True)
 class ReconcileNarrationAssemblyAttemptHandler:
     repository: NarrationJobRepository
+    authority: AuthorizationStatusReader
     clock: Clock
+    workspaces: AttemptWorkspaceStore
+    workspace_verifier: AttemptWorkspaceVerifier
+    provider_events: ProviderEventVerifier
+    artifact_evidence: ArtifactEvidenceVerifier
+    identifiers: IdentifierSource | None = None
 
     def __call__(self, command: ReconcileNarrationAssemblyAttemptCommand) -> NarrationMutationResult:
         job = _load_job(self.repository, command.job_id)
-        job.reconcile_narration_assembly(
-            command.attempt_id, command.outcome, command.recorded_evidence,
-            self.clock.now(), expected_revision=command.expected_revision,
+        attempt = job.narration_assembly_attempt(command.attempt_id)
+        if job.revision != command.expected_revision:
+            raise RevisionConflict("narration assembly recovery expected revision is stale")
+        target = NarrationAssemblyRecoveryTarget(job.job_id, attempt.attempt_id)
+        facts = _trusted_recovery_facts(
+            workspaces=self.workspaces,
+            workspace_verifier=self.workspace_verifier,
+            provider_events=self.provider_events,
+            artifacts=self.artifact_evidence,
+            target=target,
+            attempt_state=attempt.state,
+            reservation_revision=attempt.reservation_revision,
+            requires_budget=False,
+            budget_state=BudgetRecoveryState.NOT_APPLICABLE,
+            authority_covers_completion=_recovery_authority_covers(
+                self.authority, job.contract, AuthorityOperation.ASSEMBLE, self.clock.now()
+            ),
         )
-        _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job")
+        decision = decide_target_recovery(target, facts)
+        if decision.disposition is RecoveryDisposition.COMPLETED:
+            workspace = _verified_completion_workspace(
+                self.workspaces,
+                self.workspace_verifier,
+                self.artifact_evidence,
+                target,
+                attempt.state,
+                attempt.reservation_revision,
+            )
+            if attempt.state is AttemptState.COMPLETED:
+                assert attempt.master_id is not None
+                master = job.master(attempt.master_id)
+            else:
+                artifact, media = _verified_workspace_artifact_and_media(self.artifact_evidence, workspace)
+                selected = tuple(job.take(take_id) for take_id in attempt.selected_take_ids)
+                cursor = 0
+                offsets = []
+                for index, take in enumerate(selected):
+                    offsets.append(
+                        PassageOffset(
+                            take.passage_id,
+                            take.text_revision,
+                            take.text_digest,
+                            cursor,
+                            cursor + take.media.sample_count,
+                        )
+                    )
+                    cursor += take.media.sample_count
+                    if index < len(attempt.gaps_samples):
+                        cursor += attempt.gaps_samples[index]
+                master = NarrationMaster(
+                    _recovery_id(self.identifiers, NarrationMasterId),
+                    job.job_id,
+                    job.lane,
+                    job.contract.digest,
+                    attempt.selected_take_ids,
+                    attempt.gaps_samples,
+                    tuple(offsets),
+                    tuple(take.timing_reference for take in selected),
+                    artifact,
+                    media,
+                    self.clock.now(),
+                )
+            previous = job.revision
+            job.recover_narration_assembly_completion(
+                attempt.attempt_id,
+                workspace,
+                master,
+                facts.authority_covers_completion,
+                self.clock.now(),
+                expected_revision=previous,
+            )
+            if job.revision != previous:
+                _cas_or_conflict(self.repository.save(job, previous), "narration assembly recovery")
+            return NarrationMutationResult(command.command_id, job.job_id, job.revision)
+        if _recovery_transition_required(decision, attempt.state):
+            if attempt.state is AttemptState.UNKNOWN:
+                job.reconcile_narration_assembly(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            else:
+                job.finalize_narration_assembly_outcome(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job recovery")
         return NarrationMutationResult(command.command_id, job.job_id, job.revision)
 
 
@@ -1073,19 +1808,9 @@ def _require_current_source_snapshot(
     observed_at,
 ):
     job = _load_job(jobs, snapshot.issuing_job_id)
-    if (
-        not job.issued_snapshots
-        or job.issued_snapshots[-1] != snapshot
-        or job.revision != snapshot.issuing_job_revision + 1
-    ):
-        raise AuthorizationDenied("attached narration snapshot is no longer the source job's current issued product")
     current = _active_authority(authority, job.contract, operation, observed_at)
-    if (
-        current.record_revision != snapshot.authority_snapshot.record_revision
-        or current.record_digest != snapshot.authority_snapshot.record_digest
-        or current.scope != snapshot.authority_snapshot.scope
-    ):
-        raise AuthorizationDenied("source snapshot authority evidence is no longer current")
+    if not job.is_snapshot_current(snapshot, authority_eligible=True):
+        raise AuthorizationDenied("attached narration snapshot is no longer a current eligible source product")
     return job
 
 
@@ -1165,8 +1890,8 @@ def _episode_assembly_workspace(workspace_id, episode, attempt_id, state, *, art
     return AttemptWorkspaceEvidence(
         workspace_id,
         AttemptKind.EPISODE_ASSEMBLY,
-        episode.episode_id.value,
-        attempt_id.value,
+        episode.episode_id,
+        attempt_id,
         episode.episode_assembly_attempt(attempt_id).reservation_revision,
         None,
         None,
@@ -1190,6 +1915,44 @@ class AssembleEpisodeSpeechMasterHandler:
     assembler: DryPcmAssembler
     artifacts: ImmutableArtifactStore
     workspaces: AttemptWorkspaceStore
+
+    def _record_post_artifact_cas_unknown(
+        self,
+        command: AssembleEpisodeSpeechMasterCommand,
+        attempt_id: EpisodeAssemblyAttemptId,
+        workspace_id: AttemptWorkspaceId,
+        artifact,
+    ) -> EpisodeAssemblyResult:
+        recovered = _load_episode(self.repository, command.episode_id)
+        attempt = recovered.episode_assembly_attempt(attempt_id)
+        if not attempt.state.terminal:
+            previous = recovered.revision
+            recovered.finalize_episode_assembly_outcome(
+                attempt_id,
+                AttemptState.UNKNOWN,
+                "repository CAS failed after immutable artifact publication",
+                self.clock.now(),
+                expected_revision=previous,
+            )
+            _cas_or_conflict(self.repository.save(recovered, previous), "episode assembly recovery")
+        self.workspaces.save(
+            _episode_assembly_workspace(
+                workspace_id,
+                recovered,
+                attempt_id,
+                AttemptState.UNKNOWN,
+                artifact=artifact,
+                recovery=("post-artifact repository CAS conflict",),
+            )
+        )
+        return EpisodeAssemblyResult(
+            command.command_id,
+            recovered.episode_id,
+            recovered.revision,
+            attempt_id,
+            AttemptState.UNKNOWN,
+            None,
+        )
 
     def __call__(self, command: AssembleEpisodeSpeechMasterCommand) -> EpisodeAssemblyResult:
         episode = _load_episode(self.repository, command.episode_id)
@@ -1240,10 +2003,12 @@ class AssembleEpisodeSpeechMasterHandler:
         episode.stage_episode_speech_master(
             attempt_id, artifact, assembled.media, assembled.component_offsets, expected_revision=previous
         )
-        _cas_or_conflict(self.repository.save(episode, previous), "diary episode")
+        if not self.repository.save(episode, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         previous = episode.revision
         episode.mark_episode_speech_master_published(attempt_id, expected_revision=previous)
-        _cas_or_conflict(self.repository.save(episode, previous), "diary episode")
+        if not self.repository.save(episode, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         try:
             _require_episode_sources_current(
                 episode, self.jobs, self.authority, AuthorityOperation.ASSEMBLE, self.clock.now()
@@ -1254,7 +2019,8 @@ class AssembleEpisodeSpeechMasterHandler:
                 attempt_id, AttemptState.QUARANTINED, "source authority changed during dry assembly",
                 self.clock.now(), expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(episode, previous), "diary episode")
+            if not self.repository.save(episode, previous):
+                return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
             self.workspaces.save(
                 _episode_assembly_workspace(
                     workspace_id, episode, attempt_id, AttemptState.QUARANTINED,
@@ -1265,7 +2031,8 @@ class AssembleEpisodeSpeechMasterHandler:
         master_id = self.identifiers.new_id(EpisodeSpeechMasterId)
         previous = episode.revision
         episode.complete_episode_assembly(attempt_id, master_id, self.clock.now(), expected_revision=previous)
-        _cas_or_conflict(self.repository.save(episode, previous), "diary episode")
+        if not self.repository.save(episode, previous):
+            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
         self.workspaces.save(
             _episode_assembly_workspace(
                 workspace_id, episode, attempt_id, AttemptState.COMPLETED, artifact=artifact
@@ -1283,10 +2050,11 @@ class RecordEpisodeListeningHandler:
 
     def __call__(self, command: RecordEpisodeListeningCommand) -> EpisodeMutationResult:
         episode = _load_episode(self.repository, command.episode_id)
+        principal = self.actors.resolve_principal(command.principal)
         episode.record_episode_listening(
             self.identifiers.new_id(EpisodeListeningDecisionId),
             command.master_id,
-            self.actors.resolve_actor(command.principal),
+            principal.actor_id,
             command.outcome,
             command.notes,
             self.clock.now(),
@@ -1294,6 +2062,53 @@ class RecordEpisodeListeningHandler:
         )
         _cas_or_conflict(self.repository.save(episode, command.expected_revision), "diary episode")
         return EpisodeMutationResult(command.command_id, episode.episode_id, episode.revision)
+
+
+def _derive_timing_sources(episode, master, jobs, authority, observed_at):
+    if episode.intro_snapshot is None or episode.diary_snapshot is None:
+        raise AuthorizationDenied("episode source snapshots are incomplete")
+    components_by_role = {component.role: component for component in master.component_offsets}
+    sources = []
+    for role, snapshot in (
+        (ComponentRole.INTRO, episode.intro_snapshot),
+        (ComponentRole.DIARY, episode.diary_snapshot),
+    ):
+        source_job = _require_current_source_snapshot(
+            jobs, authority, snapshot, AuthorityOperation.DELIVER, observed_at
+        )
+        component = components_by_role.get(role)
+        if component is None or len(component.passage_offsets) != len(snapshot.selected_take_ids):
+            raise ValidationError("episode master timing offsets do not cover the exact source snapshot")
+        for passage_id, take_id, timing_reference, offset in zip(
+            snapshot.ordered_passage_ids,
+            snapshot.selected_take_ids,
+            snapshot.timing_references,
+            component.passage_offsets,
+        ):
+            take = source_job.take(take_id)
+            if (
+                take.passage_id != passage_id
+                or offset.passage_id != passage_id
+                or take.text_revision != offset.text_revision
+                or take.text_digest != offset.text_digest
+            ):
+                raise ValidationError("timing source facts do not match the selected take and episode offset")
+            sources.append(
+                TimingSourcePassage(
+                    role,
+                    snapshot.lane,
+                    snapshot.issuing_job_id,
+                    snapshot.source_master_id,
+                    passage_id,
+                    take.text_revision,
+                    take.text_digest,
+                    take.effective_input.text.value,
+                    timing_reference,
+                    offset.start_sample,
+                    offset.end_sample,
+                )
+            )
+    return tuple(sources)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1309,10 +2124,14 @@ class BuildTimedNarrationPackageHandler:
         episode = _load_episode(self.repository, command.episode_id)
         if episode.timing_packages:
             raise ValidationError("initial timed package already exists; use an explicit correction")
-        _require_episode_sources_current(
-            episode, self.jobs, self.authority, AuthorityOperation.DELIVER, self.clock.now()
-        )
         master = episode.speech_master(command.master_id)
+        observed_at = self.clock.now()
+        source_passages = _derive_timing_sources(
+            episode, master, self.jobs, self.authority, observed_at
+        )
+        raw_timing_artifacts = tuple(
+            source.timing_reference for source in source_passages if source.timing_reference is not None
+        )
         assert episode.intro_snapshot is not None and episode.diary_snapshot is not None
         normalized = self.normalizer.normalize(
             TimingNormalizationRequest(
@@ -1323,8 +2142,12 @@ class BuildTimedNarrationPackageHandler:
                 master.component_offsets,
                 episode.intro_snapshot,
                 episode.diary_snapshot,
-                command.raw_timing_artifacts,
+                source_passages,
+                raw_timing_artifacts,
             )
+        )
+        _require_episode_sources_current(
+            episode, self.jobs, self.authority, AuthorityOperation.DELIVER, self.clock.now()
         )
         package = TimedNarrationPackage.create(
             package_id=self.identifiers.new_id(TimedNarrationPackageId),
@@ -1335,7 +2158,7 @@ class BuildTimedNarrationPackageHandler:
             intro_snapshot_digest=episode.intro_snapshot.snapshot_digest,
             diary_snapshot_digest=episode.diary_snapshot.snapshot_digest,
             cues=normalized.cues,
-            raw_timing_artifacts=command.raw_timing_artifacts,
+            raw_timing_artifacts=raw_timing_artifacts,
             normalized_timing_artifact=normalized.normalized_timing_artifact,
             validation_results=normalized.validation_results,
             timing_review_status=normalized.review_status,
@@ -1367,6 +2190,9 @@ class RecordTimingCorrectionHandler:
 
     def __call__(self, command: RecordTimingCorrectionCommand) -> TimedPackageResult:
         episode = _load_episode(self.repository, command.episode_id)
+        principal = self.actors.resolve_principal(command.principal)
+        if principal.timing_review_status is None:
+            raise AuthorizationDenied("principal has no configured timing-review authority")
         _require_episode_sources_current(
             episode, self.jobs, self.authority, AuthorityOperation.DELIVER, self.clock.now()
         )
@@ -1377,6 +2203,16 @@ class RecordTimingCorrectionHandler:
         if source is None or not episode.timing_packages or episode.timing_packages[-1] != source:
             raise ValidationError("timing correction must name the latest package")
         master = episode.speech_master(source.episode_master_id)
+        corrected_cues = tuple(
+            replace(
+                cue,
+                provenance=CueProvenance.MANUAL_CORRECTION,
+                source="manual timing correction",
+                source_version="application-v1",
+                review_status=principal.timing_review_status,
+            )
+            for cue in command.corrected_cues
+        )
         corrected = TimedNarrationPackage.create(
             package_id=self.identifiers.new_id(TimedNarrationPackageId),
             version=source.version + 1,
@@ -1385,14 +2221,14 @@ class RecordTimingCorrectionHandler:
             episode_master=master,
             intro_snapshot_digest=source.intro_snapshot_digest,
             diary_snapshot_digest=source.diary_snapshot_digest,
-            cues=command.corrected_cues,
+            cues=corrected_cues,
             raw_timing_artifacts=source.raw_timing_artifacts,
             normalized_timing_artifact=source.normalized_timing_artifact,
             validation_results=(*source.validation_results, "manual correction recorded"),
-            timing_review_status=command.review_status,
+            timing_review_status=principal.timing_review_status,
             authority_snapshots=source.authority_snapshots,
             source_package_digest=source.package_digest,
-            correction_actor_id=self.actors.resolve_actor(command.principal),
+            correction_actor_id=principal.actor_id,
             correction_reason=command.reason,
             created_at=self.clock.now(),
         )
@@ -1407,23 +2243,32 @@ class RecordTimingCorrectionHandler:
 @dataclass(frozen=True, slots=True)
 class ShowEpisodeStatusHandler:
     repository: DiaryEpisodeRepository
+    jobs: NarrationJobRepository
+    authority: AuthorizationStatusReader
+    clock: Clock
 
     def __call__(self, command: ShowEpisodeStatusCommand) -> EpisodeStatusResult:
         episode = _load_episode(self.repository, command.episode_id)
-        latest_master = episode.speech_masters[-1] if episode.speech_masters else None
-        latest_listen = next(
-            (
-                value for value in reversed(episode.listening_decisions)
-                if latest_master is not None and value.master_id == latest_master.master_id
-            ),
-            None,
+        observed_at = self.clock.now()
+        snapshots = tuple(
+            snapshot
+            for snapshot in (episode.intro_snapshot, episode.diary_snapshot)
+            if snapshot is not None
         )
-        return EpisodeStatusResult(
-            command.command_id, episode.episode_id, episode.revision, episode.status,
-            latest_master is not None,
-            latest_listen is not None and latest_listen.outcome is ListeningOutcome.PASSED,
-            len(episode.timing_packages),
+        source_job_ids = tuple(dict.fromkeys(snapshot.issuing_job_id for snapshot in snapshots))
+        source_jobs = tuple(
+            job
+            for job_id in source_job_ids
+            if (job := self.jobs.load(job_id)) is not None
         )
+        authority_record_ids = tuple(
+            dict.fromkeys(job.contract.authority_record_id for job in source_jobs)
+        )
+        observations = tuple(
+            _status_authority_observation(self.authority, record_id, observed_at)
+            for record_id in authority_record_ids
+        )
+        return project_episode_status(episode, source_jobs, observations, observed_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1461,13 +2306,125 @@ class ExportPresentationHandoffHandler:
 @dataclass(frozen=True, slots=True)
 class ReconcileEpisodeAssemblyAttemptHandler:
     repository: DiaryEpisodeRepository
+    jobs: NarrationJobRepository
+    authority: AuthorizationStatusReader
     clock: Clock
+    workspaces: AttemptWorkspaceStore
+    workspace_verifier: AttemptWorkspaceVerifier
+    provider_events: ProviderEventVerifier
+    artifact_evidence: ArtifactEvidenceVerifier
+    identifiers: IdentifierSource | None = None
 
     def __call__(self, command: ReconcileEpisodeAssemblyAttemptCommand) -> EpisodeMutationResult:
         episode = _load_episode(self.repository, command.episode_id)
-        episode.reconcile_episode_assembly(
-            command.attempt_id, command.outcome, command.recorded_evidence,
-            self.clock.now(), expected_revision=command.expected_revision,
+        attempt = episode.episode_assembly_attempt(command.attempt_id)
+        if episode.revision != command.expected_revision:
+            raise RevisionConflict("episode assembly recovery expected revision is stale")
+        target = EpisodeAssemblyRecoveryTarget(episode.episode_id, attempt.attempt_id)
+        try:
+            _require_episode_sources_current(
+                episode, self.jobs, self.authority, AuthorityOperation.ASSEMBLE, self.clock.now()
+            )
+            authority_covers_completion = True
+        except Exception:
+            authority_covers_completion = False
+        facts = _trusted_recovery_facts(
+            workspaces=self.workspaces,
+            workspace_verifier=self.workspace_verifier,
+            provider_events=self.provider_events,
+            artifacts=self.artifact_evidence,
+            target=target,
+            attempt_state=attempt.state,
+            reservation_revision=attempt.reservation_revision,
+            requires_budget=False,
+            budget_state=BudgetRecoveryState.NOT_APPLICABLE,
+            authority_covers_completion=authority_covers_completion,
         )
-        _cas_or_conflict(self.repository.save(episode, command.expected_revision), "diary episode")
+        decision = decide_target_recovery(target, facts)
+        if decision.disposition is RecoveryDisposition.COMPLETED:
+            workspace = _verified_completion_workspace(
+                self.workspaces,
+                self.workspace_verifier,
+                self.artifact_evidence,
+                target,
+                attempt.state,
+                attempt.reservation_revision,
+            )
+            if attempt.state is AttemptState.COMPLETED:
+                assert attempt.master_id is not None
+                master = episode.speech_master(attempt.master_id)
+            else:
+                artifact, media = _verified_workspace_artifact_and_media(self.artifact_evidence, workspace)
+                intro = _historical_episode_snapshot(
+                    episode, ComponentRole.INTRO, attempt.reservation_revision
+                )
+                diary = _historical_episode_snapshot(
+                    episode, ComponentRole.DIARY, attempt.reservation_revision
+                )
+                diary_start = intro.media.sample_count + attempt.gap_samples
+                diary_offsets = tuple(
+                    PassageOffset(
+                        offset.passage_id,
+                        offset.text_revision,
+                        offset.text_digest,
+                        offset.start_sample + diary_start,
+                        offset.end_sample + diary_start,
+                    )
+                    for offset in diary.passage_offsets
+                )
+                master = EpisodeSpeechMaster(
+                    _recovery_id(self.identifiers, EpisodeSpeechMasterId),
+                    episode.episode_id,
+                    attempt.component_snapshot_digests,
+                    attempt.gap_samples,
+                    (
+                        ComponentOffset(
+                            ComponentRole.INTRO,
+                            0,
+                            intro.media.sample_count,
+                            intro.snapshot_digest,
+                            intro.passage_offsets,
+                        ),
+                        ComponentOffset(
+                            ComponentRole.DIARY,
+                            diary_start,
+                            diary_start + diary.media.sample_count,
+                            diary.snapshot_digest,
+                            diary_offsets,
+                        ),
+                    ),
+                    artifact,
+                    media,
+                    self.clock.now(),
+                )
+            previous = episode.revision
+            episode.recover_episode_assembly_completion(
+                attempt.attempt_id,
+                workspace,
+                master,
+                authority_covers_completion,
+                self.clock.now(),
+                expected_revision=previous,
+            )
+            if episode.revision != previous:
+                _cas_or_conflict(self.repository.save(episode, previous), "episode assembly recovery")
+            return EpisodeMutationResult(command.command_id, episode.episode_id, episode.revision)
+        if _recovery_transition_required(decision, attempt.state):
+            if attempt.state is AttemptState.UNKNOWN:
+                episode.reconcile_episode_assembly(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            else:
+                episode.finalize_episode_assembly_outcome(
+                    attempt.attempt_id,
+                    AttemptState(decision.disposition.value),
+                    decision.reason.value,
+                    self.clock.now(),
+                    expected_revision=command.expected_revision,
+                )
+            _cas_or_conflict(self.repository.save(episode, command.expected_revision), "diary episode recovery")
         return EpisodeMutationResult(command.command_id, episode.episode_id, episode.revision)

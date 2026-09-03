@@ -23,8 +23,10 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     RegisterAuthorizationHandler,
     ShowAuthorizationStatusHandler,
 )
+from heritage_archive.contexts.narrator_voice.application.ports import PrincipalAuthority
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationStatus
-from heritage_archive.contexts.narrator_voice.domain.errors import RevisionConflict
+from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, RevisionConflict
+from heritage_archive.contexts.narrator_voice.domain.evidence import ReviewAuthority, TimingReviewStatus
 from heritage_archive.contexts.narrator_voice.domain.ids import AuthorizationRecordId, AuthorityChangeId, CommandId
 from heritage_archive.contexts.narrator_voice.domain.values import AuthorityOperation, AuthorityScope
 from tests.heritage_archive.narrator_voice.fakes import (
@@ -70,7 +72,27 @@ class AuthorityApplicationTests(unittest.TestCase):
             self.register()
         self.assertIsNone(self.repository.load(self.record_id))
 
-    def test_change_uses_server_resolved_steward_expected_revision_and_status_reader(self) -> None:
+    def test_authority_administration_requires_server_derived_steward_capability(self) -> None:
+        resolver = FakeActorResolver(
+            {"fake-review-only": ActorId(uuid(708))},
+            profiles={
+                "fake-review-only": PrincipalAuthority(
+                    ActorId(uuid(708)),
+                    False,
+                    ReviewAuthority.QUALIFIED_ODIA,
+                    TimingReviewStatus.HUMAN_REVIEWED,
+                )
+            },
+        )
+        with self.assertRaises(AuthorizationDenied):
+            RegisterAuthorizationHandler(self.repository, resolver, self.clock, self.ids)(
+                RegisterAuthorizationCommand(
+                    CommandId(uuid(709)), "fake-review-only", self.scope, digest("fake denied evidence"),
+                )
+            )
+        self.assertIsNone(self.repository.load(self.record_id))
+
+    def test_change_uses_server_resolved_steward_expected_revision_and_status_history(self) -> None:
         self.register()
         narrower = AuthorityScope(
             self.scope.speaker_binding, self.scope.voice_binding, self.scope.language, self.scope.purpose, None,
@@ -82,10 +104,11 @@ class AuthorityApplicationTests(unittest.TestCase):
                 narrower, False, "fake narrowed purpose",
             )
         )
-        status = ShowAuthorizationStatusHandler(self.reader, self.clock)(
+        status = ShowAuthorizationStatusHandler(self.repository, self.clock)(
             ShowAuthorizationStatusCommand(CommandId(uuid(706)), self.record_id)
         )
         self.assertEqual((result.revision, status.status, status.revision), (2, AuthorizationStatus.ACTIVE, 2))
+        self.assertEqual(tuple(change.resulting_revision for change in status.history), (1, 2))
 
     def test_stale_change_CAS_or_revision_conflict_preserves_history(self) -> None:
         self.register()

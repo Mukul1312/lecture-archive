@@ -88,6 +88,7 @@ class AttemptState(str, Enum):
         return self in {
             AttemptState.BLOCKED,
             AttemptState.FAILED,
+            AttemptState.UNKNOWN,
             AttemptState.QUARANTINED,
             AttemptState.COMPLETED,
         }
@@ -259,6 +260,9 @@ class DecodedMediaFacts:
             raise ValidationError("decoded media sample count must be a positive integer")
         if type(self.duration_ms) is not int or self.duration_ms <= 0:
             raise ValidationError("decoded media duration must be a positive integer")
+        expected_duration_ms = max(1, self.sample_count * 1_000 // self.audio.sample_rate_hz)
+        if self.duration_ms != expected_duration_ms:
+            raise ValidationError("decoded media duration must be the canonical projection of exact samples")
         if type(self.all_digital_silence) is not bool:
             raise ValidationError("digital-silence fact must be boolean")
 
@@ -326,6 +330,7 @@ class GenerationPreview:
     normalization: str
     output_audio: CanonicalAudioFacts
     billable_rule: str
+    billable_characters: int
     estimated_usage: str
     issued_at: datetime
     preview_digest: ContentDigest
@@ -381,6 +386,7 @@ class GenerationPreview:
                 "normalization": arguments["normalization"],
                 "output": "wav/pcm_s16le/16/little/1/44100",
                 "billable_rule": arguments["billable_rule"],
+                "billable_characters": arguments["billable_characters"],
                 "estimated_usage": arguments["estimated_usage"],
                 "issued_at": arguments["issued_at"].isoformat(),
             },
@@ -401,6 +407,8 @@ class GenerationPreview:
         if type(self.timestamps_requested) is not bool or type(self.output_audio) is not CanonicalAudioFacts:
             raise ValidationError("generation preview request/output flags are invalid")
         NonNegativeDecimal(self.estimated_usage)
+        if type(self.billable_characters) is not int or self.billable_characters < 0:
+            raise ValidationError("preview billable characters must be a nonnegative integer")
         _utc(self.issued_at, "preview issuance time")
         raw = self.rendered_transcript.encode("utf-8")
         if len(raw) > 16_384:
@@ -428,6 +436,7 @@ class GenerationPreview:
             "normalization": self.normalization,
             "output_audio": self.output_audio,
             "billable_rule": self.billable_rule,
+            "billable_characters": self.billable_characters,
             "estimated_usage": self.estimated_usage,
             "issued_at": self.issued_at,
         }
@@ -473,14 +482,37 @@ class ProviderEventEvidence:
             NonNegativeDecimal(self.usage)
         if self.terminal_classification is not None and type(self.terminal_classification) is not ProviderTerminalClass:
             raise ValidationError("provider terminal classification is invalid")
+        if self.kind is ProviderEventKind.TERMINAL:
+            if self.terminal_classification is None:
+                raise ValidationError("terminal provider event requires terminal classification")
+        elif self.kind is ProviderEventKind.ERROR:
+            if self.terminal_classification not in {
+                ProviderTerminalClass.DEFINITE_PRE_SEND_FAILURE,
+                ProviderTerminalClass.FAILURE,
+                ProviderTerminalClass.AMBIGUOUS,
+            }:
+                raise ValidationError("provider error event requires a failure terminal classification")
+        elif self.terminal_classification is not None:
+            raise ValidationError("only terminal or error events may carry terminal classification")
+
+
+def _successful_terminal_stream(events: tuple[ProviderEventEvidence, ...]) -> bool:
+    terminal = tuple(event for event in events if event.terminal_classification is not None)
+    return (
+        bool(events)
+        and len(terminal) == 1
+        and events[-1] is terminal[0]
+        and events[-1].kind is ProviderEventKind.TERMINAL
+        and events[-1].terminal_classification is ProviderTerminalClass.SUCCESS
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class AttemptWorkspaceEvidence:
     workspace_id: AttemptWorkspaceId
     attempt_kind: AttemptKind
-    aggregate_id: str
-    attempt_id: str
+    aggregate_id: NarrationJobId | DiaryEpisodeId
+    attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId
     reservation_revision: int
     budget_reservation_id: BudgetReservationId | None
     preview_digest: ContentDigest | None
@@ -495,8 +527,14 @@ class AttemptWorkspaceEvidence:
     def __post_init__(self) -> None:
         if type(self.workspace_id) is not AttemptWorkspaceId or type(self.attempt_kind) is not AttemptKind:
             raise ValidationError("attempt workspace identity or kind is invalid")
-        _required(self.aggregate_id, "workspace aggregate identity")
-        _required(self.attempt_id, "workspace attempt identity")
+        expected_types = {
+            AttemptKind.GENERATION: (NarrationJobId, GenerationAttemptId),
+            AttemptKind.NARRATION_ASSEMBLY: (NarrationJobId, NarrationAssemblyAttemptId),
+            AttemptKind.EPISODE_ASSEMBLY: (DiaryEpisodeId, EpisodeAssemblyAttemptId),
+        }
+        aggregate_type, attempt_type = expected_types[self.attempt_kind]
+        if type(self.aggregate_id) is not aggregate_type or type(self.attempt_id) is not attempt_type:
+            raise ValidationError("workspace aggregate and attempt identities must match its discriminated kind")
         _positive_revision(self.reservation_revision, "workspace reservation revision", allow_zero=True)
         if self.budget_reservation_id is not None and type(self.budget_reservation_id) is not BudgetReservationId:
             raise ValidationError("workspace budget reservation identity is invalid")
@@ -517,6 +555,47 @@ class AttemptWorkspaceEvidence:
             raise ValidationError("recovery evidence must be an immutable tuple")
         for item in self.recovery_evidence:
             _required(item, "recovery evidence item")
+
+    def matches_completion_binding(
+        self,
+        *,
+        attempt_kind: AttemptKind,
+        aggregate_id: NarrationJobId | DiaryEpisodeId,
+        attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId,
+        reservation_revision: int,
+        artifact: PublishedArtifact,
+        budget_reservation_id: BudgetReservationId | None,
+        preview_digest: ContentDigest | None,
+        effective_input_digest: ContentDigest | None,
+    ) -> bool:
+        """Return whether durable workspace facts exactly prove one output binding.
+
+        Trust in the workspace is established by the application verifier.  This
+        domain query still fails closed unless every aggregate-owned identity and
+        frozen-input fact agrees and the exact immutable publication was staged.
+        UNKNOWN is admitted because it is the persisted crash-recovery state whose
+        complete evidence may later be verified without repeating external work.
+        """
+
+        if type(artifact) is not PublishedArtifact:
+            return False
+        return (
+            self.attempt_kind is attempt_kind
+            and self.aggregate_id == aggregate_id
+            and self.attempt_id == attempt_id
+            and self.reservation_revision == reservation_revision
+            and self.budget_reservation_id == budget_reservation_id
+            and self.preview_digest == preview_digest
+            and self.effective_input_digest == effective_input_digest
+            and self.submission is SubmissionEvidence.COMPLETED
+            and self.state in {
+                AttemptState.UNKNOWN,
+                AttemptState.ARTIFACTS_PUBLISHED,
+                AttemptState.COMPLETED,
+            }
+            and self.staged_artifacts.count(artifact.reference) == 1
+            and self.published_artifacts == (artifact,)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -548,7 +627,9 @@ class GenerationAttempt:
             raise ValidationError("generation attempt state or submission is invalid")
         if self.effective_input is not None and type(self.effective_input) is not EffectiveSynthesisInput:
             raise ValidationError("generation effective input is invalid")
-        if type(self.events) is not tuple or tuple(item.sequence for item in self.events) != tuple(range(len(self.events))):
+        if type(self.events) is not tuple or any(type(item) is not ProviderEventEvidence for item in self.events):
+            raise ValidationError("generation events must be immutable ProviderEventEvidence values")
+        if tuple(item.sequence for item in self.events) != tuple(range(len(self.events))):
             raise ValidationError("generation events must be contiguous and ordered")
         if self.artifact is not None and type(self.artifact) is not PublishedArtifact:
             raise ValidationError("generation artifact is invalid")
@@ -556,10 +637,47 @@ class GenerationAttempt:
             raise ValidationError("generation media facts are invalid")
         if self.take_id is not None and type(self.take_id) is not TakeId:
             raise ValidationError("generation take identity is invalid")
-        if self.reason is not None:
+        if (self.artifact is None) != (self.media is None):
+            raise ValidationError("generation artifact and media evidence must appear together")
+        pre_artifact_states = {AttemptState.RESERVED, AttemptState.INPUT_FROZEN, AttemptState.EXTERNAL_WORK_STARTED}
+        if self.state in pre_artifact_states and (self.events or self.artifact is not None):
+            raise ValidationError("pre-artifact generation states cannot carry result evidence")
+        if self.state is AttemptState.RESERVED and self.effective_input is not None:
+            raise ValidationError("reserved generation cannot already carry frozen input")
+        if self.state in {AttemptState.INPUT_FROZEN, AttemptState.EXTERNAL_WORK_STARTED, AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.COMPLETED} and self.effective_input is None:
+            raise ValidationError("advanced generation state requires frozen effective input")
+        expected_submission = {
+            AttemptState.RESERVED: SubmissionEvidence.NOT_STARTED,
+            AttemptState.INPUT_FROZEN: SubmissionEvidence.NOT_STARTED,
+            AttemptState.EXTERNAL_WORK_STARTED: SubmissionEvidence.STARTED,
+            AttemptState.ARTIFACTS_STAGED: SubmissionEvidence.COMPLETED,
+            AttemptState.ARTIFACTS_PUBLISHED: SubmissionEvidence.COMPLETED,
+            AttemptState.COMPLETED: SubmissionEvidence.COMPLETED,
+        }
+        if self.state in expected_submission and self.submission is not expected_submission[self.state]:
+            raise ValidationError("generation state and submission evidence are incoherent")
+        if self.state in {AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.COMPLETED} and self.artifact is None:
+            raise ValidationError("artifact-bearing generation state requires artifact and media evidence")
+        if self.state in {AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.COMPLETED}:
+            if not _successful_terminal_stream(self.events):
+                raise ValidationError("successful generation state requires one final successful terminal event")
+            if self.media is None or self.media.all_digital_silence:
+                raise ValidationError("successful generation state requires non-silent decoded media")
+        if (self.state is AttemptState.COMPLETED) != (self.take_id is not None):
+            raise ValidationError("only completed generation binds a take identity")
+        if self.state is AttemptState.BLOCKED and self.submission not in {SubmissionEvidence.NOT_STARTED, SubmissionEvidence.DEFINITELY_NOT_SENT}:
+            raise ValidationError("blocked generation must carry definite pre-send submission evidence")
+        if self.state is AttemptState.UNKNOWN and self.submission is not SubmissionEvidence.AMBIGUOUS:
+            raise ValidationError("unknown generation requires ambiguous submission evidence")
+        terminal_failure = self.state in {AttemptState.BLOCKED, AttemptState.FAILED, AttemptState.UNKNOWN, AttemptState.QUARANTINED}
+        if terminal_failure:
             _required(self.reason, "generation outcome reason")
-        _utc(self.created_at, "generation attempt creation time")
-        _utc(self.updated_at, "generation attempt update time")
+        elif self.reason is not None:
+            raise ValidationError("nonterminal or completed generation cannot carry a failure reason")
+        created = _utc(self.created_at, "generation attempt creation time")
+        updated = _utc(self.updated_at, "generation attempt update time")
+        if updated < created:
+            raise ValidationError("generation attempt update cannot precede creation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -608,10 +726,25 @@ class NarrationAssemblyAttempt:
             or (self.passage_offsets and len(self.passage_offsets) != len(self.selected_take_ids))
         ):
             raise ValidationError("narration assembly passage offsets are invalid")
+        if self.state in {AttemptState.RESERVED, AttemptState.INPUT_FROZEN, AttemptState.EXTERNAL_WORK_STARTED} and (
+            self.artifact is not None or self.passage_offsets
+        ):
+            raise ValidationError("pre-artifact narration assembly cannot carry result evidence")
         if self.state in {AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.COMPLETED} and (
             self.artifact is None or not self.passage_offsets
         ):
             raise ValidationError("advanced narration assembly state requires complete artifact and offset evidence")
+        if self.artifact is not None:
+            assert self.media is not None
+            expected_start = 0
+            for index, offset in enumerate(self.passage_offsets):
+                if offset.start_sample != expected_start:
+                    raise ValidationError("narration assembly offsets must preserve exact explicit gaps")
+                expected_start = offset.end_sample
+                if index < len(self.gaps_samples):
+                    expected_start += self.gaps_samples[index]
+            if expected_start != self.media.sample_count or self.media.all_digital_silence:
+                raise ValidationError("narration assembly evidence must exactly cover non-silent decoded media")
         if (self.state is AttemptState.COMPLETED) != (self.master_id is not None):
             raise ValidationError("only completed narration assembly binds a master identity")
         if self.master_id is not None and type(self.master_id) is not NarrationMasterId:
@@ -667,10 +800,27 @@ class EpisodeAssemblyAttempt:
             or (self.component_offsets and tuple(value.role for value in self.component_offsets) != (ComponentRole.INTRO, ComponentRole.DIARY))
         ):
             raise ValidationError("episode assembly offsets must be immutable intro then diary evidence")
+        if self.state in {AttemptState.RESERVED, AttemptState.INPUT_FROZEN, AttemptState.EXTERNAL_WORK_STARTED} and (
+            self.artifact is not None or self.component_offsets
+        ):
+            raise ValidationError("pre-artifact episode assembly cannot carry result evidence")
         if self.state in {AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.COMPLETED} and (
             self.artifact is None or len(self.component_offsets) != 2
         ):
             raise ValidationError("advanced episode assembly state requires complete artifact and offset evidence")
+        if self.artifact is not None:
+            assert self.media is not None
+            if len(self.component_offsets) != 2:
+                raise ValidationError("artifact-bearing episode assembly requires exact component offsets")
+            intro, diary = self.component_offsets
+            if (
+                tuple(value.snapshot_digest for value in self.component_offsets) != self.component_snapshot_digests
+                or intro.start_sample != 0
+                or diary.start_sample != intro.end_sample + self.gap_samples
+                or diary.end_sample != self.media.sample_count
+                or self.media.all_digital_silence
+            ):
+                raise ValidationError("episode assembly evidence must be exact non-silent intro-gap-diary media")
         if (self.state is AttemptState.COMPLETED) != (self.master_id is not None):
             raise ValidationError("only completed episode assembly binds a master identity")
         if self.master_id is not None and type(self.master_id) is not EpisodeSpeechMasterId:
@@ -727,6 +877,7 @@ class NarrationTake:
         _utc(self.created_at, "take creation time")
         if (
             self.effective_input.job_id != self.job_id
+            or self.effective_input.lane is not self.lane
             or self.effective_input.passage_id != self.passage_id
             or self.effective_input.text_revision != self.text_revision
             or self.effective_input.text.digest != self.text_digest
@@ -735,8 +886,14 @@ class NarrationTake:
             or self.effective_input.recipe_digest != self.recipe_digest
             or self.effective_input.settings != self.settings
             or self.effective_input.contract_digest != self.contract_digest
+            or self.effective_input.authority_scope != self.authority_snapshot.scope
+            or self.effective_input.authority_revision != self.authority_snapshot.record_revision
+            or self.effective_input.authority_digest != self.authority_snapshot.record_digest
+            or self.effective_input.authority_observed_at != self.authority_snapshot.observed_at
         ):
             raise ValidationError("take metadata must exactly match EffectiveSynthesisInput")
+        if self.media.all_digital_silence:
+            raise ValidationError("a production take cannot be all digital silence")
 
 
 @dataclass(frozen=True, slots=True)
@@ -765,6 +922,7 @@ class SelectionDecision:
     take_id: TakeId
     actor_id: ActorId
     eligibility: EligibilityFacts
+    reason: str
     decided_at: datetime
 
     def __post_init__(self) -> None:
@@ -772,6 +930,7 @@ class SelectionDecision:
             raise ValidationError("selection identity or actor binding is invalid")
         if type(self.eligibility) is not EligibilityFacts or not self.eligibility.eligible:
             raise ValidationError("selection must freeze passing eligibility facts")
+        _required(self.reason, "selection reason")
         _utc(self.decided_at, "selection decision time")
 
 
@@ -784,6 +943,7 @@ class NarrationMaster:
     selected_take_ids: tuple[TakeId, ...]
     gaps_samples: tuple[int, ...]
     passage_offsets: tuple[PassageOffset, ...]
+    timing_references: tuple[ArtifactRef | None, ...]
     artifact: PublishedArtifact
     media: DecodedMediaFacts
     created_at: datetime
@@ -799,10 +959,29 @@ class NarrationMaster:
             raise ValidationError("narration master gaps must be nonnegative integer samples")
         if len(self.gaps_samples) != max(0, len(self.selected_take_ids) - 1):
             raise ValidationError("narration master requires one explicit gap between adjacent takes")
-        if type(self.passage_offsets) is not tuple or len(self.passage_offsets) != len(self.selected_take_ids):
+        if (
+            type(self.passage_offsets) is not tuple
+            or len(self.passage_offsets) != len(self.selected_take_ids)
+            or any(type(offset) is not PassageOffset for offset in self.passage_offsets)
+        ):
             raise ValidationError("narration master requires one passage offset per selected take")
+        if (
+            type(self.timing_references) is not tuple
+            or len(self.timing_references) != len(self.selected_take_ids)
+            or any(reference is not None and type(reference) is not ArtifactRef for reference in self.timing_references)
+        ):
+            raise ValidationError("narration master requires one optional timing reference per selected take")
         if type(self.artifact) is not PublishedArtifact or type(self.media) is not DecodedMediaFacts:
             raise ValidationError("narration master artifact or media facts are invalid")
+        expected_start = 0
+        for index, offset in enumerate(self.passage_offsets):
+            if offset.start_sample != expected_start:
+                raise ValidationError("narration master offsets must preserve every exact explicit gap")
+            expected_start = offset.end_sample
+            if index < len(self.gaps_samples):
+                expected_start += self.gaps_samples[index]
+        if expected_start != self.media.sample_count or self.media.all_digital_silence:
+            raise ValidationError("narration master offsets must exactly cover non-silent decoded media")
         _utc(self.created_at, "narration master creation time")
 
 
@@ -842,6 +1021,7 @@ class NarrationMasterSnapshot:
     selected_take_ids: tuple[TakeId, ...]
     gaps_samples: tuple[int, ...]
     passage_offsets: tuple[PassageOffset, ...]
+    timing_references: tuple[ArtifactRef | None, ...]
     issued_at: datetime
     snapshot_digest: ContentDigest
 
@@ -859,12 +1039,24 @@ class NarrationMasterSnapshot:
             "media": master.media,
             "gaps_samples": master.gaps_samples,
             "passage_offsets": master.passage_offsets,
+            "timing_references": master.timing_references,
         }
         digest_value = cls._digest(payload)
         return cls(**payload, snapshot_digest=digest_value)
 
     @staticmethod
     def _digest(arguments: dict[str, object]) -> ContentDigest:
+        def artifact_ref_payload(reference: ArtifactRef) -> dict[str, object]:
+            return {
+                "artifact_id": reference.artifact_id.value,
+                "content_digest": reference.content_digest.hex_digest,
+                "byte_size": reference.byte_size,
+                "media_type": reference.media_type,
+            }
+
+        artifact = arguments["artifact"]
+        media = arguments["media"]
+        listening = arguments["listening_decision"]
         return semantic_digest(
             "narrator_voice.narration_master_snapshot.v1",
             {
@@ -872,20 +1064,47 @@ class NarrationMasterSnapshot:
                 "issuing_job_id": arguments["issuing_job_id"].value,
                 "issuing_job_revision": arguments["issuing_job_revision"],
                 "source_master_id": arguments["source_master_id"].value,
-                "listening_decision_id": arguments["listening_decision"].decision_id.value,
+                "listening_decision": {
+                    "decision_id": listening.decision_id.value,
+                    "master_id": listening.master_id.value,
+                    "actor_id": listening.actor_id.value,
+                    "outcome": listening.outcome.value,
+                    "notes": listening.notes,
+                    "decided_at": listening.decided_at.isoformat(),
+                },
                 "lane": arguments["lane"].value,
                 "contract_digest": arguments["contract_digest"].hex_digest,
                 "authority_snapshot_digest": arguments["authority_snapshot"].snapshot_digest.hex_digest,
                 "role": arguments["role"].value,
                 "intended_episode_id": None if arguments["intended_episode_id"] is None else arguments["intended_episode_id"].value,
-                "artifact_digest": arguments["artifact"].reference.content_digest.hex_digest,
-                "sample_count": arguments["media"].sample_count,
+                "artifact": {
+                    "reference": artifact_ref_payload(artifact.reference),
+                    "relative_location": artifact.relative_location.value,
+                    "published_at": artifact.published_at.isoformat(),
+                },
+                "media": {
+                    "audio": {
+                        "container": media.audio.container,
+                        "encoding": media.audio.encoding,
+                        "sample_width_bits": media.audio.sample_width_bits,
+                        "byte_order": media.audio.byte_order,
+                        "channels": media.audio.channels,
+                        "sample_rate_hz": media.audio.sample_rate_hz,
+                    },
+                    "sample_count": media.sample_count,
+                    "duration_ms": media.duration_ms,
+                    "all_digital_silence": media.all_digital_silence,
+                },
                 "ordered_passage_ids": [value.value for value in arguments["ordered_passage_ids"]],
                 "selected_take_ids": [value.value for value in arguments["selected_take_ids"]],
                 "gaps_samples": list(arguments["gaps_samples"]),
                 "passage_offsets": [
                     {"passage_id": value.passage_id.value, "text_revision": value.text_revision, "text_digest": value.text_digest.hex_digest, "start": value.start_sample, "end": value.end_sample}
                     for value in arguments["passage_offsets"]
+                ],
+                "timing_references": [
+                    None if reference is None else artifact_ref_payload(reference)
+                    for reference in arguments["timing_references"]
                 ],
                 "issued_at": arguments["issued_at"].isoformat(),
             },
@@ -911,10 +1130,43 @@ class NarrationMasterSnapshot:
             raise ValidationError("snapshot contract or authority evidence is invalid")
         if type(self.artifact) is not PublishedArtifact or type(self.media) is not DecodedMediaFacts:
             raise ValidationError("snapshot artifact or media facts are invalid")
-        if type(self.ordered_passage_ids) is not tuple or type(self.selected_take_ids) is not tuple or len(self.ordered_passage_ids) != len(self.selected_take_ids):
+        if (
+            type(self.ordered_passage_ids) is not tuple
+            or type(self.selected_take_ids) is not tuple
+            or not self.ordered_passage_ids
+            or len(self.ordered_passage_ids) != len(self.selected_take_ids)
+            or any(type(passage_id) is not PassageId for passage_id in self.ordered_passage_ids)
+            or any(type(take_id) is not TakeId for take_id in self.selected_take_ids)
+            or len(set(self.ordered_passage_ids)) != len(self.ordered_passage_ids)
+            or len(set(self.selected_take_ids)) != len(self.selected_take_ids)
+        ):
             raise ValidationError("snapshot passage/take identities must be parallel immutable tuples")
-        if type(self.gaps_samples) is not tuple or type(self.passage_offsets) is not tuple:
+        if (
+            type(self.gaps_samples) is not tuple
+            or type(self.passage_offsets) is not tuple
+            or len(self.gaps_samples) != len(self.selected_take_ids) - 1
+            or len(self.passage_offsets) != len(self.selected_take_ids)
+            or tuple(offset.passage_id for offset in self.passage_offsets) != self.ordered_passage_ids
+        ):
             raise ValidationError("snapshot gap/offset facts must be immutable tuples")
+        if (
+            type(self.timing_references) is not tuple
+            or len(self.timing_references) != len(self.selected_take_ids)
+            or any(reference is not None and type(reference) is not ArtifactRef for reference in self.timing_references)
+        ):
+            raise ValidationError("snapshot timing references must parallel its selected takes")
+        expected_start = 0
+        for index, offset in enumerate(self.passage_offsets):
+            if type(offset) is not PassageOffset or offset.start_sample != expected_start:
+                raise ValidationError("snapshot offsets must preserve every exact explicit gap")
+            expected_start = offset.end_sample
+            if index < len(self.gaps_samples):
+                gap = self.gaps_samples[index]
+                if type(gap) is not int or gap < 0:
+                    raise ValidationError("snapshot gaps must be nonnegative integer samples")
+                expected_start += gap
+        if expected_start != self.media.sample_count or self.media.all_digital_silence:
+            raise ValidationError("snapshot offsets must exactly cover non-silent decoded media")
         _utc(self.issued_at, "snapshot issuance time")
         arguments: dict[str, object] = {
             "snapshot_id": self.snapshot_id,
@@ -933,6 +1185,7 @@ class NarrationMasterSnapshot:
             "selected_take_ids": self.selected_take_ids,
             "gaps_samples": self.gaps_samples,
             "passage_offsets": self.passage_offsets,
+            "timing_references": self.timing_references,
             "issued_at": self.issued_at,
         }
         if self.snapshot_digest != self._digest(arguments):
@@ -957,10 +1210,23 @@ class EpisodeSpeechMaster:
             raise ValidationError("episode master requires exactly two snapshot digests")
         if type(self.gap_samples) is not int or self.gap_samples < 0:
             raise ValidationError("episode master gap must be nonnegative integer samples")
-        if type(self.component_offsets) is not tuple or tuple(item.role for item in self.component_offsets) != (ComponentRole.INTRO, ComponentRole.DIARY):
+        if (
+            type(self.component_offsets) is not tuple
+            or any(type(item) is not ComponentOffset for item in self.component_offsets)
+            or tuple(item.role for item in self.component_offsets) != (ComponentRole.INTRO, ComponentRole.DIARY)
+        ):
             raise ValidationError("episode component offsets must be exactly intro then diary")
         if type(self.artifact) is not PublishedArtifact or type(self.media) is not DecodedMediaFacts:
             raise ValidationError("episode master artifact/media evidence is invalid")
+        intro, diary = self.component_offsets
+        if (
+            tuple(item.snapshot_digest for item in self.component_offsets) != self.component_snapshot_digests
+            or intro.start_sample != 0
+            or diary.start_sample != intro.end_sample + self.gap_samples
+            or diary.end_sample != self.media.sample_count
+            or self.media.all_digital_silence
+        ):
+            raise ValidationError("episode master must be exact non-silent intro plus explicit gap plus diary")
         _utc(self.created_at, "episode master creation time")
 
 
@@ -1007,14 +1273,20 @@ class TimingCue:
     def __post_init__(self) -> None:
         if type(self.cue_id) is not CueId or type(self.role) is not ComponentRole or type(self.lane) is not Lane:
             raise ValidationError("timing cue identity, role or lane is invalid")
+        if (self.role, self.lane) not in {
+            (ComponentRole.INTRO, Lane.C),
+            (ComponentRole.DIARY, Lane.B),
+        }:
+            raise ValidationError("timing cue role must use its exact source lane")
         if type(self.source_job_id) is not NarrationJobId or type(self.source_master_id) is not NarrationMasterId or type(self.passage_id) is not PassageId:
             raise ValidationError("timing cue source identity is invalid")
         _positive_revision(self.text_revision, "timing cue text revision")
         if any(type(item) is not ContentDigest for item in (self.text_digest, self.input_audio_digest, self.input_text_digest)):
             raise ValidationError("timing cue digest binding is invalid")
         _required(self.display_text, "timing cue display text")
-        if self.text_span is not None and type(self.text_span) is not TextSpan:
-            raise ValidationError("timing cue text span is invalid")
+        if self.text_span is not None:
+            if type(self.text_span) is not TextSpan or self.text_span.end > len(self.display_text):
+                raise ValidationError("timing cue text span is invalid")
         if type(self.start_sample) is not int or type(self.end_sample) is not int or self.start_sample < 0 or self.end_sample <= self.start_sample:
             raise ValidationError("timing cue must be a nonempty nonnegative sample range")
         if type(self.granularity) is not CueGranularity or type(self.provenance) is not CueProvenance or type(self.review_status) is not TimingReviewStatus:
@@ -1023,6 +1295,8 @@ class TimingCue:
         _required(self.source_version, "timing cue source version")
         if self.input_text_digest != self.text_digest:
             raise ValidationError("timing cue input text digest must match source text digest")
+        if self.text_span is None and ContentDigest.from_bytes(self.display_text.encode("utf-8")) != self.text_digest:
+            raise ValidationError("unspanned timing cue display text must match its exact source digest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1068,6 +1342,60 @@ class TimedNarrationPackage:
 
     @staticmethod
     def _digest(arguments: dict[str, object]) -> ContentDigest:
+        def artifact_ref_payload(reference: ArtifactRef) -> dict[str, object]:
+            return {
+                "artifact_id": reference.artifact_id.value,
+                "content_digest": reference.content_digest.hex_digest,
+                "byte_size": reference.byte_size,
+                "media_type": reference.media_type,
+            }
+
+        def component_payload(component: ComponentOffset) -> dict[str, object]:
+            return {
+                "role": component.role.value,
+                "start_sample": component.start_sample,
+                "end_sample": component.end_sample,
+                "snapshot_digest": component.snapshot_digest.hex_digest,
+                "passage_offsets": [
+                    {
+                        "passage_id": offset.passage_id.value,
+                        "text_revision": offset.text_revision,
+                        "text_digest": offset.text_digest.hex_digest,
+                        "start_sample": offset.start_sample,
+                        "end_sample": offset.end_sample,
+                    }
+                    for offset in component.passage_offsets
+                ],
+            }
+
+        def cue_payload(cue: TimingCue) -> dict[str, object]:
+            return {
+                "cue_id": cue.cue_id.value,
+                "role": cue.role.value,
+                "lane": cue.lane.value,
+                "source_job_id": cue.source_job_id.value,
+                "source_master_id": cue.source_master_id.value,
+                "passage_id": cue.passage_id.value,
+                "text_revision": cue.text_revision,
+                "text_digest": cue.text_digest.hex_digest,
+                "display_text": cue.display_text,
+                "text_span": None if cue.text_span is None else {
+                    "start": cue.text_span.start,
+                    "end": cue.text_span.end,
+                },
+                "start_sample": cue.start_sample,
+                "end_sample": cue.end_sample,
+                "granularity": cue.granularity.value,
+                "provenance": cue.provenance.value,
+                "source": cue.source,
+                "source_version": cue.source_version,
+                "input_audio_digest": cue.input_audio_digest.hex_digest,
+                "input_text_digest": cue.input_text_digest.hex_digest,
+                "review_status": cue.review_status.value,
+            }
+
+        artifact = arguments["episode_artifact"]
+        media = arguments["episode_media"]
         return semantic_digest(
             "narrator_voice.timed_narration_package.v1",
             {
@@ -1076,15 +1404,40 @@ class TimedNarrationPackage:
                 "episode_id": arguments["episode_id"].value,
                 "episode_revision": arguments["episode_revision"],
                 "episode_master_id": arguments["episode_master_id"].value,
-                "episode_audio_digest": arguments["episode_artifact"].reference.content_digest.hex_digest,
-                "episode_samples": arguments["episode_media"].sample_count,
+                "episode_artifact": {
+                    "reference": artifact_ref_payload(artifact.reference),
+                    "relative_location": artifact.relative_location.value,
+                    "published_at": artifact.published_at.isoformat(),
+                },
+                "episode_media": {
+                    "audio": {
+                        "container": media.audio.container,
+                        "encoding": media.audio.encoding,
+                        "sample_width_bits": media.audio.sample_width_bits,
+                        "byte_order": media.audio.byte_order,
+                        "channels": media.audio.channels,
+                        "sample_rate_hz": media.audio.sample_rate_hz,
+                    },
+                    "sample_count": media.sample_count,
+                    "duration_ms": media.duration_ms,
+                    "all_digital_silence": media.all_digital_silence,
+                },
                 "intro_snapshot_digest": arguments["intro_snapshot_digest"].hex_digest,
                 "diary_snapshot_digest": arguments["diary_snapshot_digest"].hex_digest,
                 "gap_samples": arguments["gap_samples"],
-                "cue_ids": [cue.cue_id.value for cue in arguments["cues"]],
-                "cue_ranges": [[cue.start_sample, cue.end_sample] for cue in arguments["cues"]],
+                "component_offsets": [component_payload(component) for component in arguments["component_offsets"]],
+                "cues": [cue_payload(cue) for cue in arguments["cues"]],
+                "raw_timing_artifacts": [artifact_ref_payload(reference) for reference in arguments["raw_timing_artifacts"]],
+                "normalized_timing_artifact": (
+                    None
+                    if arguments["normalized_timing_artifact"] is None
+                    else artifact_ref_payload(arguments["normalized_timing_artifact"])
+                ),
                 "validation_results": list(arguments["validation_results"]),
                 "timing_review_status": arguments["timing_review_status"].value,
+                "authority_snapshot_digests": [
+                    snapshot.snapshot_digest.hex_digest for snapshot in arguments["authority_snapshots"]
+                ],
                 "source_package_digest": None if arguments["source_package_digest"] is None else arguments["source_package_digest"].hex_digest,
                 "correction_actor_id": None if arguments["correction_actor_id"] is None else arguments["correction_actor_id"].value,
                 "correction_reason": arguments["correction_reason"],
@@ -1099,18 +1452,56 @@ class TimedNarrationPackage:
         _positive_revision(self.episode_revision, "timed package episode revision")
         if type(self.episode_artifact) is not PublishedArtifact or type(self.episode_media) is not DecodedMediaFacts:
             raise ValidationError("timed package episode artifact/media is invalid")
+        if self.episode_media.all_digital_silence:
+            raise ValidationError("timed package cannot describe a digitally silent episode master")
         if any(type(item) is not ContentDigest for item in (self.intro_snapshot_digest, self.diary_snapshot_digest)):
             raise ValidationError("timed package snapshot digests are invalid")
         if type(self.gap_samples) is not int or self.gap_samples < 0 or type(self.component_offsets) is not tuple:
             raise ValidationError("timed package gap/component offsets are invalid")
-        if type(self.cues) is not tuple:
-            raise ValidationError("timed package cues must be an immutable tuple")
+        if (
+            len(self.component_offsets) != 2
+            or any(type(component) is not ComponentOffset for component in self.component_offsets)
+            or tuple(component.role for component in self.component_offsets)
+            != (ComponentRole.INTRO, ComponentRole.DIARY)
+        ):
+            raise ValidationError("timed package components must be exactly intro then diary")
+        intro, diary = self.component_offsets
+        if (
+            intro.snapshot_digest != self.intro_snapshot_digest
+            or diary.snapshot_digest != self.diary_snapshot_digest
+            or intro.start_sample != 0
+            or diary.start_sample != intro.end_sample + self.gap_samples
+            or diary.end_sample != self.episode_media.sample_count
+        ):
+            raise ValidationError("timed package components must truthfully place the exact episode sources")
+        if type(self.cues) is not tuple or not self.cues or len({cue.cue_id for cue in self.cues}) != len(self.cues):
+            raise ValidationError("timed package cues must be a nonempty immutable uniquely identified tuple")
         previous = 0
         for cue in self.cues:
             if type(cue) is not TimingCue or cue.start_sample < previous or cue.end_sample > self.episode_media.sample_count:
                 raise ValidationError("timing cues must be monotonic, nonoverlapping and within episode duration")
+            component = intro if cue.role is ComponentRole.INTRO else diary
+            matching_passage = any(
+                cue.passage_id == offset.passage_id
+                and cue.text_revision == offset.text_revision
+                and cue.text_digest == offset.text_digest
+                and cue.start_sample >= offset.start_sample
+                and cue.end_sample <= offset.end_sample
+                for offset in component.passage_offsets
+            )
+            if (
+                cue.start_sample < component.start_sample
+                or cue.end_sample > component.end_sample
+                or not matching_passage
+                or cue.input_audio_digest != self.episode_artifact.reference.content_digest
+            ):
+                raise ValidationError("timing cue must truthfully bind its component, passage and input audio")
             previous = cue.end_sample
-        if type(self.raw_timing_artifacts) is not tuple or any(type(item) is not ArtifactRef for item in self.raw_timing_artifacts):
+        if (
+            type(self.raw_timing_artifacts) is not tuple
+            or any(type(item) is not ArtifactRef for item in self.raw_timing_artifacts)
+            or len({item.artifact_id for item in self.raw_timing_artifacts}) != len(self.raw_timing_artifacts)
+        ):
             raise ValidationError("raw timing artifacts must be an immutable ArtifactRef tuple")
         if self.normalized_timing_artifact is not None and type(self.normalized_timing_artifact) is not ArtifactRef:
             raise ValidationError("normalized timing artifact is invalid")
@@ -1118,17 +1509,47 @@ class TimedNarrationPackage:
             raise ValidationError("timing validation results must be an immutable tuple")
         for value in self.validation_results:
             _required(value, "timing validation result")
-        if type(self.timing_review_status) is not TimingReviewStatus or type(self.authority_snapshots) is not tuple:
+        if (
+            type(self.timing_review_status) is not TimingReviewStatus
+            or type(self.authority_snapshots) is not tuple
+            or len(self.authority_snapshots) != 2
+            or any(type(snapshot) is not AuthoritySnapshot for snapshot in self.authority_snapshots)
+        ):
             raise ValidationError("timing review/authority evidence is invalid")
         if self.source_package_digest is not None and type(self.source_package_digest) is not ContentDigest:
             raise ValidationError("source package digest is invalid")
         if self.correction_actor_id is not None and type(self.correction_actor_id) is not ActorId:
             raise ValidationError("timing correction actor is invalid")
-        if (self.source_package_digest is None) != (self.correction_actor_id is None):
-            raise ValidationError("timing correction requires source package and actor together")
+        correction_facts = (self.source_package_digest, self.correction_actor_id, self.correction_reason)
+        if any(value is not None for value in correction_facts) and any(value is None for value in correction_facts):
+            raise ValidationError("timing correction requires source package, actor and reason together")
         if self.correction_reason is not None:
             _required(self.correction_reason, "timing correction reason")
         _utc(self.created_at, "timed package creation time")
+        if type(self.package_digest) is not ContentDigest or self.package_digest != self._digest({
+            "package_id": self.package_id,
+            "version": self.version,
+            "episode_id": self.episode_id,
+            "episode_revision": self.episode_revision,
+            "episode_master_id": self.episode_master_id,
+            "episode_artifact": self.episode_artifact,
+            "episode_media": self.episode_media,
+            "intro_snapshot_digest": self.intro_snapshot_digest,
+            "diary_snapshot_digest": self.diary_snapshot_digest,
+            "gap_samples": self.gap_samples,
+            "component_offsets": self.component_offsets,
+            "cues": self.cues,
+            "raw_timing_artifacts": self.raw_timing_artifacts,
+            "normalized_timing_artifact": self.normalized_timing_artifact,
+            "validation_results": self.validation_results,
+            "timing_review_status": self.timing_review_status,
+            "authority_snapshots": self.authority_snapshots,
+            "source_package_digest": self.source_package_digest,
+            "correction_actor_id": self.correction_actor_id,
+            "correction_reason": self.correction_reason,
+            "created_at": self.created_at,
+        }):
+            raise ValidationError("timed package digest does not match its canonical facts")
         arguments: dict[str, object] = {
             "package_id": self.package_id,
             "version": self.version,

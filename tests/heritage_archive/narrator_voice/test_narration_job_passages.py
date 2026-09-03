@@ -14,8 +14,8 @@ if str(SOURCE_ROOT) not in sys.path:
 
 from heritage_archive.kernel import ValidationError
 from heritage_archive.contexts.narrator_voice.domain.evidence import EligibilityFacts
-from heritage_archive.contexts.narrator_voice.domain.errors import RevisionConflict
-from heritage_archive.contexts.narrator_voice.domain.ids import NarrationJobId, PassageId
+from heritage_archive.contexts.narrator_voice.domain.errors import DomainInvariantError, RevisionConflict
+from heritage_archive.contexts.narrator_voice.domain.ids import BudgetReservationId, GenerationAttemptId, NarrationJobId, PassageId
 from heritage_archive.contexts.narrator_voice.domain.narration_job import (
     NarrationJob,
     PassageDraft,
@@ -25,6 +25,7 @@ from heritage_archive.contexts.narrator_voice.domain.narration_job import (
 from heritage_archive.contexts.narrator_voice.domain.values import Lane, PassageText
 from tests.heritage_archive.narrator_voice.fixtures import (
     NOW,
+    complete_take,
     digest,
     make_contract,
     make_defaults,
@@ -67,8 +68,8 @@ class NarrationJobPassageTests(unittest.TestCase):
         recipe = make_recipe(self.text_a)
         self.job.record_render_recipe(self.passage_a, recipe, expected_revision=1)
         take = make_take(job_id=self.job_id, passage_id=self.passage_a, text=self.text_a, recipe=recipe, contract=self.contract)
-        self.job.record_take(take, expected_revision=2)
-        self.job.revise_passage_text(self.passage_a, PassageText("ଅଆଇ"), NOW, expected_revision=3)
+        complete_take(self.job, take, text=self.text_a, recipe=recipe, contract=self.contract, preview_index=120, budget_index=121, event_index=122)
+        self.job.revise_passage_text(self.passage_a, PassageText("ଅଆଇ"), NOW, expected_revision=self.job.revision)
         self.assertEqual(len(self.job.passage(self.passage_a).text_revisions), 2)
         self.assertEqual(self.job.takes, (take,))
         self.assertEqual(self.job.eligibility_for(take, authority_eligible=True), EligibilityFacts(True, False, False, False, False))
@@ -99,13 +100,43 @@ class NarrationJobPassageTests(unittest.TestCase):
         self.job.record_render_recipe(self.passage_a, recipe_a, expected_revision=1)
         self.job.record_render_recipe(self.passage_a, recipe_b, expected_revision=2)
         take = make_take(job_id=self.job_id, passage_id=self.passage_a, text=self.text_a, recipe=recipe_a, contract=self.contract)
-        self.job.record_take(take, expected_revision=3)
-        self.job.require_render_recipe(self.passage_a, recipe_b.recipe_id, expected_revision=4)
+        complete_take(self.job, take, text=self.text_a, recipe=recipe_a, contract=self.contract, preview_index=124, budget_index=125, event_index=126)
+        self.job.require_render_recipe(self.passage_a, recipe_b.recipe_id, expected_revision=self.job.revision)
         self.assertEqual(self.job.eligibility_for(take, authority_eligible=True), EligibilityFacts(False, True, False, False, False))
-        self.job.require_dictionary_digest(self.passage_a, digest("different-dictionary"), expected_revision=5)
+        self.job.require_dictionary_digest(self.passage_a, digest("different-dictionary"), expected_revision=self.job.revision)
         self.assertEqual(self.job.eligibility_for(take, authority_eligible=False), EligibilityFacts(False, True, True, False, True))
-        other_contract_take = replace(take, contract_digest=digest("other-contract"), effective_input=replace(take.effective_input, contract_digest=digest("other-contract")))
+        other_contract_take = make_take(
+            job_id=self.job_id, passage_id=self.passage_a, text=self.text_a,
+            recipe=recipe_a, contract=replace(self.contract, model_snapshot="other-fake-model"), take_index=127,
+            attempt_index=128,
+        )
         self.assertTrue(self.job.eligibility_for(other_contract_take, authority_eligible=True).contract_ineligible)
+
+    def test_record_take_cannot_bypass_generation_attempt_completion(self) -> None:
+        recipe = make_recipe(self.text_a, recipe_index=129)
+        self.job.record_render_recipe(self.passage_a, recipe, expected_revision=1)
+        take = make_take(
+            job_id=self.job_id, passage_id=self.passage_a, text=self.text_a,
+            recipe=recipe, contract=self.contract, take_index=130, attempt_index=131,
+        )
+        with self.assertRaises(DomainInvariantError):
+            self.job.record_take(take, expected_revision=2)
+        self.assertEqual(self.job.takes, ())
+
+    def test_sequential_batch_may_reserve_an_earlier_preview_while_its_facts_remain_current(self) -> None:
+        recipe_a = make_recipe(self.text_a, recipe_index=132)
+        recipe_b = make_recipe(self.text_b, recipe_index=133)
+        self.job.record_render_recipe(self.passage_a, recipe_a, expected_revision=1)
+        self.job.record_render_recipe(self.passage_b, recipe_b, expected_revision=2)
+        preview_a = make_preview(job_id=self.job_id, base_revision=3, passage_id=self.passage_a, text=self.text_a, recipe=recipe_a, contract=self.contract, preview_index=134)
+        self.job.issue_generation_preview(preview_a, expected_revision=3)
+        preview_b = make_preview(job_id=self.job_id, base_revision=4, passage_id=self.passage_b, text=self.text_b, recipe=recipe_b, contract=self.contract, preview_index=135)
+        self.job.issue_generation_preview(preview_b, expected_revision=4)
+        self.job.reserve_generation_attempt(
+            GenerationAttemptId(uuid(137)), BudgetReservationId(uuid(138)),
+            preview_a.preview_id, NOW, expected_revision=5,
+        )
+        self.assertEqual(self.job.generation_attempts[-1].preview_id, preview_a.preview_id)
 
     def test_INV_NJ_14_preview_is_append_only_revision_bound_and_freezes_exact_bytes(self) -> None:
         recipe = make_recipe(self.text_a)
