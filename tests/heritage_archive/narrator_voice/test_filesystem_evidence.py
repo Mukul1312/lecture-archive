@@ -19,6 +19,9 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
     AttemptWorkspaceEvidence,
     PublishedArtifact,
+    ProviderEventEvidence,
+    ProviderEventKind,
+    ProviderTerminalClass,
     SubmissionEvidence,
 )
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -26,11 +29,22 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     BudgetReservationId,
     GenerationAttemptId,
     NarrationJobId,
+    ProviderEventId,
+)
+from heritage_archive.contexts.narrator_voice.application.recovery import (
+    BudgetRecoveryState,
+    GenerationRecoveryTarget,
+    RecoveryDisposition,
+    RecoveryFacts,
+    RecoveryStage,
+    decide_target_recovery,
 )
 from heritage_archive.contexts.narrator_voice.domain.values import SafeRelativeArtifactPath
 from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
     FilesystemArtifactEvidenceVerifier,
     FilesystemArtifactStore,
+    FilesystemAttemptWorkspaceVerifier,
+    FilesystemProviderEventVerifier,
 )
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import (
@@ -45,6 +59,90 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemEvidenceContracts(unittest.TestCase):
+    def test_provider_evidence_only_is_not_artifact_complete_or_recoverable(self) -> None:
+        with self._storage_root() as root:
+            evidence = FilesystemArtifactStore(
+                root, _IdentifierSource([ArtifactId(uuid(326))])
+            ).publish(
+                SafeRelativeArtifactPath("evidence/provider-terminal.json"),
+                b'{"type":"done"}',
+                "application/json",
+                NOW,
+            )
+            event = ProviderEventEvidence(
+                ProviderEventId(uuid(327)),
+                0,
+                ProviderEventKind.TERMINAL,
+                evidence.reference,
+                evidence.reference.content_digest,
+                NOW,
+                "request",
+                "response",
+                None,
+                None,
+                "7",
+                ProviderTerminalClass.SUCCESS,
+            )
+            workspace = AttemptWorkspaceEvidence(
+                AttemptWorkspaceId(uuid(328)),
+                AttemptKind.GENERATION,
+                NarrationJobId(uuid(329)),
+                GenerationAttemptId(uuid(330)),
+                1,
+                BudgetReservationId(uuid(331)),
+                digest("preview"),
+                digest("input"),
+                digest("input"),
+                SubmissionEvidence.COMPLETED,
+                (event,),
+                (evidence.reference,),
+                (evidence,),
+                (),
+                AttemptState.UNKNOWN,
+            )
+            target = GenerationRecoveryTarget(
+                workspace.aggregate_id,
+                workspace.attempt_id,
+                workspace.budget_reservation_id,
+            )
+
+            artifact = FilesystemArtifactEvidenceVerifier(root).verify(workspace)
+            provider = FilesystemProviderEventVerifier().verify(workspace)
+            verified_workspace = FilesystemAttemptWorkspaceVerifier().verify(
+                workspace,
+                target,
+                AttemptState.UNKNOWN,
+                1,
+                digest("input"),
+            )
+            decision = decide_target_recovery(
+                target,
+                RecoveryFacts(
+                    AttemptState.UNKNOWN,
+                    verified_workspace.last_confirmed_stage,
+                    verified_workspace.workspace_matches_attempt,
+                    verified_workspace.frozen_plan_matches,
+                    verified_workspace.submission,
+                    provider.provider_terminal,
+                    provider.events_sealed,
+                    artifact.artifact_verified,
+                    artifact.publication_verified,
+                    True,
+                    True,
+                    BudgetRecoveryState.SETTLED,
+                    artifact.artifact_observed,
+                    artifact.publication_observed,
+                ),
+            )
+
+            self.assertTrue(artifact.publication_verified)
+            self.assertFalse(artifact.artifact_verified)
+            self.assertEqual(
+                verified_workspace.last_confirmed_stage,
+                RecoveryStage.ARTIFACTS_STAGED,
+            )
+            self.assertIsNot(decision.disposition, RecoveryDisposition.COMPLETED)
+
     def test_multi_publication_workspace_recovers_exactly_one_requested_canonical_audio(self) -> None:
         with self._storage_root() as root:
             store = FilesystemArtifactStore(

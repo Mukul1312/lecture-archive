@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -72,6 +73,10 @@ from heritage_archive.contexts.narrator_voice.domain.values import (
     PassageText,
     SafeRelativeArtifactPath,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
+    FilesystemAttemptWorkspaceStore,
+)
+from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from tests.heritage_archive.narrator_voice.fakes import (
     FakeArtifactStore,
     FakeArtifactEvidenceVerifier,
@@ -408,6 +413,29 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual((result.state, result.budget_disposition), (AttemptState.BLOCKED, "released"))
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "release"])
 
+    def test_real_workspace_store_allows_definite_pre_send_terminal_after_external_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = LocalNarrationRoot.open(
+                Path(temporary_directory), (Path(__file__).resolve().parents[3],)
+            )
+            root.initialize_layout()
+            self.workspaces = FilesystemAttemptWorkspaceStore(root)
+            self.gateway.mode = "pre_send"
+
+            result = self.handler()(self.command())
+            workspace = self.workspaces.load(self.attempt_id)
+
+        self.assertEqual(
+            (result.state, result.budget_disposition, workspace.state, workspace.submission),
+            (
+                AttemptState.BLOCKED,
+                "released",
+                AttemptState.BLOCKED,
+                SubmissionEvidence.DEFINITELY_NOT_SENT,
+            ),
+        )
+        self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "release"])
+
     def test_ambiguous_failure_holds_budget_until_explicit_conservative_reconciliation(self) -> None:
         self.gateway.mode = "ambiguous"
         result = self.handler()(self.command())
@@ -599,6 +627,14 @@ class SynthesisEvidenceContractTests(unittest.TestCase):
             PublishedArtifact(timing, SafeRelativeArtifactPath("evidence/timing.json"), NOW),
         )
         return event, publications, timing
+
+    def test_result_has_no_public_four_argument_evidence_bypass(self) -> None:
+        event, _, timing = self.evidence()
+
+        with self.assertRaises(TypeError):
+            SynthesisResult(
+                (event,), b"RIFF fixture", (timing,), NonNegativeDecimal("7")
+            )
 
     def test_result_retains_contiguous_events_publications_timing_and_usage(self) -> None:
         event, publications, timing = self.evidence()

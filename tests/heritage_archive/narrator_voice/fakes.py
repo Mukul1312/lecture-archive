@@ -415,6 +415,10 @@ class FakeWorkspaceStore:
             }
             if (
                 not compatible_binding
+                or (
+                    existing.raw_timing_reference is not None
+                    and workspace.raw_timing_reference != existing.raw_timing_reference
+                )
                 or workspace.state not in successors.get(existing.state, set())
             ):
                 raise ValidationError("fake workspace evidence is immutable once saved")

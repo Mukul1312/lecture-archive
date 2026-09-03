@@ -573,6 +573,7 @@ class AttemptWorkspaceEvidence:
     published_artifacts: tuple[PublishedArtifact, ...]
     recovery_evidence: tuple[str, ...]
     state: AttemptState
+    raw_timing_reference: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
         if type(self.workspace_id) is not AttemptWorkspaceId or type(self.attempt_kind) is not AttemptKind:
@@ -611,6 +612,16 @@ class AttemptWorkspaceEvidence:
             raise ValidationError("staged artifacts must be an immutable ArtifactRef tuple")
         if type(self.published_artifacts) is not tuple or any(type(item) is not PublishedArtifact for item in self.published_artifacts):
             raise ValidationError("published artifacts must be an immutable publication tuple")
+        if self.raw_timing_reference is not None:
+            if self.attempt_kind is not AttemptKind.GENERATION:
+                raise ValidationError("only generation workspaces may carry raw timing evidence")
+            if (
+                type(self.raw_timing_reference) is not ArtifactRef
+                or tuple(item.reference for item in self.published_artifacts).count(
+                    self.raw_timing_reference
+                ) != 1
+            ):
+                raise ValidationError("raw timing evidence requires one exact workspace publication")
         if type(self.recovery_evidence) is not tuple:
             raise ValidationError("recovery evidence must be an immutable tuple")
         for item in self.recovery_evidence:

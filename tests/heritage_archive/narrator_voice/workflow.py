@@ -33,6 +33,7 @@ from heritage_archive.contexts.narrator_voice.application.ports import ReleasePo
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     ListeningOutcome,
+    PublishedArtifact,
     ProviderEventEvidence,
     ProviderEventKind,
     ProviderTerminalClass,
@@ -186,7 +187,24 @@ class NoNetworkWorkflow:
             None, timing, "42", ProviderTerminalClass.SUCCESS,
         )
         gateway = FakeSynthesisGateway(
-            SynthesisResult((event,), f"RIFF-fake-source-{base}".encode(), (timing,), NonNegativeDecimal("42"))
+            SynthesisResult(
+                (event,),
+                f"RIFF-fake-source-{base}".encode(),
+                (
+                    PublishedArtifact(
+                        raw,
+                        SafeRelativeArtifactPath(f"evidence/source-{base}-event.json"),
+                        NOW,
+                    ),
+                    PublishedArtifact(
+                        timing,
+                        SafeRelativeArtifactPath(f"evidence/source-{base}-timing.json"),
+                        NOW,
+                    ),
+                ),
+                timing,
+                NonNegativeDecimal("42"),
+            )
         )
         self.gateways.append(gateway)
         self.add(GenerationAttemptId, attempt_id)

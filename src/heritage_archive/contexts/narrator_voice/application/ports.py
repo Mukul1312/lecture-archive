@@ -191,7 +191,7 @@ class SynthesisInvocation:
             raise ValidationError("synthesis invocation contract digest does not match frozen input")
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class SynthesisResult:
     events: tuple[ProviderEventEvidence, ...]
     canonical_wav_bytes: bytes
@@ -199,46 +199,7 @@ class SynthesisResult:
     raw_timing_reference: ArtifactRef | None
     usage: NonNegativeDecimal
 
-    def __init__(
-        self,
-        events: tuple[ProviderEventEvidence, ...],
-        canonical_wav_bytes: bytes,
-        evidence_publications: tuple[PublishedArtifact, ...] | tuple[ArtifactRef, ...],
-        raw_timing_reference: ArtifactRef | None | NonNegativeDecimal,
-        usage: NonNegativeDecimal | None = None,
-    ) -> None:
-        legacy_timing = (
-            usage is None
-            and type(raw_timing_reference) is NonNegativeDecimal
-            and type(evidence_publications) is tuple
-            and all(type(reference) is ArtifactRef for reference in evidence_publications)
-        )
-        if legacy_timing:
-            # Existing fixture-only callers predate immutable provider publications.
-            # Keep their empty-publication behavior while every new five-argument
-            # result is subject to the evidence bijection below.
-            if (
-                type(events) is not tuple
-                or any(type(event) is not ProviderEventEvidence for event in events)
-                or tuple(event.sequence for event in events) != tuple(range(len(events)))
-                or type(canonical_wav_bytes) is not bytes
-            ):
-                raise ValidationError("legacy fixture synthesis result is malformed")
-            object.__setattr__(self, "events", events)
-            object.__setattr__(self, "canonical_wav_bytes", canonical_wav_bytes)
-            object.__setattr__(self, "evidence_publications", ())
-            object.__setattr__(
-                self,
-                "raw_timing_reference",
-                evidence_publications[0] if evidence_publications else None,
-            )
-            object.__setattr__(self, "usage", raw_timing_reference)
-            return
-        object.__setattr__(self, "events", events)
-        object.__setattr__(self, "canonical_wav_bytes", canonical_wav_bytes)
-        object.__setattr__(self, "evidence_publications", evidence_publications)
-        object.__setattr__(self, "raw_timing_reference", raw_timing_reference)
-        object.__setattr__(self, "usage", usage)
+    def __post_init__(self) -> None:
         _validate_synthesis_evidence(
             self.events,
             self.evidence_publications,

@@ -130,17 +130,23 @@ class FilesystemArtifactEvidenceVerifier:
         bytes_match_publications = publication_observed and all(
             self._publication_matches(publication) for publication in workspace.published_artifacts
         )
-        verified = (
+        publication_verified = (
             artifact_observed
             and publication_observed
             and locations_match_staging
             and bytes_match_publications
         )
+        canonical_audio = tuple(
+            publication
+            for publication in workspace.published_artifacts
+            if publication.reference.media_type == "audio/wav"
+        )
+        artifact_verified = publication_verified and len(canonical_audio) == 1
         return VerifiedArtifactRecoveryFacts(
             artifact_observed,
-            verified,
+            artifact_verified,
             publication_observed,
-            verified,
+            publication_verified,
         )
 
     def read_verified_bytes(self, publication: PublishedArtifact) -> bytes:
@@ -340,6 +346,7 @@ _WORKSPACE_STATE_SUCCESSORS = {
         AttemptState.EXTERNAL_WORK_STARTED,
         AttemptState.ARTIFACTS_STAGED,
         AttemptState.ARTIFACTS_PUBLISHED,
+        AttemptState.BLOCKED,
         AttemptState.FAILED,
         AttemptState.UNKNOWN,
         AttemptState.QUARANTINED,
@@ -442,6 +449,11 @@ def _validate_workspace_progression(
             raise ValidationError("workspace evidence can only grow by an exact tuple prefix")
     if any(event.terminal_classification is not None for event in existing.events) and candidate.events != existing.events:
         raise ValidationError("sealed provider evidence cannot be extended or rewritten")
+    if (
+        existing.raw_timing_reference is not None
+        and candidate.raw_timing_reference != existing.raw_timing_reference
+    ):
+        raise ValidationError("raw timing evidence cannot be rewritten")
     if candidate.submission not in _SUBMISSION_SUCCESSOR[existing.submission]:
         raise ValidationError("workspace submission evidence cannot regress or conflict")
     if existing.state.terminal:
@@ -477,7 +489,15 @@ def _target_binding(target: RecoveryTarget):
 
 def _workspace_evidence_stage(workspace: AttemptWorkspaceEvidence) -> RecoveryStage:
     published = tuple(item.reference for item in workspace.published_artifacts)
-    if published and workspace.staged_artifacts == published:
+    canonical_audio_count = sum(
+        item.reference.media_type == "audio/wav"
+        for item in workspace.published_artifacts
+    )
+    if (
+        published
+        and workspace.staged_artifacts == published
+        and canonical_audio_count == 1
+    ):
         return RecoveryStage.ARTIFACTS_PUBLISHED
     if workspace.staged_artifacts:
         return RecoveryStage.ARTIFACTS_STAGED

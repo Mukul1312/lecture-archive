@@ -788,6 +788,7 @@ def _workspace(
     publications=(),
     artifact=None,
     recovery=(),
+    raw_timing_reference=None,
 ):
     all_publications = publications + (() if artifact is None else (artifact,))
     return AttemptWorkspaceEvidence(
@@ -806,6 +807,7 @@ def _workspace(
         all_publications,
         recovery,
         state,
+        raw_timing_reference,
     )
 
 
@@ -861,6 +863,7 @@ class GenerateTakeHandler:
                 effective_input=effective_input, events=events,
                 publications=generated.evidence_publications,
                 recovery=(reason,),
+                raw_timing_reference=generated.raw_timing_reference,
             ),
             "settle", generated.usage,
         )
@@ -915,6 +918,7 @@ class GenerateTakeHandler:
                 events=evidence.events,
                 publications=evidence.publications,
                 recovery=(evidence.reason_code,),
+                raw_timing_reference=evidence.raw_timing_reference,
             ),
             budget_action,
             budget_fact,
@@ -1364,6 +1368,7 @@ class GenerateTakeHandler:
                 AttemptState.ARTIFACTS_PUBLISHED, SubmissionEvidence.COMPLETED,
                 effective_input=effective_input, events=generated.events,
                 publications=generated.evidence_publications, artifact=artifact,
+                raw_timing_reference=generated.raw_timing_reference,
             ),
             "settle", generated.usage,
         )
@@ -1478,10 +1483,7 @@ class ReconcileGenerationAttemptHandler:
                     raise ValidationError("generation recovery completion requires the frozen effective input")
                 artifact, media = _verified_workspace_artifact_and_media(self.artifact_evidence, workspace)
                 preview = _find_preview(job, attempt.preview_id)
-                timing_reference = next(
-                    (event.timing_reference for event in workspace.events if event.timing_reference is not None),
-                    None,
-                )
+                timing_reference = workspace.raw_timing_reference
                 effective_input = attempt.effective_input
                 take = NarrationTake(
                     _recovery_id(self.identifiers, TakeId),

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -33,15 +34,18 @@ from heritage_archive.contexts.narrator_voice.application.ports import (
 )
 from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
     FilesystemAttemptWorkspaceVerifier,
+    FilesystemAttemptWorkspaceStore,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
     DecodedMediaFacts,
+    PublishedArtifact,
     ProviderTerminalClass,
     SubmissionEvidence,
     narration_assembly_plan_digest,
 )
-from heritage_archive.kernel import ActorId, ArtifactId, ValidationError
+from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.ids import (
     BudgetReservationId,
     CommandId,
@@ -56,7 +60,7 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     TakeId,
     AttemptWorkspaceId,
 )
-from tests.heritage_archive.narrator_voice.fixtures import uuid
+from tests.heritage_archive.narrator_voice.fixtures import NOW, digest, uuid
 from tests.heritage_archive.narrator_voice.fakes import (
     FakeActorResolver,
     FakeArtifactEvidenceVerifier,
@@ -116,6 +120,58 @@ def facts(**changes: object) -> RecoveryFacts:
 
 
 class RecoveryDecisionTests(unittest.TestCase):
+    def test_generation_crash_recovery_preserves_standalone_combined_timing_reference(self) -> None:
+        fixture = generation_fixture.GenerationApplicationTests(
+            "test_post_provider_CAS_conflict_preserves_published_evidence_and_settled_usage_without_second_CAS"
+        )
+        fixture.setUp()
+        event_timing = fixture.synthesis_result.events[0].timing_reference
+        combined = ArtifactRef(
+            ArtifactId(uuid(1020)), digest("standalone combined timing"), 26, "application/json"
+        )
+        combined_publication = PublishedArtifact(
+            combined, SafeRelativeArtifactPath("evidence/combined-timing.json"), NOW
+        )
+        fixture.gateway.result = replace(
+            fixture.synthesis_result,
+            evidence_publications=(*fixture.evidence_publications, combined_publication),
+            raw_timing_reference=combined,
+        )
+        fixture.jobs.reject_on_save_calls.add(8)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = LocalNarrationRoot.open(
+                Path(temporary_directory), (Path(__file__).resolve().parents[3],)
+            )
+            root.initialize_layout()
+            fixture.workspaces = FilesystemAttemptWorkspaceStore(root)
+
+            unknown = fixture.handler()(fixture.command())
+            persisted = fixture.workspaces.load(fixture.attempt_id)
+            completed = ReconcileGenerationAttemptHandler(
+                fixture.jobs,
+                fixture.reader,
+                fixture.clock,
+                fixture.workspaces,
+                FakeAttemptWorkspaceVerifier(),
+                FakeProviderEventVerifier(),
+                FakeArtifactEvidenceVerifier(
+                    fixture.inspector.inspect_canonical_wav(b"recovered")
+                ),
+                fixture.budget,
+                fixture.budget,
+                fixture.ids,
+            )(
+                ReconcileGenerationAttemptCommand(
+                    CommandId(uuid(1021)), fixture.job_id, fixture.attempt_id, unknown.revision
+                )
+            )
+
+        take = fixture.jobs.load(fixture.job_id).takes[-1]
+        self.assertNotEqual(event_timing, combined)
+        self.assertEqual(getattr(persisted, "raw_timing_reference", None), combined)
+        self.assertEqual(take.timing_reference, combined)
+        self.assertEqual(completed.revision, unknown.revision + 1)
+
     def test_explicit_pre_call_workspace_is_external_started_even_before_submission(self) -> None:
         fixture = generation_fixture.GenerationApplicationTests(
             "test_input_and_external_boundaries_are_durable_before_the_gateway_call"
