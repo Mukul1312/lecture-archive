@@ -54,6 +54,19 @@ class LocalFilePublicationTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"first immutable bytes")
             self.assertEqual(len(list(staging.iterdir())), 1)
 
+    def test_no_clobber_publication_preserves_a_caller_selected_json_stage_on_interruption(self) -> None:
+        """Ignoring a requested suffix would make aggregate staging violate its durable layout."""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            staging = root / "staging"
+            destination = root / "aggregates" / "record.json"
+
+            with patch.object(Path, "rename", side_effect=OSError("interrupted publication")):
+                with self.assertRaises(OSError):
+                    publish_bytes_no_clobber(staging, destination, b"canonical record", staging_suffix=".json")
+
+            self.assertEqual(tuple(path.suffix for path in staging.iterdir()), (".json",))
+
     def test_publication_preserves_staging_when_reread_evidence_differs_from_payload(self) -> None:
         """Skipping reread verification would publish a file whose evidence is unproven."""
         with tempfile.TemporaryDirectory() as temporary_directory:

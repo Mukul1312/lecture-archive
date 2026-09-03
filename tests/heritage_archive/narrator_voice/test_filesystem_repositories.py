@@ -6,13 +6,14 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ActorId
+from heritage_archive.kernel import ActorId, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
 from heritage_archive.contexts.narrator_voice.domain.diary_episode import DiaryEpisode
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -100,6 +101,22 @@ class FilesystemRepositoryContracts(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded.to_snapshot(), record.to_snapshot())
             self.assertIsNone(repository.load(AuthorizationRecordId(uuid(1232))))
+
+    def test_interrupted_repository_publication_preserves_json_staging_and_raises_validation_error(self) -> None:
+        """Leaking a storage error would let callers mistake interrupted persistence for a CAS refusal."""
+        record = AuthorizationRecord.register(
+            AuthorizationRecordId(uuid(1240)), ActorId(uuid(1241)), make_scope(), digest("interrupted authority"), NOW
+        )
+        with self._storage_root() as root:
+            repository = FilesystemAuthorizationRecordRepository(root)
+
+            with patch.object(Path, "rename", side_effect=OSError("interrupted publication")):
+                with self.assertRaises(ValidationError):
+                    repository.save(record, None)
+
+            self.assertEqual(tuple(path.suffix for path in root.staging.iterdir()), (".json",))
+            destination = root.aggregates / "authorization-records" / record.record_id.value / "revisions" / "00000000000000000001.json"
+            self.assertFalse(destination.exists())
 
     def _assert_revision_contract(self, repository_type, aggregate_id, aggregate, mutate, aggregate_kind: str) -> None:
         with self._storage_root() as root:

@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from heritage_archive.kernel import ValidationError
-from heritage_archive.platform.storage.local_files import SingleWriterFileLock, publish_bytes_no_clobber
+from heritage_archive.platform.storage.local_files import (
+    PublicationEvidenceMismatch,
+    SingleWriterFileLock,
+    publish_bytes_no_clobber,
+)
 
 from ..application.schema_v1 import decode_schema_v1, encode_schema_v1
 from ..domain.authorization import AuthorizationRecord, AuthorizationRecordSnapshot
@@ -61,9 +65,16 @@ class _FilesystemSnapshotRepository:
             except (AttributeError, TypeError, ValueError) as error:
                 raise ValidationError("aggregate snapshot cannot be encoded as schema-v1") from error
             try:
-                publish_bytes_no_clobber(self._root.staging, destination, payload)
+                publish_bytes_no_clobber(
+                    self._root.staging,
+                    destination,
+                    payload,
+                    staging_suffix=".json",
+                )
             except FileExistsError as error:
                 raise ValidationError("immutable aggregate revision destination is already occupied") from error
+            except (OSError, PublicationEvidenceMismatch) as error:
+                raise ValidationError("immutable aggregate revision publication failed") from error
         return True
 
     def _current_contiguous(self, aggregate_id: object) -> tuple[int | None, Any | None]:

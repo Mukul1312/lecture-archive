@@ -66,10 +66,14 @@ class SingleWriterFileLock:
 
 
 def publish_bytes_no_clobber(
-    staging_directory: Path, destination: Path, payload: bytes
+    staging_directory: Path,
+    destination: Path,
+    payload: bytes,
+    *,
+    staging_suffix: str = ".stage",
 ) -> PublishedFile:
     """Publish immutable bytes after staging and reread evidence verification."""
-    stage, published = _stage_and_verify(staging_directory, payload)
+    stage, published = _stage_and_verify(staging_directory, payload, staging_suffix=staging_suffix)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if os.path.lexists(destination):
         raise FileExistsError(f"immutable destination already exists: {destination}")
@@ -87,11 +91,23 @@ def replace_bytes_atomically(
     return published
 
 
-def _stage_and_verify(staging_directory: Path, payload: bytes) -> tuple[Path, PublishedFile]:
+def _stage_and_verify(
+    staging_directory: Path,
+    payload: bytes,
+    *,
+    staging_suffix: str = ".stage",
+) -> tuple[Path, PublishedFile]:
     if type(payload) is not bytes:
         raise TypeError("published payload must be bytes")
+    if (
+        type(staging_suffix) is not str
+        or not staging_suffix.startswith(".")
+        or not staging_suffix[1:].isascii()
+        or not staging_suffix[1:].isalnum()
+    ):
+        raise ValueError("staging suffix must be a safe dot-prefixed ASCII alphanumeric suffix")
     staging_directory.mkdir(parents=True, exist_ok=True)
-    stage = staging_directory / f"{uuid.uuid4().hex}.stage"
+    stage = staging_directory / f"{uuid.uuid4().hex}{staging_suffix}"
     with stage.open("xb") as handle:
         handle.write(payload)
         handle.flush()
