@@ -27,6 +27,7 @@ from .evidence import (
     ReviewAuthority,
     ReviewOutcome,
     SelectionDecision,
+    narration_assembly_plan_digest,
     SubmissionEvidence,
 )
 from .ids import (
@@ -1018,6 +1019,7 @@ class NarrationJob:
             budget_reservation_id=attempt.budget_reservation_id,
             preview_digest=attempt.preview_digest,
             effective_input_digest=attempt.effective_input.request_digest,
+            frozen_plan_digest=attempt.effective_input.request_digest,
         ):
             raise ValidationError("generation workspace does not prove the exact frozen attempt and publication")
         if (
@@ -1371,6 +1373,9 @@ class NarrationJob:
             budget_reservation_id=None,
             preview_digest=None,
             effective_input_digest=None,
+            frozen_plan_digest=narration_assembly_plan_digest(
+                attempt.selected_take_ids, attempt.gaps_samples
+            ),
         ) or workspace.events:
             raise ValidationError("narration workspace does not prove the exact assembly publication")
         takes = tuple(self.take(value) for value in attempt.selected_take_ids)

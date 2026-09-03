@@ -31,6 +31,7 @@ from heritage_archive.contexts.narrator_voice.domain.errors import (
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptKind,
     AttemptState,
+    AttemptWorkspaceEvidence,
     DecodedMediaFacts,
     ReviewAuthority,
     SubmissionEvidence,
@@ -326,10 +327,16 @@ class FakeWorkspaceStore:
 
 
 class FakeAttemptWorkspaceVerifier:
-    def __init__(self, *, force_workspace_match: bool | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        force_workspace_match: bool | None = None,
+        force_frozen_plan_match: bool | None = None,
+    ) -> None:
         self.force_workspace_match = force_workspace_match
+        self.force_frozen_plan_match = force_frozen_plan_match
 
-    def verify(self, workspace, target, attempt_state, reservation_revision):
+    def verify(self, workspace, target, attempt_state, reservation_revision, expected_frozen_plan_digest):
         matches = (
             workspace is not None
             and workspace.attempt_id == target.attempt_id
@@ -339,6 +346,9 @@ class FakeAttemptWorkspaceVerifier:
             matches = self.force_workspace_match
         if workspace is None:
             return VerifiedWorkspaceRecoveryFacts(False, False, RecoveryStage.RESERVED, SubmissionEvidence.NOT_STARTED)
+        frozen_plan_matches = workspace.frozen_plan_digest == expected_frozen_plan_digest
+        if self.force_frozen_plan_match is not None:
+            frozen_plan_matches = self.force_frozen_plan_match
         stage = {
             AttemptState.RESERVED: RecoveryStage.RESERVED,
             AttemptState.INPUT_FROZEN: RecoveryStage.INPUT_FROZEN,
@@ -346,7 +356,7 @@ class FakeAttemptWorkspaceVerifier:
             AttemptState.ARTIFACTS_STAGED: RecoveryStage.ARTIFACTS_STAGED,
             AttemptState.ARTIFACTS_PUBLISHED: RecoveryStage.ARTIFACTS_PUBLISHED,
         }.get(workspace.state, RecoveryStage.ARTIFACTS_PUBLISHED)
-        return VerifiedWorkspaceRecoveryFacts(matches, matches, stage, workspace.submission)
+        return VerifiedWorkspaceRecoveryFacts(matches, frozen_plan_matches, stage, workspace.submission)
 
 
 class FakeProviderEventVerifier:
@@ -363,12 +373,27 @@ class FakeProviderEventVerifier:
 
 
 class FakeArtifactEvidenceVerifier:
+    def __init__(self, media=None) -> None:
+        self.media = media
+
     def verify(self, workspace):
         if workspace is None:
             return VerifiedArtifactRecoveryFacts(False, False, False, False)
         observed = bool(workspace.staged_artifacts)
         published = bool(workspace.published_artifacts)
         return VerifiedArtifactRecoveryFacts(observed, observed, published, published)
+
+    def recover_media(self, workspace, artifact):
+        self.verify(workspace)
+        if (
+            type(workspace) is not AttemptWorkspaceEvidence
+            or workspace.published_artifacts != (artifact,)
+            or self.media is None
+        ):
+            raise ValidationError("fake recovery requires the workspace's exact configured publication")
+        if type(self.media) is not DecodedMediaFacts or self.media.all_digital_silence:
+            raise ValidationError("fake recovery media must be configured non-silent decoded facts")
+        return self.media
 
 
 class FakeDryPcmAssembler:

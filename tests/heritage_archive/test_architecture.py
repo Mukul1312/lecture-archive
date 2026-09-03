@@ -451,6 +451,15 @@ class NarratorVoiceArchitectureTests(unittest.TestCase):
                         violations.append(f"{source.name}: {'.'.join(imported)}")
         self.assertEqual(violations, [])
 
+    def test_recovery_media_is_an_explicit_port_not_dynamic_handler_probing(self) -> None:
+        application = self.NARRATOR_ROOT / "application"
+        ports_source = (application / "ports.py").read_text(encoding="utf-8")
+        handlers_source = (application / "handlers.py").read_text(encoding="utf-8")
+        self.assertIn("class ArtifactEvidenceVerifier(Protocol):", ports_source)
+        self.assertIn("def recover_media(", ports_source)
+        self.assertIn("artifact_evidence.recover_media(workspace, artifact)", handlers_source)
+        self.assertNotIn('getattr(artifact_evidence, "recover_media"', handlers_source)
+
     def test_complete_public_use_case_surface_has_frozen_commands_results_and_explicit_handlers(self) -> None:
         handlers = self._classes(self.NARRATOR_ROOT / "application" / "handlers.py", "Handler")
         expected = {

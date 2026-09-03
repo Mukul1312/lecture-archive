@@ -94,6 +94,55 @@ class AttemptState(str, Enum):
         }
 
 
+def narration_assembly_plan_digest(
+    selected_take_ids: tuple[TakeId, ...],
+    gaps_samples: tuple[int, ...],
+) -> ContentDigest:
+    """Digest the exact ordered narration assembly plan owned by an attempt."""
+    if (
+        type(selected_take_ids) is not tuple
+        or not selected_take_ids
+        or any(type(value) is not TakeId for value in selected_take_ids)
+        or len(set(selected_take_ids)) != len(selected_take_ids)
+    ):
+        raise ValidationError("narration assembly plan requires unique immutable selected take identities")
+    if (
+        type(gaps_samples) is not tuple
+        or len(gaps_samples) != len(selected_take_ids) - 1
+        or any(type(value) is not int or value < 0 for value in gaps_samples)
+    ):
+        raise ValidationError("narration assembly plan gaps must exactly separate selected takes")
+    return semantic_digest(
+        "narrator_voice.narration_assembly_plan.v1",
+        {
+            "selected_take_ids": [str(value.value) for value in selected_take_ids],
+            "gaps_samples": list(gaps_samples),
+        },
+    )
+
+
+def episode_assembly_plan_digest(
+    component_snapshot_digests: tuple[ContentDigest, ...],
+    gap_samples: int,
+) -> ContentDigest:
+    """Digest the exact intro/diary assembly plan owned by an episode attempt."""
+    if (
+        type(component_snapshot_digests) is not tuple
+        or len(component_snapshot_digests) != 2
+        or any(type(value) is not ContentDigest for value in component_snapshot_digests)
+    ):
+        raise ValidationError("episode assembly plan requires exactly intro and diary snapshot digests")
+    if type(gap_samples) is not int or gap_samples < 0:
+        raise ValidationError("episode assembly plan gap must be a nonnegative integer sample count")
+    return semantic_digest(
+        "narrator_voice.episode_assembly_plan.v1",
+        {
+            "component_snapshot_digests": [value.hex_digest for value in component_snapshot_digests],
+            "gap_samples": gap_samples,
+        },
+    )
+
+
 class SubmissionEvidence(str, Enum):
     NOT_STARTED = "not_started"
     DEFINITELY_NOT_SENT = "definitely_not_sent"
@@ -517,6 +566,7 @@ class AttemptWorkspaceEvidence:
     budget_reservation_id: BudgetReservationId | None
     preview_digest: ContentDigest | None
     effective_input_digest: ContentDigest | None
+    frozen_plan_digest: ContentDigest | None
     submission: SubmissionEvidence
     events: tuple[ProviderEventEvidence, ...]
     staged_artifacts: tuple[ArtifactRef, ...]
@@ -538,11 +588,21 @@ class AttemptWorkspaceEvidence:
         _positive_revision(self.reservation_revision, "workspace reservation revision", allow_zero=True)
         if self.budget_reservation_id is not None and type(self.budget_reservation_id) is not BudgetReservationId:
             raise ValidationError("workspace budget reservation identity is invalid")
-        for value in (self.preview_digest, self.effective_input_digest):
+        for value in (self.preview_digest, self.effective_input_digest, self.frozen_plan_digest):
             if value is not None and type(value) is not ContentDigest:
                 raise ValidationError("workspace digest binding is invalid")
         if type(self.submission) is not SubmissionEvidence or type(self.state) is not AttemptState:
             raise ValidationError("workspace submission or state is invalid")
+        if self.attempt_kind is AttemptKind.GENERATION:
+            if self.frozen_plan_digest != self.effective_input_digest:
+                raise ValidationError("generation workspace frozen plan must exactly bind effective input")
+            if (
+                self.effective_input_digest is None
+                and self.state not in {AttemptState.RESERVED, AttemptState.BLOCKED}
+            ):
+                raise ValidationError("generation workspace may omit frozen input only before it is frozen")
+        elif self.frozen_plan_digest is None:
+            raise ValidationError("assembly workspace requires a frozen assembly plan digest")
         if type(self.events) is not tuple or tuple(event.sequence for event in self.events) != tuple(range(len(self.events))):
             raise ValidationError("provider events must use contiguous ordered sequences from zero")
         if any(type(event) is not ProviderEventEvidence for event in self.events):
@@ -567,6 +627,7 @@ class AttemptWorkspaceEvidence:
         budget_reservation_id: BudgetReservationId | None,
         preview_digest: ContentDigest | None,
         effective_input_digest: ContentDigest | None,
+        frozen_plan_digest: ContentDigest | None,
     ) -> bool:
         """Return whether durable workspace facts exactly prove one output binding.
 
@@ -587,6 +648,7 @@ class AttemptWorkspaceEvidence:
             and self.budget_reservation_id == budget_reservation_id
             and self.preview_digest == preview_digest
             and self.effective_input_digest == effective_input_digest
+            and self.frozen_plan_digest == frozen_plan_digest
             and self.submission is SubmissionEvidence.COMPLETED
             and self.state in {
                 AttemptState.UNKNOWN,

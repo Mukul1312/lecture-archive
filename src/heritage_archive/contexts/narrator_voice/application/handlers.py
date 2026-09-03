@@ -36,6 +36,8 @@ from ..domain.evidence import (
     TimingReviewStatus,
     TimedNarrationPackage,
     SubmissionEvidence,
+    episode_assembly_plan_digest,
+    narration_assembly_plan_digest,
 )
 from ..domain.ids import (
     AttemptWorkspaceId,
@@ -315,6 +317,7 @@ def _trusted_recovery_facts(
     target,
     attempt_state: AttemptState,
     reservation_revision: int,
+    expected_frozen_plan_digest: ContentDigest | None,
     requires_budget: bool,
     budget_state: BudgetRecoveryState,
     authority_covers_completion: bool,
@@ -327,7 +330,7 @@ def _trusted_recovery_facts(
     try:
         workspace = workspaces.load(target.attempt_id)
         workspace_facts = workspace_verifier.verify(
-            workspace, target, attempt_state, reservation_revision
+            workspace, target, attempt_state, reservation_revision, expected_frozen_plan_digest
         )
         provider_facts = provider_events.verify(workspace)
         artifact_facts = artifacts.verify(workspace)
@@ -393,10 +396,13 @@ def _verified_completion_workspace(
     target,
     attempt_state: AttemptState,
     reservation_revision: int,
+    expected_frozen_plan_digest: ContentDigest | None,
 ) -> AttemptWorkspaceEvidence:
     """Re-read and verify the exact durable evidence immediately before completion."""
     workspace = workspaces.load(target.attempt_id)
-    verified = workspace_verifier.verify(workspace, target, attempt_state, reservation_revision)
+    verified = workspace_verifier.verify(
+        workspace, target, attempt_state, reservation_revision, expected_frozen_plan_digest
+    )
     artifact = artifact_evidence.verify(workspace)
     if (
         workspace is None
@@ -418,10 +424,7 @@ def _verified_workspace_artifact_and_media(
     if len(workspace.published_artifacts) != 1:
         raise ValidationError("recovery completion requires exactly one published output artifact")
     artifact = workspace.published_artifacts[0]
-    read_media = getattr(artifact_evidence, "recover_media", None)
-    if not callable(read_media):
-        raise ValidationError("artifact verifier must provide verified decoded media for recovery completion")
-    media = read_media(workspace, artifact)
+    media = artifact_evidence.recover_media(workspace, artifact)
     if type(media) is not DecodedMediaFacts or media.all_digital_silence:
         raise ValidationError("recovery completion requires verified non-silent decoded media")
     return artifact, media
@@ -781,6 +784,7 @@ def _workspace(
         job.generation_attempt(attempt_id).reservation_revision,
         reservation_id,
         preview.preview_digest,
+        None if effective_input is None else effective_input.request_digest,
         None if effective_input is None else effective_input.request_digest,
         submission,
         events,
@@ -1238,6 +1242,9 @@ class ReconcileGenerationAttemptHandler:
             target=target,
             attempt_state=attempt.state,
             reservation_revision=attempt.reservation_revision,
+            expected_frozen_plan_digest=(
+                None if attempt.effective_input is None else attempt.effective_input.request_digest
+            ),
             requires_budget=True,
             budget_state=budget_state,
             authority_covers_completion=_recovery_authority_covers(
@@ -1253,6 +1260,7 @@ class ReconcileGenerationAttemptHandler:
                 target,
                 attempt.state,
                 attempt.reservation_revision,
+                None if attempt.effective_input is None else attempt.effective_input.request_digest,
             )
             if attempt.state is AttemptState.COMPLETED:
                 assert attempt.take_id is not None
@@ -1482,6 +1490,10 @@ def _narration_assembly_workspace(
         None,
         None,
         None,
+        narration_assembly_plan_digest(
+            job.narration_assembly_attempt(attempt_id).selected_take_ids,
+            job.narration_assembly_attempt(attempt_id).gaps_samples,
+        ),
         SubmissionEvidence.NOT_STARTED if state in {AttemptState.RESERVED, AttemptState.INPUT_FROZEN} else SubmissionEvidence.COMPLETED,
         (),
         () if artifact is None else (artifact.reference,),
@@ -1710,6 +1722,9 @@ class ReconcileNarrationAssemblyAttemptHandler:
             target=target,
             attempt_state=attempt.state,
             reservation_revision=attempt.reservation_revision,
+            expected_frozen_plan_digest=narration_assembly_plan_digest(
+                attempt.selected_take_ids, attempt.gaps_samples
+            ),
             requires_budget=False,
             budget_state=BudgetRecoveryState.NOT_APPLICABLE,
             authority_covers_completion=_recovery_authority_covers(
@@ -1725,6 +1740,7 @@ class ReconcileNarrationAssemblyAttemptHandler:
                 target,
                 attempt.state,
                 attempt.reservation_revision,
+                narration_assembly_plan_digest(attempt.selected_take_ids, attempt.gaps_samples),
             )
             if attempt.state is AttemptState.COMPLETED:
                 assert attempt.master_id is not None
@@ -1896,6 +1912,10 @@ def _episode_assembly_workspace(workspace_id, episode, attempt_id, state, *, art
         None,
         None,
         None,
+        episode_assembly_plan_digest(
+            episode.episode_assembly_attempt(attempt_id).component_snapshot_digests,
+            episode.episode_assembly_attempt(attempt_id).gap_samples,
+        ),
         SubmissionEvidence.NOT_STARTED if state in {AttemptState.RESERVED, AttemptState.INPUT_FROZEN} else SubmissionEvidence.COMPLETED,
         (),
         () if artifact is None else (artifact.reference,),
@@ -2336,6 +2356,9 @@ class ReconcileEpisodeAssemblyAttemptHandler:
             target=target,
             attempt_state=attempt.state,
             reservation_revision=attempt.reservation_revision,
+            expected_frozen_plan_digest=episode_assembly_plan_digest(
+                attempt.component_snapshot_digests, attempt.gap_samples
+            ),
             requires_budget=False,
             budget_state=BudgetRecoveryState.NOT_APPLICABLE,
             authority_covers_completion=authority_covers_completion,
@@ -2349,6 +2372,9 @@ class ReconcileEpisodeAssemblyAttemptHandler:
                 target,
                 attempt.state,
                 attempt.reservation_revision,
+                episode_assembly_plan_digest(
+                    attempt.component_snapshot_digests, attempt.gap_samples
+                ),
             )
             if attempt.state is AttemptState.COMPLETED:
                 assert attempt.master_id is not None

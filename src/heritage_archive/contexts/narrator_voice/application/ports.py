@@ -222,6 +222,7 @@ class AttemptWorkspaceVerifier(Protocol):
         target: RecoveryTarget,
         attempt_state: AttemptState,
         reservation_revision: int,
+        expected_frozen_plan_digest: ContentDigest | None,
     ) -> VerifiedWorkspaceRecoveryFacts: ...
 
 
@@ -249,6 +250,12 @@ class VerifiedArtifactRecoveryFacts:
 
 class ArtifactEvidenceVerifier(Protocol):
     def verify(self, workspace: AttemptWorkspaceEvidence | None) -> VerifiedArtifactRecoveryFacts: ...
+
+    def recover_media(
+        self,
+        workspace: AttemptWorkspaceEvidence,
+        artifact: PublishedArtifact,
+    ) -> DecodedMediaFacts: ...
 
 
 class BudgetReservationStatusReader(Protocol):

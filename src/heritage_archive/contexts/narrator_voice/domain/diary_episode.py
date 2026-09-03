@@ -25,6 +25,7 @@ from .evidence import (
     PublishedArtifact,
     TimedNarrationPackage,
     TimingReviewStatus,
+    episode_assembly_plan_digest,
 )
 from .ids import (
     DiaryEpisodeId,
@@ -698,6 +699,9 @@ class DiaryEpisode:
             budget_reservation_id=None,
             preview_digest=None,
             effective_input_digest=None,
+            frozen_plan_digest=episode_assembly_plan_digest(
+                attempt.component_snapshot_digests, attempt.gap_samples
+            ),
         ) or workspace.events:
             raise ValidationError("episode workspace does not prove the exact assembly publication")
         history = self.to_snapshot()

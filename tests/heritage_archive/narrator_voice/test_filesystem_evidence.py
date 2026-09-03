@@ -221,6 +221,7 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             BudgetReservationId(uuid(313)),
             digest("preview"),
             digest("input"),
+            digest("input"),
             SubmissionEvidence.COMPLETED,
             (),
             (publication.reference,) if staged_artifacts is None else staged_artifacts,

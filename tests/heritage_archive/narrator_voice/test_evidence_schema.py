@@ -49,6 +49,8 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     TimedNarrationPackage,
     TimingCue,
     TimingReviewStatus,
+    episode_assembly_plan_digest,
+    narration_assembly_plan_digest,
 )
 from heritage_archive.contexts.narrator_voice.domain.ids import (
     AttemptWorkspaceId,
@@ -246,6 +248,7 @@ class EvidenceContractTests(unittest.TestCase):
             BudgetReservationId(UUIDS[10]),
             preview().preview_digest,
             effective_input().request_digest,
+            effective_input().request_digest,
             SubmissionEvidence.COMPLETED,
             (event,),
             (),
@@ -258,6 +261,26 @@ class EvidenceContractTests(unittest.TestCase):
             replace(workspace, events=(replace(event, sequence=1),))
         with self.assertRaises(ValidationError):
             replace(workspace, aggregate_id=DiaryEpisodeId(UUIDS[2]))
+        with self.assertRaises(ValidationError):
+            replace(workspace, frozen_plan_digest=digest("wrong-plan"))
+        with self.assertRaises(ValidationError):
+            replace(
+                workspace,
+                effective_input_digest=None,
+                frozen_plan_digest=None,
+                state=AttemptState.INPUT_FROZEN,
+            )
+
+    def test_assembly_plan_digests_are_domain_separated_and_validate_exact_inputs(self) -> None:
+        narration = narration_assembly_plan_digest(
+            (TakeId(UUIDS[11]), TakeId(UUIDS[12])), (220,)
+        )
+        episode = episode_assembly_plan_digest((digest("intro"), digest("diary")), 220)
+        self.assertNotEqual(narration, episode)
+        with self.assertRaises(ValidationError):
+            narration_assembly_plan_digest((TakeId(UUIDS[11]),), (1,))
+        with self.assertRaises(ValidationError):
+            episode_assembly_plan_digest((digest("only"),), 0)
 
     def test_generation_attempt_states_reject_impossible_completed_or_temporal_facts(self) -> None:
         with self.assertRaises(ValidationError):

@@ -89,13 +89,7 @@ from heritage_archive.contexts.narrator_voice.application.commands import (
 
 class RecoveryArtifactEvidence(FakeArtifactEvidenceVerifier):
     def __init__(self, media: DecodedMediaFacts) -> None:
-        self.media = media
-
-    def recover_media(self, workspace, artifact) -> DecodedMediaFacts:
-        self.verify(workspace)
-        if artifact not in workspace.published_artifacts:
-            raise ValidationError("test recovery artifact is not published by the workspace")
-        return self.media
+        super().__init__(media)
 
 
 def facts(**changes: object) -> RecoveryFacts:

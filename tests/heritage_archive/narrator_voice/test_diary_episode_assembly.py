@@ -23,6 +23,7 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     ListeningOutcome,
     PassageOffset,
     SubmissionEvidence,
+    episode_assembly_plan_digest,
 )
 from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, DomainInvariantError
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -156,7 +157,8 @@ class DiaryEpisodeAssemblyTests(unittest.TestCase):
         workspace = AttemptWorkspaceEvidence(
             AttemptWorkspaceId(uuid(532)), AttemptKind.EPISODE_ASSEMBLY,
             self.episode_id, self.attempt_id, attempt.reservation_revision,
-            None, None, None, SubmissionEvidence.COMPLETED, (),
+            None, None, None, episode_assembly_plan_digest(attempt.component_snapshot_digests, attempt.gap_samples),
+            SubmissionEvidence.COMPLETED, (),
             (artifact.reference,), (artifact,),
             ("fake verifier sealed exact workspace evidence",), AttemptState.COMPLETED,
         )

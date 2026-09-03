@@ -26,6 +26,7 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     ReviewAuthority,
     ReviewOutcome,
     SubmissionEvidence,
+    narration_assembly_plan_digest,
 )
 from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, DomainInvariantError
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -325,7 +326,8 @@ class NarrationJobMasteringTests(unittest.TestCase):
         workspace = AttemptWorkspaceEvidence(
             AttemptWorkspaceId(uuid(333)), AttemptKind.NARRATION_ASSEMBLY,
             self.job_id, attempt_id, attempt.reservation_revision,
-            None, None, None, SubmissionEvidence.COMPLETED, (),
+            None, None, None, narration_assembly_plan_digest(attempt.selected_take_ids, attempt.gaps_samples),
+            SubmissionEvidence.COMPLETED, (),
             (artifact.reference,), (artifact,),
             ("fake verifier sealed exact workspace evidence",), AttemptState.COMPLETED,
         )

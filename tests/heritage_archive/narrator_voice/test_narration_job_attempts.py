@@ -225,7 +225,8 @@ class NarrationJobAttemptTests(unittest.TestCase):
         workspace = AttemptWorkspaceEvidence(
             AttemptWorkspaceId(uuid(219)), AttemptKind.GENERATION, self.job_id,
             self.attempt_id, attempt.reservation_revision, self.budget_id,
-            self.preview.preview_digest, esi.request_digest, SubmissionEvidence.COMPLETED,
+            self.preview.preview_digest, esi.request_digest, esi.request_digest,
+            SubmissionEvidence.COMPLETED,
             (event,), (take.artifact.reference,), (take.artifact,),
             ("fake verifier sealed exact workspace evidence",), AttemptState.COMPLETED,
         )
