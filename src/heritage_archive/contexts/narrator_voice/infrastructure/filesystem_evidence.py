@@ -50,7 +50,7 @@ class FilesystemArtifactStore:
         _validate_media_type(media_type)
         _validate_publication_time(published_at)
         with SingleWriterFileLock(self._root.writer_lock):
-            destination = _artifact_path(self._root, location)
+            destination = _prepare_publish_destination(self._root, location)
             if os.path.lexists(destination):
                 raise ValidationError("immutable artifact destination is already occupied")
             artifact_id = self._identifiers.new_id(ArtifactId)
@@ -95,18 +95,22 @@ class FilesystemArtifactEvidenceVerifier:
         artifact_observed = bool(workspace.staged_artifacts)
         publication_observed = bool(workspace.published_artifacts)
         published_references = tuple(item.reference for item in workspace.published_artifacts)
-        locations_match_staging = artifact_observed and all(
-            reference in workspace.staged_artifacts for reference in published_references
-        )
+        locations_match_staging = workspace.staged_artifacts == published_references
         bytes_match_publications = publication_observed and all(
             _publication_matches(self._root, publication)
             for publication in workspace.published_artifacts
         )
+        verified = (
+            artifact_observed
+            and publication_observed
+            and locations_match_staging
+            and bytes_match_publications
+        )
         return VerifiedArtifactRecoveryFacts(
             artifact_observed,
-            artifact_observed and locations_match_staging and bytes_match_publications,
+            verified,
             publication_observed,
-            bytes_match_publications,
+            verified,
         )
 
 
@@ -144,6 +148,39 @@ def _artifact_path(root: LocalNarrationRoot, location: SafeRelativeArtifactPath)
     if not current.is_relative_to(root.artifacts):
         raise ValidationError("artifact location escapes the local artifact root")
     return current
+
+
+def _prepare_publish_destination(root: LocalNarrationRoot, location: SafeRelativeArtifactPath) -> Path:
+    current = root.artifacts
+    _require_existing_artifact_directory(current)
+    parts = location.value.split("/")
+    for component in parts[:-1]:
+        current /= component
+        if os.path.lexists(current):
+            _require_existing_artifact_directory(current)
+            continue
+        try:
+            current.mkdir()
+        except FileExistsError:
+            pass
+        except OSError as error:
+            raise ValidationError("artifact parent directory cannot be created") from error
+        _require_existing_artifact_directory(current)
+    destination = current / parts[-1]
+    _reject_existing_reparse_point(destination)
+    return destination
+
+
+def _require_existing_artifact_directory(path: Path) -> None:
+    if not os.path.lexists(path):
+        raise ValidationError("artifact root directory is missing")
+    _reject_existing_reparse_point(path)
+    try:
+        is_directory = path.is_dir()
+    except OSError as error:
+        raise ValidationError("artifact path ancestor cannot be inspected") from error
+    if not is_directory:
+        raise ValidationError("artifact path ancestor must be a directory")
 
 
 def _reject_existing_reparse_point(path: Path) -> None:

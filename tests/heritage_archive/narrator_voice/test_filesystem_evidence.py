@@ -13,7 +13,7 @@ SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ArtifactId, ContentDigest, ValidationError
+from heritage_archive.kernel import ArtifactId, ArtifactRef, ContentDigest, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptKind,
     AttemptState,
@@ -84,6 +84,20 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             self.assertFalse((root.artifacts / "takes" / "invalid-time.wav").exists())
             self.assertEqual(identifier.calls, [])
 
+    def test_publish_rejects_a_regular_file_ancestor_before_requesting_an_artifact_id(self) -> None:
+        """A non-directory parent would make the destination unavailable after an ID was consumed."""
+        identifier = _IdentifierSource([ArtifactId(uuid(307))])
+        with self._storage_root() as root:
+            (root.artifacts / "takes").write_bytes(b"not a directory")
+
+            with self.assertRaises(ValidationError):
+                FilesystemArtifactStore(root, identifier).publish(
+                    SafeRelativeArtifactPath("takes/x.wav"), b"payload", "audio/wav", NOW
+                )
+
+            self.assertFalse((root.artifacts / "takes" / "x.wav").exists())
+            self.assertEqual(identifier.calls, [])
+
     def test_publish_rejects_traversal_and_reparse_path_components(self) -> None:
         """Resolving a traversal or junction could publish evidence outside the dedicated root."""
         identifier = _IdentifierSource([ArtifactId(uuid(303))])
@@ -132,8 +146,40 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             self.assertEqual((facts.artifact_observed, facts.artifact_verified), (True, False))
             self.assertEqual((facts.publication_observed, facts.publication_verified), (True, False))
 
+    def test_verifier_refuses_an_extra_unpublished_staged_artifact(self) -> None:
+        """Treating staged containment as enough would accept an unpaired artifact in recovery evidence."""
+        payload = b"paired artifact bytes"
+        with self._storage_root() as root:
+            publication = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(308))])).publish(
+                SafeRelativeArtifactPath("takes/paired.wav"), payload, "audio/wav", NOW
+            )
+            extra = ArtifactRef(ArtifactId(uuid(309)), digest("unpaired"), 8, "audio/wav")
+            workspace = self._published_workspace(publication, (publication.reference, extra))
+
+            facts = FilesystemArtifactEvidenceVerifier(root).verify(workspace)
+
+            self.assertEqual((facts.artifact_observed, facts.artifact_verified), (True, False))
+            self.assertEqual((facts.publication_observed, facts.publication_verified), (True, False))
+
+    def test_verifier_refuses_a_duplicate_staged_reference_for_one_publication(self) -> None:
+        """Ignoring multiplicity would allow one publication to satisfy two staged artifact claims."""
+        payload = b"one publication only"
+        with self._storage_root() as root:
+            publication = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(320))])).publish(
+                SafeRelativeArtifactPath("takes/duplicated.wav"), payload, "audio/wav", NOW
+            )
+            workspace = self._published_workspace(publication, (publication.reference, publication.reference))
+
+            facts = FilesystemArtifactEvidenceVerifier(root).verify(workspace)
+
+            self.assertEqual((facts.artifact_observed, facts.artifact_verified), (True, False))
+            self.assertEqual((facts.publication_observed, facts.publication_verified), (True, False))
+
     @staticmethod
-    def _published_workspace(publication: PublishedArtifact) -> AttemptWorkspaceEvidence:
+    def _published_workspace(
+        publication: PublishedArtifact,
+        staged_artifacts: tuple[ArtifactRef, ...] | None = None,
+    ) -> AttemptWorkspaceEvidence:
         return AttemptWorkspaceEvidence(
             AttemptWorkspaceId(uuid(310)),
             AttemptKind.GENERATION,
@@ -145,7 +191,7 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             digest("input"),
             SubmissionEvidence.COMPLETED,
             (),
-            (publication.reference,),
+            (publication.reference,) if staged_artifacts is None else staged_artifacts,
             (publication,),
             (),
             AttemptState.ARTIFACTS_PUBLISHED,
