@@ -273,7 +273,7 @@ class NarratorVoiceCliTests(unittest.TestCase):
         facade = _RecordingFacade()
         facade.doctor = lambda: ResultWithSecret()  # type: ignore[method-assign]
         code, stdout, stderr, _builds = self._run(["doctor"], facade)
-        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual((code, stderr), (1, ""))
         self.assertEqual(
             json.loads(stdout),
             {
@@ -285,10 +285,38 @@ class NarratorVoiceCliTests(unittest.TestCase):
         )
         self.assertNotIn("SENTINEL", stdout)
 
-    def test_module_help_from_source_checkout_exits_zero_without_a_root(self) -> None:
+    def test_invalid_backup_emits_its_curated_report_and_exits_nonzero(self) -> None:
+        facade = _RecordingFacade()
+        facade.verify_backup = lambda _source: _VerificationResult(  # type: ignore[method-assign]
+            valid=False,
+            issue_codes=("backup_file_digest_mismatch",),
+        )
+        source = Path(tempfile.gettempdir()).resolve() / "explicit-backup"
+
+        code, stdout, stderr, builds = self._run(
+            ["verify-backup", "--source", str(source)], facade
+        )
+
+        self.assertEqual((code, stderr, builds), (1, "", [False]))
+        self.assertEqual(
+            json.loads(stdout),
+            {
+                "byte_count": 321,
+                "command": "verify-backup",
+                "file_count": 5,
+                "issue_codes": ["backup_file_digest_mismatch"],
+                "manifest_digest": "a" * 64,
+                "valid": False,
+            },
+        )
+
+    def test_module_help_subprocess_exits_zero_when_package_is_importable(self) -> None:
         repository = Path(__file__).resolve().parents[3]
         environment = dict(os.environ)
         environment.pop("CARTESIA_NARRATION_ROOT", None)
+        # Tests run directly from a src-layout checkout.  This explicit import
+        # path models the package visibility supplied by the documented editable
+        # install; it is not claimed as zero-setup checkout behavior.
         environment["PYTHONPATH"] = str(repository / "src")
         result = subprocess.run(
             [sys.executable, "-m", "heritage_archive.composition_root.narrator_voice_cli", "--help"],

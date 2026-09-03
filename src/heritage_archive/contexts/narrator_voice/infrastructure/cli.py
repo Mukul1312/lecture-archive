@@ -185,6 +185,10 @@ def main(
         _emit(errors, {"error": "internal_failure"})
         return 1
     _emit(out, payload)
+    if arguments.command == "doctor" and payload["healthy"] is False:
+        return 1
+    if arguments.command == "verify-backup" and payload["valid"] is False:
+        return 1
     return 0
 
 
