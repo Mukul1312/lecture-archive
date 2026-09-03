@@ -304,12 +304,39 @@ _WORKSPACE_KIND_BY_ATTEMPT_TYPE = {
     NarrationAssemblyAttemptId: AttemptKind.NARRATION_ASSEMBLY,
     EpisodeAssemblyAttemptId: AttemptKind.EPISODE_ASSEMBLY,
 }
-_WORKSPACE_STATE_RANK = {
-    AttemptState.RESERVED: 0,
-    AttemptState.INPUT_FROZEN: 1,
-    AttemptState.EXTERNAL_WORK_STARTED: 2,
-    AttemptState.ARTIFACTS_STAGED: 3,
-    AttemptState.ARTIFACTS_PUBLISHED: 4,
+_WORKSPACE_STATE_SUCCESSORS = {
+    AttemptState.RESERVED: {
+        AttemptState.RESERVED,
+        AttemptState.INPUT_FROZEN,
+        AttemptState.BLOCKED,
+    },
+    AttemptState.INPUT_FROZEN: {
+        AttemptState.INPUT_FROZEN,
+        AttemptState.EXTERNAL_WORK_STARTED,
+        AttemptState.BLOCKED,
+        AttemptState.FAILED,
+        AttemptState.UNKNOWN,
+    },
+    AttemptState.EXTERNAL_WORK_STARTED: {
+        AttemptState.EXTERNAL_WORK_STARTED,
+        AttemptState.ARTIFACTS_STAGED,
+        AttemptState.ARTIFACTS_PUBLISHED,
+        AttemptState.FAILED,
+        AttemptState.UNKNOWN,
+        AttemptState.QUARANTINED,
+    },
+    AttemptState.ARTIFACTS_STAGED: {
+        AttemptState.ARTIFACTS_STAGED,
+        AttemptState.ARTIFACTS_PUBLISHED,
+        AttemptState.FAILED,
+        AttemptState.UNKNOWN,
+        AttemptState.QUARANTINED,
+    },
+    AttemptState.ARTIFACTS_PUBLISHED: {
+        AttemptState.ARTIFACTS_PUBLISHED,
+        AttemptState.COMPLETED,
+        AttemptState.QUARANTINED,
+    },
 }
 _SUBMISSION_SUCCESSOR = {
     SubmissionEvidence.NOT_STARTED: {
@@ -400,8 +427,8 @@ def _validate_workspace_progression(
         raise ValidationError("workspace submission evidence cannot regress or conflict")
     if existing.state.terminal:
         raise ValidationError("terminal workspace evidence cannot be rewritten")
-    if not candidate.state.terminal and _WORKSPACE_STATE_RANK[candidate.state] < _WORKSPACE_STATE_RANK[existing.state]:
-        raise ValidationError("workspace state cannot regress")
+    if candidate.state not in _WORKSPACE_STATE_SUCCESSORS[existing.state]:
+        raise ValidationError("workspace state cannot regress or take a contradictory terminal transition")
 
 
 def _validate_frozen_bindings(existing: AttemptWorkspaceEvidence, candidate: AttemptWorkspaceEvidence) -> None:

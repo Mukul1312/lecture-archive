@@ -104,6 +104,8 @@ class DurableAttemptEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 store.save(replace(published, state=AttemptState.EXTERNAL_WORK_STARTED))
             with self.assertRaises(ValidationError):
+                store.save(replace(published, state=AttemptState.FAILED))
+            with self.assertRaises(ValidationError):
                 store.save(replace(published, frozen_plan_digest=digest("different")))
             with self.assertRaises(ValidationError):
                 store.save(replace(published, preview_digest=digest("other-preview")))
