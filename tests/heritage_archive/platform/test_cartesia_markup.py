@@ -89,6 +89,38 @@ class CartesiaMarkupParserTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     parse_safe_markup_fragment(source, CAPABILITY)
 
+    def test_numeric_validation_does_not_round_away_meaningful_excess_precision(self) -> None:
+        """Decimal context rounding must not turn unsupported provider values into aliases."""
+        invalid_sources = (
+            '<speed ratio="1.00000000000000000000000000001">A</speed>',
+            '<speed ratio="0.60000000000000000000000000001">A</speed>',
+            '<break time="0.010000000000000000000000000001s"/>A',
+        )
+
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                with self.assertRaises(ValidationError):
+                    parse_safe_markup_fragment(source, CAPABILITY)
+
+    def test_numeric_aliases_are_canonicalized_at_exact_transport_precision(self) -> None:
+        """Trailing zero aliases and verified endpoints remain accepted without rounding."""
+        parsed = parse_safe_markup_fragment(
+            '<speed ratio="0.6000">A</speed>'
+            '<speed ratio="1.5000">B</speed>'
+            '<break time="0.0100s"/>C<break time="10.000ms"/>D',
+            CAPABILITY,
+        )
+
+        self.assertEqual(
+            tuple((item.kind, item.value) for item in parsed.annotations),
+            (
+                ("speed", "0.60"),
+                ("speed", "1.50"),
+                ("break", "10"),
+                ("break", "10"),
+            ),
+        )
+
     def test_advanced_source_has_an_exact_16384_utf8_byte_limit(self) -> None:
         """Removing the byte check would allow an oversized XML parse before domain validation."""
         at_limit = "x" * 16_384

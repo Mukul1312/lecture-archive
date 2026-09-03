@@ -265,6 +265,25 @@ class CartesiaRecipeCompilerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "16,384"):
             self.compiler.compile(self.compile_request(text, recipe))
 
+    def test_structured_rendering_rejects_xml_illegal_passage_scalars(self) -> None:
+        """Domain-valid text must still be safe for the provider's XML transport grammar."""
+        for illegal_scalar in ("\x00", "\ufffe"):
+            with self.subTest(code_point=f"U+{ord(illegal_scalar):04X}"):
+                text = PassageText(f"A{illegal_scalar}B")
+                recipe = self.compiler.compile_recipe(self.authoring_request(text)).recipe
+
+                with self.assertRaisesRegex(ValidationError, "XML 1.0"):
+                    self.compiler.compile(self.compile_request(text, recipe))
+
+    def test_structured_rendering_still_escapes_literal_ampersands(self) -> None:
+        """Safe transport validation must not mistake passage ampersands for entity syntax."""
+        text = PassageText("A & B")
+        recipe = self.compiler.compile_recipe(self.authoring_request(text)).recipe
+
+        preview = self.compiler.compile(self.compile_request(text, recipe))
+
+        self.assertEqual(preview.rendered_transcript, "A &amp; B")
+
 
 if __name__ == "__main__":
     unittest.main()

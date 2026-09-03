@@ -196,6 +196,20 @@ def _escape_text(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _validate_xml_1_0_text(text: PassageText) -> None:
+    for scalar in text.value:
+        code_point = ord(scalar)
+        if not (
+            code_point in (0x09, 0x0A, 0x0D)
+            or 0x20 <= code_point <= 0xD7FF
+            or 0xE000 <= code_point <= 0xFFFD
+            or 0x10000 <= code_point <= 0x10FFFF
+        ):
+            raise ValidationError(
+                "provider-bound passage text contains a character forbidden by XML 1.0"
+            )
+
+
 def _opening_tag(control: RenderControl) -> str:
     if type(control) is SpeedControl:
         return f'<speed ratio="{control.value.value}">'
@@ -321,6 +335,7 @@ class CartesiaRecipeCompiler:
             raise ValidationError("recipe controls are not in canonical deterministic order")
         request.recipe.validate_for(request.text)
 
+        _validate_xml_1_0_text(request.text)
         rendered = _render_transcript(request.text, controls)
         if len(rendered.encode("utf-8")) > 16_384:
             raise ValidationError("advanced compiler output must not exceed 16,384 UTF-8 bytes")

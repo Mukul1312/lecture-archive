@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 import re
 from xml.etree.ElementTree import ParseError
 
@@ -102,35 +101,67 @@ class ParsedMarkupFragment:
             raise ValidationError("markup annotations must be an immutable tuple")
 
 
-def _canonical_ratio(raw: str, *, minimum: str, maximum: str, field: str) -> str:
+def _scaled_unsigned_decimal(
+    raw: str,
+    *,
+    fractional_digits: int,
+    syntax_error: str,
+    precision_error: str,
+) -> str:
     if _UNSIGNED_DECIMAL.fullmatch(raw) is None:
-        raise ValidationError(f"{field} must be an unsigned decimal ratio")
-    try:
-        value = Decimal(raw)
-    except InvalidOperation as error:
-        raise ValidationError(f"{field} must be an unsigned decimal ratio") from error
-    if value * 100 != (value * 100).to_integral_value():
-        raise ValidationError(f"{field} supports at most two fractional decimal places")
-    if not Decimal(minimum) <= value <= Decimal(maximum):
+        raise ValidationError(syntax_error)
+    whole, _, fraction = raw.partition(".")
+    if len(fraction.rstrip("0")) > fractional_digits:
+        raise ValidationError(precision_error)
+    padded_fraction = (fraction + ("0" * fractional_digits))[:fractional_digits]
+    return (whole + padded_fraction).lstrip("0") or "0"
+
+
+def _scaled_is_between(value: str, minimum: int, maximum: int) -> bool:
+    minimum_text = str(minimum)
+    maximum_text = str(maximum)
+    return (
+        (len(value), value) >= (len(minimum_text), minimum_text)
+        and (len(value), value) <= (len(maximum_text), maximum_text)
+    )
+
+
+def _canonical_ratio(
+    raw: str,
+    *,
+    minimum_hundredths: int,
+    maximum_hundredths: int,
+    field: str,
+) -> str:
+    hundredths_text = _scaled_unsigned_decimal(
+        raw,
+        fractional_digits=2,
+        syntax_error=f"{field} must be an unsigned decimal ratio",
+        precision_error=f"{field} supports at most two fractional decimal places",
+    )
+    if not _scaled_is_between(
+        hundredths_text,
+        minimum_hundredths,
+        maximum_hundredths,
+    ):
         raise ValidationError(f"{field} is outside the verified Cartesia range")
-    return f"{value:.2f}"
+    hundredths = int(hundredths_text)
+    return f"{hundredths // 100}.{hundredths % 100:02d}"
 
 
 def _canonical_break_ms(raw: str) -> str:
     match = _DURATION.fullmatch(raw)
     if match is None:
         raise ValidationError("break time must be an unsigned s or ms duration")
-    try:
-        value = Decimal(match.group(1))
-    except InvalidOperation as error:
-        raise ValidationError("break time must be an unsigned s or ms duration") from error
-    milliseconds = value if match.group(2) == "ms" else value * 1_000
-    if milliseconds != milliseconds.to_integral_value():
-        raise ValidationError("break time must resolve to a whole millisecond")
-    duration_ms = int(milliseconds)
-    if not 10 <= duration_ms <= 5_000:
+    milliseconds_text = _scaled_unsigned_decimal(
+        match.group(1),
+        fractional_digits=0 if match.group(2) == "ms" else 3,
+        syntax_error="break time must be an unsigned s or ms duration",
+        precision_error="break time must resolve to a whole millisecond",
+    )
+    if not _scaled_is_between(milliseconds_text, 10, 5_000):
         raise ValidationError("break time must be from 10 through 5,000 ms")
-    return str(duration_ms)
+    return milliseconds_text
 
 
 def _annotation_value(tag: str, attributes: dict[str, str]) -> str:
@@ -139,15 +170,15 @@ def _annotation_value(tag: str, attributes: dict[str, str]) -> str:
     if tag == "speed":
         return _canonical_ratio(
             attributes["ratio"],
-            minimum="0.60",
-            maximum="1.50",
+            minimum_hundredths=60,
+            maximum_hundredths=150,
             field="speed ratio",
         )
     if tag == "volume":
         return _canonical_ratio(
             attributes["ratio"],
-            minimum="0.50",
-            maximum="2.00",
+            minimum_hundredths=50,
+            maximum_hundredths=200,
             field="volume ratio",
         )
     raise ValidationError("inline markup tag is not supported by the Odia compiler")
