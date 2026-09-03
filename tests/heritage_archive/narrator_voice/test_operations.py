@@ -98,11 +98,24 @@ class LocalStudioOperationsTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 load_local_studio_initialization(path, (PROJECT_ROOT,))
 
+            document = self._initialization_document()
+            document["schema_version"] = True
+            path.write_bytes(canonical_json(document))
+            with self.assertRaises(ValidationError):
+                load_local_studio_initialization(path, (PROJECT_ROOT,))
+
             request = self._load_request(input_directory)
             root = LocalNarrationRoot.open(root_directory, (PROJECT_ROOT,))
             initialize_local_studio(root, request, _Identifiers(ActorId(uuid(1502))))
             config_path = root.operations / "studio-config.json"
-            config_path.write_bytes(config_path.read_bytes() + b"\n")
+            configuration_document = parse_strict_json(config_path.read_bytes())
+            configuration_document["schema_version"] = True
+            config_path.write_bytes(canonical_json(configuration_document))
+            with self.assertRaises(ValidationError):
+                load_local_studio_configuration(root)
+
+            configuration_document["schema_version"] = 1
+            config_path.write_bytes(canonical_json(configuration_document) + b"\n")
             with self.assertRaises(ValidationError):
                 load_local_studio_configuration(root)
 
@@ -156,6 +169,7 @@ class LocalStudioOperationsTests(unittest.TestCase):
             ("changed", "backup_file_digest_mismatch"),
             ("missing", "backup_file_missing"),
             ("extra", "backup_file_extra"),
+            ("boolean-schema", "backup_manifest_invalid"),
         )
         for index, (mutation, issue) in enumerate(cases, 1510):
             with self.subTest(mutation=mutation), self._initialized_root(index) as root, self._directories(1) as (destination,):
@@ -165,8 +179,13 @@ class LocalStudioOperationsTests(unittest.TestCase):
                     config.write_bytes(b"changed")
                 elif mutation == "missing":
                     config.unlink()
-                else:
+                elif mutation == "extra":
                     (destination / "unexpected.bin").write_bytes(b"extra")
+                else:
+                    manifest_path = destination / "backup-manifest.json"
+                    manifest = parse_strict_json(manifest_path.read_bytes())
+                    manifest["schema_version"] = True
+                    manifest_path.write_bytes(canonical_json(manifest))
 
                 result = verify_backup(destination, (PROJECT_ROOT,))
 

@@ -621,7 +621,12 @@ def _require_fields(
 ) -> None:
     if set(document) != fields:
         raise ValidationError("private studio document has unknown or missing fields")
-    if document["schema"] != schema or document["schema_version"] != _SCHEMA_VERSION:
+    schema_version = document["schema_version"]
+    if (
+        document["schema"] != schema
+        or type(schema_version) is not int
+        or schema_version != _SCHEMA_VERSION
+    ):
         raise ValidationError("private studio document schema is not supported")
 
 
@@ -849,7 +854,12 @@ def _load_manifest(path: Path) -> tuple[tuple[_BackupEntry, ...], ContentDigest]
     document, raw = _read_canonical_object(path)
     if set(document) != _MANIFEST_FIELDS:
         raise ValidationError("backup manifest has unknown or missing fields")
-    if document["schema"] != _BACKUP_SCHEMA or document["schema_version"] != _SCHEMA_VERSION:
+    schema_version = document["schema_version"]
+    if (
+        document["schema"] != _BACKUP_SCHEMA
+        or type(schema_version) is not int
+        or schema_version != _SCHEMA_VERSION
+    ):
         raise ValidationError("backup manifest schema is not supported")
     values = document["files"]
     if type(values) is not list:
