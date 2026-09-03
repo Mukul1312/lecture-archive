@@ -31,6 +31,9 @@ records that the original operational plan was overbuilt for one local operator.
 [v4 minimum local-studio design](docs/superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
 and [minimum implementation plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
 govern remaining v1 work.
+The next implementation entry point is the
+[Task 4M Cartesia adapter plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md),
+which is explicitly prepared for a fresh Codex chat.
 The [codebase-wide capability audit](docs/narrator-voice-shared-capability-audit-2026-09-02.md)
 supports accepted [ADR-0009](docs/decisions/0009-share-narration-mechanics-not-policy.md),
 which permits provider-neutral narration mechanics while keeping lane policy isolated.

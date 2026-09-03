@@ -95,6 +95,12 @@ incremental backup and cloud/database storage.
 **Produces:** one sequential Cartesia synthesis adapter behind the existing
 application port, with sanitized evidence and no automated live calls.
 
+**Detailed executable plan:**
+[Task 4M Cartesia Adapter](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md).
+
+Task 4M is intentionally handed to a new Codex chat. That chat starts with the
+protocol in the detailed plan; this documentation handoff does not begin implementation.
+
 - [ ] Confirm the smallest current supported HTTP/parser dependency set immediately
   before implementation; do not add a provider-generic transport framework.
 - [ ] Support the one fixed Odia synthesis route and only the structured/advanced
