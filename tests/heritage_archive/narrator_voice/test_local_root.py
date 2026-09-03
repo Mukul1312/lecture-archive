@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+
+
+SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 

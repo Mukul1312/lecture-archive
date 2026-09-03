@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+
+SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 from heritage_archive.platform.storage.local_files import (
     PublicationEvidenceMismatch,
