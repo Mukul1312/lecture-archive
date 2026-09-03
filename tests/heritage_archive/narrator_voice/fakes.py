@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TypeVar
 
-from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ContentDigest
+from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef, ContentDigest, ValidationError
 from heritage_archive.contexts.narrator_voice.application.ports import (
     AuthorityObservation,
     DryAssemblyResult,
@@ -239,6 +239,7 @@ class FakeBudgetLedger:
         self.actions: list[tuple[str, object, object]] = []
         self.deny_reserve = False
         self.states = {}
+        self.fail_next_finalization = False
 
     def reserve(self, reservation_id, estimated_usage) -> None:
         self.actions.append(("reserve", reservation_id, estimated_usage))
@@ -248,14 +249,38 @@ class FakeBudgetLedger:
 
     def settle(self, reservation_id, actual_usage) -> None:
         self.actions.append(("settle", reservation_id, actual_usage))
+        if self.fail_next_finalization:
+            self.fail_next_finalization = False
+            raise RuntimeError("fake budget finalization failure")
+        previous = self.states.get(reservation_id)
+        if previous is BudgetRecoveryState.SETTLED:
+            return
+        if previous in {BudgetRecoveryState.RELEASED, BudgetRecoveryState.UNKNOWN}:
+            raise ValidationError("fake budget cannot settle an already finalized reservation")
         self.states[reservation_id] = BudgetRecoveryState.SETTLED
 
     def release(self, reservation_id, reason) -> None:
         self.actions.append(("release", reservation_id, reason))
+        if self.fail_next_finalization:
+            self.fail_next_finalization = False
+            raise RuntimeError("fake budget finalization failure")
+        previous = self.states.get(reservation_id)
+        if previous is BudgetRecoveryState.RELEASED:
+            return
+        if previous in {BudgetRecoveryState.SETTLED, BudgetRecoveryState.UNKNOWN}:
+            raise ValidationError("fake budget cannot rewrite a finalized reservation")
         self.states[reservation_id] = BudgetRecoveryState.RELEASED
 
     def hold(self, reservation_id, reason) -> None:
         self.actions.append(("hold", reservation_id, reason))
+        if self.fail_next_finalization:
+            self.fail_next_finalization = False
+            raise RuntimeError("fake budget finalization failure")
+        previous = self.states.get(reservation_id)
+        if previous is BudgetRecoveryState.UNKNOWN:
+            return
+        if previous in {BudgetRecoveryState.SETTLED, BudgetRecoveryState.RELEASED}:
+            raise ValidationError("fake budget cannot rewrite a finalized reservation")
         self.states[reservation_id] = BudgetRecoveryState.UNKNOWN
 
     def read(self, reservation_id):
@@ -317,11 +342,49 @@ class FakeWorkspaceStore:
     def __init__(self) -> None:
         self.values = {}
         self.saves = []
+        self.fail_next_save = False
 
     def load(self, attempt_id):
         return self.values.get(attempt_id)
 
     def save(self, workspace) -> None:
+        if self.fail_next_save:
+            self.fail_next_save = False
+            raise RuntimeError("fake workspace persistence failure")
+        existing = self.values.get(workspace.attempt_id)
+        if existing is not None and existing != workspace:
+            immutable_binding = (
+                existing.workspace_id,
+                existing.attempt_kind,
+                existing.aggregate_id,
+                existing.attempt_id,
+                existing.reservation_revision,
+                existing.budget_reservation_id,
+                existing.preview_digest,
+                existing.effective_input_digest,
+                existing.frozen_plan_digest,
+            )
+            candidate_binding = (
+                workspace.workspace_id,
+                workspace.attempt_kind,
+                workspace.aggregate_id,
+                workspace.attempt_id,
+                workspace.reservation_revision,
+                workspace.budget_reservation_id,
+                workspace.preview_digest,
+                workspace.effective_input_digest,
+                workspace.frozen_plan_digest,
+            )
+            compatible_binding = all(
+                before is None or before == after
+                for before, after in zip(immutable_binding, candidate_binding, strict=True)
+            )
+            if (
+                not compatible_binding
+                or existing.state is not AttemptState.RESERVED
+                or existing.state is workspace.state
+            ):
+                raise ValidationError("fake workspace evidence is immutable once saved")
         self.values[workspace.attempt_id] = workspace
         self.saves.append(workspace)
 

@@ -1039,8 +1039,13 @@ class NarrationJob:
             if existing != take:
                 raise ValidationError("completed generation recovery replay must name the exact existing take")
             return existing
-        if attempt.state is not AttemptState.UNKNOWN:
-            raise DomainInvariantError("only unknown generation may complete from recovery evidence")
+        if attempt.state not in {
+            AttemptState.EXTERNAL_WORK_STARTED,
+            AttemptState.ARTIFACTS_STAGED,
+            AttemptState.ARTIFACTS_PUBLISHED,
+            AttemptState.UNKNOWN,
+        }:
+            raise DomainInvariantError("only post-external generation evidence may complete from recovery")
         if any(value.take_id == take.take_id for value in self._takes):
             raise ValidationError("recovered take identity already belongs to another attempt")
         completed = replace(

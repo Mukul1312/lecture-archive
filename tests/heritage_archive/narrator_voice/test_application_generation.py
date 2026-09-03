@@ -205,6 +205,16 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
         self.assertEqual(self.store.calls, [])
 
+    def test_invalid_provider_result_CAS_refusal_preserves_failed_workspace_and_settled_usage(self) -> None:
+        self.gateway.result = SynthesisResult((), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+        self.jobs.reject_on_save_calls.add(8)
+
+        result = self.handler()(self.command())
+
+        workspace = self.workspaces.load(self.attempt_id)
+        self.assertEqual((result.state, workspace.state, self.budget.read(self.reservation_id).value), (AttemptState.UNKNOWN, AttemptState.FAILED, "settled"))
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 0))
+
     def test_digitally_silent_media_fails_and_settles_without_publishing(self) -> None:
         self.inspector.all_digital_silence = True
 
@@ -259,14 +269,72 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual((result.state, result.take_id, result.budget_disposition), (AttemptState.QUARANTINED, None, "settled"))
         self.assertEqual((len(self.store.calls), len(self.jobs.load(self.job_id).takes)), (1, 0))
 
-    def test_post_provider_CAS_conflict_is_recorded_unknown_held_and_reconcilable_without_retry(self) -> None:
+    def test_post_provider_CAS_conflict_preserves_published_evidence_and_settled_usage_without_second_CAS(self) -> None:
         # Four setup saves, then reservation/freeze/start; refuse the stage save after one provider call.
         self.jobs.reject_on_save_calls.add(8)
         result = self.handler()(self.command())
         attempt = self.jobs.load(self.job_id).generation_attempts[-1]
         workspace = self.workspaces.load(self.attempt_id)
-        self.assertEqual((result.state, attempt.state, workspace.state), (AttemptState.UNKNOWN, AttemptState.UNKNOWN, AttemptState.UNKNOWN))
-        self.assertEqual((len(self.gateway.calls), self.budget.actions[-1][0]), (1, "hold"))
+        self.assertEqual((result.state, attempt.state, workspace.state), (AttemptState.UNKNOWN, AttemptState.EXTERNAL_WORK_STARTED, AttemptState.ARTIFACTS_PUBLISHED))
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls), self.budget.actions[-1][0]), (1, 1, "settle"))
+
+    def test_final_completion_CAS_refusal_leaves_published_attempt_for_reconciliation(self) -> None:
+        self.jobs.reject_on_save_calls.add(10)
+
+        result = self.handler()(self.command())
+
+        attempt = self.jobs.load(self.job_id).generation_attempts[-1]
+        self.assertEqual((result.state, attempt.state, self.workspaces.load(self.attempt_id).state), (AttemptState.UNKNOWN, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.ARTIFACTS_PUBLISHED))
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls), self.budget.read(self.reservation_id).value), (1, 1, "settled"))
+
+    def test_two_CAS_refusals_preserve_evidence_until_a_fresh_reconciliation_completes_once(self) -> None:
+        self.jobs.reject_on_save_calls.update({8, 9})
+        unknown = self.handler()(self.command())
+        self.ids.values[TakeId] = [self.take_id, TakeId(uuid(920))]
+        reconciler = ReconcileGenerationAttemptHandler(
+            self.jobs, self.reader, self.clock, self.workspaces,
+            FakeAttemptWorkspaceVerifier(), FakeProviderEventVerifier(),
+            FakeArtifactEvidenceVerifier(self.inspector.inspect_canonical_wav(b"recovered")),
+            self.budget, self.budget, self.ids,
+        )
+
+        with self.assertRaises(RevisionConflict):
+            reconciler(ReconcileGenerationAttemptCommand(CommandId(uuid(921)), self.job_id, self.attempt_id, unknown.revision))
+        completed = reconciler(
+            ReconcileGenerationAttemptCommand(CommandId(uuid(922)), self.job_id, self.attempt_id, unknown.revision)
+        )
+
+        self.assertEqual(self.jobs.load(self.job_id).generation_attempts[-1].state, AttemptState.COMPLETED)
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls), completed.revision), (1, 1, unknown.revision + 1))
+
+    def test_post_provider_workspace_save_failure_holds_without_aggregate_CAS_or_provider_replay(self) -> None:
+        self.workspaces.fail_next_save = False
+        # initial reservation workspace is saved first; fail the evidence save after the provider returns.
+        original_save = self.workspaces.save
+        saves = 0
+
+        def fail_on_second_save(workspace):
+            nonlocal saves
+            saves += 1
+            if saves == 2:
+                self.workspaces.fail_next_save = True
+            return original_save(workspace)
+
+        self.workspaces.save = fail_on_second_save
+        result = self.handler()(self.command())
+        attempt = self.jobs.load(self.job_id).generation_attempts[-1]
+        self.assertEqual((result.state, attempt.state, len(self.gateway.calls), len(self.store.calls)), (AttemptState.UNKNOWN, AttemptState.EXTERNAL_WORK_STARTED, 1, 1))
+        self.assertEqual(self.budget.read(self.reservation_id).value, "unknown")
+
+    def test_budget_settlement_failure_preserves_published_workspace_without_completion_CAS(self) -> None:
+        self.budget.fail_next_finalization = True
+        result = self.handler()(self.command())
+
+        workspace = self.workspaces.load(self.attempt_id)
+        attempt = self.jobs.load(self.job_id).generation_attempts[-1]
+        self.assertEqual((result.state, workspace.state, attempt.state), (AttemptState.UNKNOWN, AttemptState.ARTIFACTS_PUBLISHED, AttemptState.EXTERNAL_WORK_STARTED))
+        self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 1))
+        self.assertEqual([action[0] for action in self.budget.actions[-2:]], ["settle", "hold"])
 
 
 if __name__ == "__main__":

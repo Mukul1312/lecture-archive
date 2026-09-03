@@ -272,7 +272,7 @@ class RecoveryDecisionTests(unittest.TestCase):
 
     def test_generation_post_provider_workspace_binds_the_attempt_reservation_revision(self) -> None:
         fixture = generation_fixture.GenerationApplicationTests(
-            "test_post_provider_CAS_conflict_is_recorded_unknown_held_and_reconcilable_without_retry"
+            "test_post_provider_CAS_conflict_preserves_published_evidence_and_settled_usage_without_second_CAS"
         )
         fixture.setUp()
         fixture.jobs.reject_on_save_calls.add(8)
@@ -285,14 +285,11 @@ class RecoveryDecisionTests(unittest.TestCase):
 
     def test_generation_unknown_completion_recovers_once_from_verified_workspace_without_provider_replay(self) -> None:
         fixture = generation_fixture.GenerationApplicationTests(
-            "test_post_provider_CAS_conflict_is_recorded_unknown_held_and_reconcilable_without_retry"
+            "test_post_provider_CAS_conflict_preserves_published_evidence_and_settled_usage_without_second_CAS"
         )
         fixture.setUp()
         fixture.jobs.reject_on_save_calls.add(8)
         unknown = fixture.handler()(fixture.command())
-        workspace = replace(fixture.workspaces.load(fixture.attempt_id), submission=SubmissionEvidence.COMPLETED)
-        fixture.workspaces.save(workspace)
-        fixture.budget.states[fixture.reservation_id] = BudgetRecoveryState.SETTLED
         verifier = RecoveryArtifactEvidence(fixture.inspector.inspect_canonical_wav(b"recovered"))
         handler = ReconcileGenerationAttemptHandler(
             fixture.jobs, fixture.reader, fixture.clock, fixture.workspaces,

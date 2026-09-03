@@ -819,38 +819,30 @@ class GenerateTakeHandler:
         generated,
         reason: str,
     ) -> GenerationRunResult:
+        events = (
+            generated.events
+            if type(generated.events) is tuple
+            and all(type(event) is ProviderEventEvidence for event in generated.events)
+            and tuple(event.sequence for event in generated.events) == tuple(range(len(generated.events)))
+            else ()
+        )
+        if not self._persist_workspace_then_finalize_budget(
+            command, job, attempt_id, reservation_id,
+            _workspace(
+                workspace_id, job, attempt_id, reservation_id, preview,
+                AttemptState.FAILED, SubmissionEvidence.COMPLETED,
+                effective_input=effective_input, events=events, recovery=(reason,),
+            ),
+            "settle", generated.usage,
+        ):
+            return self._recovery_required(command, attempt_id, "held")
         previous = job.revision
         job.finalize_generation_outcome(
-            attempt_id,
-            AttemptState.FAILED,
-            SubmissionEvidence.COMPLETED,
-            reason,
-            self.clock.now(),
-            expected_revision=previous,
+            attempt_id, AttemptState.FAILED, SubmissionEvidence.COMPLETED,
+            reason, self.clock.now(), expected_revision=previous,
         )
-        _cas_or_conflict(self.repository.save(job, previous), "narration job")
-        self.budget.settle(reservation_id, generated.usage)
-        self.workspaces.save(
-            _workspace(
-                workspace_id,
-                job,
-                attempt_id,
-                reservation_id,
-                preview,
-                AttemptState.FAILED,
-                SubmissionEvidence.COMPLETED,
-                effective_input=effective_input,
-                events=(
-                    generated.events
-                    if type(generated.events) is tuple
-                    and all(type(event) is ProviderEventEvidence for event in generated.events)
-                    and tuple(event.sequence for event in generated.events)
-                    == tuple(range(len(generated.events)))
-                    else ()
-                ),
-                recovery=(reason,),
-            )
-        )
+        if not self.repository.save(job, previous):
+            return self._recovery_required(command, attempt_id, "settled")
         return GenerationRunResult(
             command.command_id,
             job.job_id,
@@ -861,44 +853,50 @@ class GenerateTakeHandler:
             "settled",
         )
 
-    def _record_post_external_cas_unknown(
-        self,
-        command: GenerateTakeCommand,
-        attempt_id,
-        reservation_id,
-        workspace_id,
-        preview,
-        effective_input,
-        generated,
-        artifact,
+    def _recovery_required(
+        self, command: GenerateTakeCommand, attempt_id: GenerationAttemptId, budget_disposition: str,
     ) -> GenerationRunResult:
         recovered = _load_job(self.repository, command.job_id)
-        attempt = recovered.generation_attempt(attempt_id)
-        if not attempt.state.terminal:
-            previous = recovered.revision
-            recovered.finalize_generation_outcome(
-                attempt_id,
-                AttemptState.UNKNOWN,
-                SubmissionEvidence.AMBIGUOUS,
-                "repository CAS failed after external work; recovery evidence is incomplete",
-                self.clock.now(),
-                expected_revision=previous,
-            )
-            _cas_or_conflict(self.repository.save(recovered, previous), "narration job recovery")
-        self.budget.hold(reservation_id, "post-provider repository CAS conflict")
-        self.workspaces.save(
-            _workspace(
-                workspace_id, recovered, attempt_id, reservation_id, preview,
-                AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
-                effective_input=effective_input, events=generated.events,
-                artifact=artifact,
-                recovery=("post-provider repository CAS conflict",),
-            )
-        )
         return GenerationRunResult(
             command.command_id, recovered.job_id, recovered.revision, attempt_id,
-            AttemptState.UNKNOWN, None, "held",
+            AttemptState.UNKNOWN, None, budget_disposition,
         )
+
+    def _persist_workspace_then_finalize_budget(
+        self,
+        command: GenerateTakeCommand,
+        job,
+        attempt_id: GenerationAttemptId,
+        reservation_id: BudgetReservationId,
+        workspace: AttemptWorkspaceEvidence,
+        action: str,
+        evidence: object,
+    ) -> bool:
+        """The post-gateway durable boundary: workspace, budget, then aggregate CAS."""
+        try:
+            self.workspaces.save(workspace)
+        except Exception:
+            try:
+                self.budget.hold(reservation_id, "workspace persistence failed after external work")
+            except Exception:
+                pass
+            return False
+        try:
+            if action == "settle":
+                self.budget.settle(reservation_id, evidence)
+            elif action == "release":
+                self.budget.release(reservation_id, str(evidence))
+            elif action == "hold":
+                self.budget.hold(reservation_id, str(evidence))
+            else:
+                raise AssertionError("unknown post-gateway budget action")
+        except Exception:
+            try:
+                self.budget.hold(reservation_id, "budget finalization failed after workspace persistence")
+            except Exception:
+                pass
+            return False
+        return True
 
     def __call__(self, command: GenerateTakeCommand) -> GenerationRunResult:
         job = _load_job(self.repository, command.job_id)
@@ -1028,55 +1026,64 @@ class GenerateTakeHandler:
         try:
             generated = self.gateway.synthesize(effective_input)
         except DefinitePreSendFailure as error:
+            if not self._persist_workspace_then_finalize_budget(
+                command, job, attempt_id, reservation_id,
+                _workspace(
+                    workspace_id, job, attempt_id, reservation_id, preview,
+                    AttemptState.BLOCKED, SubmissionEvidence.DEFINITELY_NOT_SENT,
+                    effective_input=effective_input, recovery=(str(error),),
+                ),
+                "release", "definite pre-send failure",
+            ):
+                return self._recovery_required(command, attempt_id, "held")
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.BLOCKED, SubmissionEvidence.DEFINITELY_NOT_SENT,
                 "external gateway proved request was not sent", self.clock.now(),
                 expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(job, previous), "narration job")
-            self.budget.release(reservation_id, "definite pre-send failure")
-            self.workspaces.save(
-                _workspace(
-                    workspace_id, job, attempt_id, reservation_id, preview,
-                    AttemptState.BLOCKED, SubmissionEvidence.DEFINITELY_NOT_SENT,
-                    effective_input=effective_input, recovery=(str(error),),
-                )
-            )
+            if not self.repository.save(job, previous):
+                return self._recovery_required(command, attempt_id, "released")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.BLOCKED, None, "released")
         except AmbiguousExternalFailure as error:
+            if not self._persist_workspace_then_finalize_budget(
+                command, job, attempt_id, reservation_id,
+                _workspace(
+                    workspace_id, job, attempt_id, reservation_id, preview,
+                    AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
+                    effective_input=effective_input, recovery=(str(error),),
+                ),
+                "hold", "ambiguous external outcome",
+            ):
+                return self._recovery_required(command, attempt_id, "held")
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
                 "external gateway outcome is ambiguous", self.clock.now(),
                 expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(job, previous), "narration job")
-            self.budget.hold(reservation_id, "ambiguous external outcome")
-            self.workspaces.save(
-                _workspace(
-                    workspace_id, job, attempt_id, reservation_id, preview,
-                    AttemptState.UNKNOWN, SubmissionEvidence.AMBIGUOUS,
-                    effective_input=effective_input, recovery=(str(error),),
-                )
-            )
+            if not self.repository.save(job, previous):
+                return self._recovery_required(command, attempt_id, "held")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.UNKNOWN, None, "held")
         except ExternalWorkFailed as error:
+            if not self._persist_workspace_then_finalize_budget(
+                command, job, attempt_id, reservation_id,
+                _workspace(
+                    workspace_id, job, attempt_id, reservation_id, preview,
+                    AttemptState.FAILED, SubmissionEvidence.STARTED,
+                    effective_input=effective_input, recovery=(str(error),),
+                ),
+                "hold", "definitive submitted failure awaits usage evidence",
+            ):
+                return self._recovery_required(command, attempt_id, "held")
             previous = job.revision
             job.finalize_generation_outcome(
                 attempt_id, AttemptState.FAILED, SubmissionEvidence.STARTED,
                 "external gateway recorded a definitive failure", self.clock.now(),
                 expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(job, previous), "narration job")
-            self.budget.hold(reservation_id, "definitive submitted failure awaits usage evidence")
-            self.workspaces.save(
-                _workspace(
-                    workspace_id, job, attempt_id, reservation_id, preview,
-                    AttemptState.FAILED, SubmissionEvidence.STARTED,
-                    effective_input=effective_input, recovery=(str(error),),
-                )
-            )
+            if not self.repository.save(job, previous):
+                return self._recovery_required(command, attempt_id, "held")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.FAILED, None, "held")
 
         event_stream_is_contiguous = (
@@ -1140,20 +1147,24 @@ class GenerateTakeHandler:
             "audio/wav",
             self.clock.now(),
         )
+        if not self._persist_workspace_then_finalize_budget(
+            command, job, attempt_id, reservation_id,
+            _workspace(
+                workspace_id, job, attempt_id, reservation_id, preview,
+                AttemptState.ARTIFACTS_PUBLISHED, SubmissionEvidence.COMPLETED,
+                effective_input=effective_input, events=generated.events, artifact=artifact,
+            ),
+            "settle", generated.usage,
+        ):
+            return self._recovery_required(command, attempt_id, "held")
         previous = job.revision
         job.stage_generation_artifacts(attempt_id, generated.events, artifact, media, expected_revision=previous)
         if not self.repository.save(job, previous):
-            return self._record_post_external_cas_unknown(
-                command, attempt_id, reservation_id, workspace_id, preview,
-                effective_input, generated, artifact,
-            )
+            return self._recovery_required(command, attempt_id, "settled")
         previous = job.revision
         job.mark_generation_artifacts_published(attempt_id, expected_revision=previous)
         if not self.repository.save(job, previous):
-            return self._record_post_external_cas_unknown(
-                command, attempt_id, reservation_id, workspace_id, preview,
-                effective_input, generated, artifact,
-            )
+            return self._recovery_required(command, attempt_id, "settled")
 
         try:
             _require_confirmed_preview_authority(self.authority, job, preview, self.clock.now())
@@ -1164,16 +1175,8 @@ class GenerateTakeHandler:
                 "authority changed while external work was in flight", self.clock.now(),
                 expected_revision=previous,
             )
-            _cas_or_conflict(self.repository.save(job, previous), "narration job")
-            self.budget.settle(reservation_id, generated.usage)
-            self.workspaces.save(
-                _workspace(
-                    workspace_id, job, attempt_id, reservation_id, preview,
-                    AttemptState.QUARANTINED, SubmissionEvidence.COMPLETED,
-                    effective_input=effective_input, events=generated.events,
-                    artifact=artifact, recovery=(str(error),),
-                )
-            )
+            if not self.repository.save(job, previous):
+                return self._recovery_required(command, attempt_id, "settled")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.QUARANTINED, None, "settled")
 
         take_id = self.identifiers.new_id(TakeId)
@@ -1199,15 +1202,8 @@ class GenerateTakeHandler:
         )
         previous = job.revision
         job.complete_generation_attempt(attempt_id, take, self.clock.now(), expected_revision=previous)
-        _cas_or_conflict(self.repository.save(job, previous), "narration job")
-        self.budget.settle(reservation_id, generated.usage)
-        self.workspaces.save(
-            _workspace(
-                workspace_id, job, attempt_id, reservation_id, preview,
-                AttemptState.COMPLETED, SubmissionEvidence.COMPLETED,
-                effective_input=effective_input, events=generated.events, artifact=artifact,
-            )
-        )
+        if not self.repository.save(job, previous):
+            return self._recovery_required(command, attempt_id, "settled")
         return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.COMPLETED, take_id, "settled")
 
 
