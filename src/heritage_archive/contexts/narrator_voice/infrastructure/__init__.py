@@ -1,0 +1,1 @@
+"""Narrator Voice infrastructure adapters."""
