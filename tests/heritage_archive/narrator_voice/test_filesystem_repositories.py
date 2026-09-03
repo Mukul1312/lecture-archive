@@ -1,0 +1,146 @@
+"""Contract tests for immutable Narrator Voice aggregate revision repositories."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+
+SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+from heritage_archive.kernel import ActorId
+from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
+from heritage_archive.contexts.narrator_voice.domain.diary_episode import DiaryEpisode
+from heritage_archive.contexts.narrator_voice.domain.ids import (
+    AuthorizationRecordId,
+    AuthorityChangeId,
+    DiaryEpisodeId,
+    NarrationJobId,
+    PassageId,
+)
+from heritage_archive.contexts.narrator_voice.domain.narration_job import (
+    PassageDraft,
+    prepare_lane_b_diary_job,
+)
+from heritage_archive.contexts.narrator_voice.domain.values import Lane, PassageText
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_repositories import (
+    FilesystemAuthorizationRecordRepository,
+    FilesystemDiaryEpisodeRepository,
+    FilesystemNarrationJobRepository,
+)
+from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
+from tests.heritage_archive.narrator_voice.fixtures import (
+    NOW,
+    digest,
+    make_contract,
+    make_defaults,
+    make_master_snapshot,
+    make_scope,
+    uuid,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+class FilesystemRepositoryContracts(unittest.TestCase):
+    def test_authorization_revisions_round_trip_and_refuse_stale_compare_and_swap(self) -> None:
+        """A stale authorization write could overwrite immutable authority history."""
+        record = AuthorizationRecord.register(
+            AuthorizationRecordId(uuid(1200)), ActorId(uuid(1201)), make_scope(), digest("filesystem authority"), NOW
+        )
+
+        def mutate(value: AuthorizationRecord) -> None:
+            value.withdraw(AuthorityChangeId(uuid(1202)), value.steward_actor_id, "fake withdrawal", NOW, expected_revision=value.revision)
+
+        self._assert_revision_contract(FilesystemAuthorizationRecordRepository, record.record_id, record, mutate, "authorization-records")
+
+    def test_narration_job_revisions_round_trip_and_refuse_stale_compare_and_swap(self) -> None:
+        """A stale narration write could replace a later passage-text revision."""
+        passage_id = PassageId(uuid(1211))
+        job = prepare_lane_b_diary_job(
+            NarrationJobId(uuid(1210)), make_contract(lane=Lane.B), make_defaults(),
+            (PassageDraft(passage_id, 0, PassageText("fake stored narration text")),), NOW,
+        )
+
+        def mutate(value) -> None:
+            value.revise_passage_text(passage_id, PassageText("fake revised narration text"), NOW, expected_revision=value.revision)
+
+        self._assert_revision_contract(FilesystemNarrationJobRepository, job.job_id, job, mutate, "narration-jobs")
+
+    def test_diary_episode_revisions_round_trip_and_refuse_stale_compare_and_swap(self) -> None:
+        """A stale episode write could discard an attached immutable source snapshot."""
+        episode = DiaryEpisode.prepare(DiaryEpisodeId(uuid(1220)), NOW)
+        intro = make_master_snapshot(lane=Lane.C, episode_id=episode.episode_id, index=1221, samples=100)
+
+        def mutate(value: DiaryEpisode) -> None:
+            value.attach_intro(intro, NOW, expected_revision=value.revision)
+
+        self._assert_revision_contract(FilesystemDiaryEpisodeRepository, episode.episode_id, episode, mutate, "diary-episodes")
+
+    def test_load_stops_at_a_missing_or_invalid_revision_and_absent_id_is_none(self) -> None:
+        """Selecting the highest filename would accept a revision after a corrupt gap."""
+        record = AuthorizationRecord.register(
+            AuthorizationRecordId(uuid(1230)), ActorId(uuid(1231)), make_scope(), digest("gap authority"), NOW
+        )
+        with self._storage_root() as root:
+            repository = FilesystemAuthorizationRecordRepository(root)
+            self.assertTrue(repository.save(record, None))
+            revisions = root.aggregates / "authorization-records" / record.record_id.value / "revisions"
+            revision_one = revisions / "00000000000000000001.json"
+            (revisions / "00000000000000000002.json").write_bytes(b"not canonical JSON")
+            (revisions / "00000000000000000003.json").write_bytes(revision_one.read_bytes())
+
+            loaded = FilesystemAuthorizationRecordRepository(root).load(record.record_id)
+
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded.to_snapshot(), record.to_snapshot())
+            self.assertIsNone(repository.load(AuthorizationRecordId(uuid(1232))))
+
+    def _assert_revision_contract(self, repository_type, aggregate_id, aggregate, mutate, aggregate_kind: str) -> None:
+        with self._storage_root() as root:
+            repository = repository_type(root)
+            self.assertTrue(repository.save(aggregate, None))
+            revisions = root.aggregates / aggregate_kind / aggregate_id.value / "revisions"
+            self.assertEqual(
+                (revisions / "00000000000000000001.json").read_bytes()[-1:],
+                b"}",
+            )
+
+            reloaded = repository_type(root).load(aggregate_id)
+            self.assertIsNotNone(reloaded)
+            self.assertEqual(reloaded.to_snapshot(), aggregate.to_snapshot())
+            mutate(reloaded)
+            self.assertTrue(repository.save(reloaded, 1))
+
+            self.assertFalse(repository.save(reloaded, 1))
+            self.assertFalse((revisions / "00000000000000000003.json").exists())
+            current = repository_type(root).load(aggregate_id)
+            self.assertIsNotNone(current)
+            self.assertEqual(current.to_snapshot(), reloaded.to_snapshot())
+
+    def _storage_root(self):
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        root = LocalNarrationRoot.open(Path(temporary_directory.name), (PROJECT_ROOT,))
+        root.initialize_layout()
+        return _StorageRootContext(root)
+
+
+class _StorageRootContext:
+    def __init__(self, root: LocalNarrationRoot) -> None:
+        self._root = root
+
+    def __enter__(self) -> LocalNarrationRoot:
+        return self._root
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+
+if __name__ == "__main__":
+    unittest.main()
