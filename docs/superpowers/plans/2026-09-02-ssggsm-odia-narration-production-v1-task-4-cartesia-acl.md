@@ -1,5 +1,10 @@
 # SSGGSM Odia Narration Production v1 — Task 4: Cartesia Anti-Corruption Layer
 
+> **Status (2026-09-03): Superseded before implementation.** Preserve the Cartesia
+> boundary and exact request safety, but use the focused Task 4M fixture/feature scope
+> in the
+> [minimum local-studio plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md).
+
 **Goal:** Implement the frozen Cartesia request/SSE boundary and exhaustive fake-fixture
 contract tests without a live request.
 

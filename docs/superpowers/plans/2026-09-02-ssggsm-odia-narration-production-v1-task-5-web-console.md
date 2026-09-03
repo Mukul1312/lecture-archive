@@ -1,5 +1,11 @@
 # SSGGSM Odia Narration Production v1 — Task 5: Secured API and Workflow Console
 
+> **Status (2026-09-03): Superseded before implementation.** The fixed
+> React/TanStack/OpenAPI/three-journey scope is not a v1 requirement. Use Task 5M in
+> the
+> [minimum local-studio plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
+> and choose the smallest loopback frontend after durable storage works.
+
 **Goal:** Deliver the loopback-only Starlette API and React workflow console over the
 same persisted application handlers, with security and workflow coverage.
 

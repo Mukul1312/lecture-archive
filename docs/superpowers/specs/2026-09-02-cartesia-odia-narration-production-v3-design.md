@@ -2,7 +2,9 @@
 
 **Date:** 2026-09-02
 
-**Status:** **Accepted authoritative implementation design.**
+**Status:** **Historical accepted full-scope design.** Superseded for remaining v1
+implementation by [ADR-0012](../../decisions/0012-narrator-voice-v1-is-a-minimum-local-studio.md)
+and the [v4 minimum local-studio design](2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md).
 
 **Authority:** [ADR-0006](../../decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md),
 [ADR-0007](../../decisions/0007-two-policy-isolated-narration-lanes.md),
@@ -10,7 +12,9 @@
 [ADR-0009](../../decisions/0009-share-narration-mechanics-not-policy.md),
 [ADR-0010](../../decisions/0010-cartesia-prompting-is-validated-rendering-evidence.md)
 and [ADR-0011](../../decisions/0011-diary-episodes-compose-fixed-voice-narration-masters.md)
-govern. This document supersedes the workflow and implementation detail in the
+govern its retained policy/domain decisions. ADR-0012 governs implementation depth,
+verification cadence and deferrals. This document superseded the workflow and
+implementation detail in the
 [v2 design](2026-09-02-cartesia-odia-narration-production-v2-design.md). The v1 and
 v2 documents remain historical design evidence.
 
@@ -18,6 +22,14 @@ Acceptance of this design authorizes documentation and implementation planning o
 It does not itself authorize a Cartesia request, spending credits, generating private
 speech, publishing audio or video, or broadening any speaker, text, language or
 distribution permission.
+
+> **V1 scope correction (2026-09-03):** This design overestimated the needs of the
+> confirmed one-operator local workflow. Do not implement its separate physical
+> ledgers, per-aggregate lock hierarchy, exhaustive crash/security matrices, trusted
+> word-timing workflow, comprehensive audit console or fixed React/OpenAPI toolchain
+> as v1 requirements. The v4 design preserves the accepted voice, aggregate,
+> authorization, immutable-audio, review and dry-assembly boundaries while specifying
+> the minimum remaining system.
 
 ### Pre-implementation legacy-data boundary
 

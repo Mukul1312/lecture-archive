@@ -1,5 +1,13 @@
 # SSGGSM Odia Narration Production v1 — Task 2: Pure Domain and No-Network Application
 
+> **Status (2026-09-03): Implemented baseline; interrupted closure superseded.** Keep
+> the safe domain/application work rather than rewriting it for cosmetic simplicity.
+> Complete only the remaining persistence-critical findings named in Task 2C of the
+> [minimum local-studio plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md),
+> using the detailed
+> [Task 2C recovery-closure plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-2c-recovery-closure.md).
+> Word-timing hardening and exhaustive review are deferred by ADR-0012.
+
 **Goal:** Deliver the three aggregate roots, immutable values, ports and fake-adapter
 walkthrough without a provider or filesystem dependency.
 
@@ -20,7 +28,8 @@ walkthrough without a provider or filesystem dependency.
 - Production audio is dry PCM16 little-endian mono 44.1-kHz WAV with exact PCM assembly and explicit zero-sample gaps only.
 - Production gaps have no numeric default; private configuration supplies them and tests use explicit literals.
 - No automated test contacts Cartesia or consumes credits.
-- Follow RED/GREEN/refactor for production behavior; stage/commit exact paths only and do not push, merge or publish.
+- Use risk-based focused verification for remaining production behavior; stage/commit
+  exact paths only and do not push, merge or publish.
 
 ## Execution
 

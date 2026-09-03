@@ -10,8 +10,11 @@ Related: [ADR-0006](0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md)
 keeps the approved SSGGSM clone scope narrow;
 [ADR-0007](0007-two-policy-isolated-narration-lanes.md) isolates narration policy;
 and [ADR-0008](0008-lane-b-production-boundaries.md) fixes the Lane-B production
-aggregate and its release-contract invariants. The complete accepted workflow is in
-the [v3 production design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md).
+aggregate and its release-contract invariants. The
+[v3 production design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md)
+is historical design evidence; the
+[v4 minimum design](../superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
+governs the remaining v1 implementation.
 
 ---
 

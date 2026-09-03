@@ -1,5 +1,9 @@
 # SSGGSM Odia Narration Production v1 — Task 3: Durable Storage, Audio and Operations
 
+> **Status (2026-09-03): Superseded before implementation.** This plan is the
+> historical hardened profile and must not be executed for v1. Use the executable
+> [Task 3M durable filesystem and audio plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-3m-durable-filesystem-audio.md).
+
 **Goal:** Add private durable repositories, canonical audio/artifact handling, recovery
 and operator commands without changing the domain boundaries.
 

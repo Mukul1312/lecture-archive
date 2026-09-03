@@ -24,16 +24,40 @@ programme and prevents their opposite identity policies from leaking across lane
 [ADR-0008](docs/decisions/0008-lane-b-production-boundaries.md) records the accepted
 one-job aggregate, split settings, separate authorization lifecycle, localhost
 sole-operator UI and publishing-stage reviewer boundary. The accepted authoritative
-workflow is the [Cartesia Odia narration v3 design](docs/superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md).
+domain background remains in the historical
+[Cartesia Odia narration v3 design](docs/superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md).
+[ADR-0012](docs/decisions/0012-narrator-voice-v1-is-a-minimum-local-studio.md)
+records that the original operational plan was overbuilt for one local operator. The
+[v4 minimum local-studio design](docs/superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
+and [minimum implementation plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
+govern remaining v1 work.
 The [codebase-wide capability audit](docs/narrator-voice-shared-capability-audit-2026-09-02.md)
 supports accepted [ADR-0009](docs/decisions/0009-share-narration-mechanics-not-policy.md),
 which permits provider-neutral narration mechanics while keeping lane policy isolated.
 No production implementation or private audio is added by those documents.
 
+### Offline Narrator Voice operations
+
+Install the repository into its virtual environment once before using the local
+operations command from a fresh checkout:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --no-deps -e .
+.\.venv\Scripts\python.exe -m heritage_archive.composition_root.narrator_voice_cli --help
+```
+
+Set `CARTESIA_NARRATION_ROOT` to an existing private directory outside this
+repository before running commands that use the live studio. Initialization also
+requires an explicit private configuration file; inspect `init --help` for its
+arguments. These offline commands do not contact Cartesia or read
+`CARTESIA_API_KEY`.
+
 ## Main components
 
 - `scripts/hi/` and `cloud/`: Hindi extraction, ASR, evaluation, and training
   workflows.
+- `src/heritage_archive/contexts/narrator_voice/`: the authorized Odia narration
+  domain, application workflows, and local durable adapters.
 - `scripts/youtube_enhance/`: resumable, timeline-preserving lecture audio
   enhancement implementation.
 - `.agents/skills/enhancing-lecture-audio/`: explicitly invoked operational

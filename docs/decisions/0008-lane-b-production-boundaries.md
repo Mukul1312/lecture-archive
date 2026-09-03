@@ -7,13 +7,17 @@ shape, while retaining its accepted defaults and pinned-model rule; (b) ADR-0006
 §7's statement that UI work is undecided; (c) ADR-0007 §3's `NarrationTake`
 identity conflict row and closing aggregate/persistence-open statement, plus §7's
 Lane-B aggregate-model non-decision; and (d) ADR-0005's CLI-only inbound-adapter
-example for this context · **Superseded by:** —
+example for this context · **Superseded by:** [ADR-0012](0012-narrator-voice-v1-is-a-minimum-local-studio.md)
+only for §2.1's separate physical snapshot-plus-ledger persistence seam; the aggregate
+boundary and all other decisions remain accepted
 
 Related: [ADR-0006](0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md)
 selects the voice and delivery baseline; [ADR-0007](0007-two-policy-isolated-narration-lanes.md)
-isolates Lane B from the future non-SSGGSM English/Hindi lane. The complete
-workflow is in the
-[Lane-B production design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v2-design.md).
+isolates Lane B from the future non-SSGGSM English/Hindi lane. The
+[v2 Lane-B design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v2-design.md)
+is historical design evidence; the
+[v4 minimum design](../superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
+governs the remaining v1 implementation.
 
 ---
 

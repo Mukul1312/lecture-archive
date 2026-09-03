@@ -1,5 +1,11 @@
 # SSGGSM Odia Narration Production v1 Implementation Plan
 
+> **Status (2026-09-03): Historical for remaining work.** Tasks 0 and 1 remain valid
+> completed checkpoints and Task 2 remains implementation history. Task 2 closure and
+> Tasks 3–5 are replaced by the
+> [minimum local-studio plan](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
+> under ADR-0012. Do not resume the full-scope requirements below.
+
 Date: 2026-09-02
 
 Spec: `docs/superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md`

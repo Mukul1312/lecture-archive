@@ -4,6 +4,7 @@
 .venv-transcribe/
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Firecrawl scrape dumps (research scratch)
 .firecrawl/
@@ -65,6 +66,9 @@ _work/
 
 # Isolated Git worktrees used by agent-assisted implementation
 .worktrees/
+
+# Agent execution ledgers and review packages (local scratch)
+.superpowers/
 
 # Local Heritage Production store
 .heritage-production/

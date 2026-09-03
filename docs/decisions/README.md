@@ -41,6 +41,7 @@ someone who never runs that workflow.
 | [0009](0009-share-narration-mechanics-not-policy.md) | Share provider-neutral narration mechanics, never lane policy | Accepted 2026-09-02 | Technical capability shared or considered for sharing between narration policy scopes |
 | [0010](0010-cartesia-prompting-is-validated-rendering-evidence.md) | Cartesia prompting is validated rendering evidence, not free-form narration policy | Accepted 2026-09-02 | Hybrid synthesis authoring and Cartesia request compilation |
 | [0011](0011-diary-episodes-compose-fixed-voice-narration-masters.md) | Diary episodes compose fixed-voice narration masters without becoming a mixed-voice job | Accepted 2026-09-02 | Narrow Odia intro scope, dry episode assembly and timed narration handoff |
+| [0012](0012-narrator-voice-v1-is-a-minimum-local-studio.md) | Narrator Voice v1 is a minimum single-operator local studio, not a general production platform | Accepted 2026-09-03 | Remaining Narrator Voice v1 implementation, verification and rollout |
 
 **Reading order** for someone new: 0004 (why a rewrite at all) → 0002 (what the model is)
 → 0005 (where code goes) → 0001 (what is reused) → 0003 (the script cleanup, independent
@@ -51,8 +52,12 @@ programme from the authorized SSGGSM/Odia/diary production lane. Read 0006 for t
 authorized SSGGSM voice/baseline, then 0008 for the Lane-B production boundary. Read
 0009 before extracting code across policy scopes, 0010 for the hybrid Cartesia
 authoring boundary and 0011 for the narrow Odia-intro/episode-composition extension.
-The [v3 production design](../superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md)
-is the authoritative implementation design.
+Read 0012 last: it preserves those policy/domain boundaries while replacing the
+overbuilt remaining implementation profile. The
+[v4 minimum local-studio design](../superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
+and its [replacement plan](../superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
+are the authority for remaining v1 work. The v3 production design remains historical
+full-scope evidence.
 
 **Narrator Voice implementation note:** ADR-0005's inbound-adapter extension includes
 non-Python `apps/` and `contracts/` when their first real console/contract consumer
