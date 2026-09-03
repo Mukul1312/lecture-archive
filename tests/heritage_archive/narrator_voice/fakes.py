@@ -243,8 +243,8 @@ class FakeBudgetLedger:
         self.fail_next_finalization = False
         self.commit_then_raise_next_finalization = False
 
-    def reserve(self, reservation_id, estimated_usage) -> None:
-        self.actions.append(("reserve", reservation_id, estimated_usage))
+    def reserve(self, reservation_id, run_id, estimated_usage) -> None:
+        self.actions.append(("reserve", reservation_id, run_id, estimated_usage))
         if self.deny_reserve:
             raise BudgetDenied("fake budget denial")
         self.states[reservation_id] = BudgetRecoveryState.RESERVED

@@ -29,6 +29,7 @@ from ..domain.evidence import (
 from ..domain.ids import (
     AuthorizationRecordId,
     BudgetReservationId,
+    CommandId,
     DiaryEpisodeId,
     EpisodeAssemblyAttemptId,
     GenerationAttemptId,
@@ -346,6 +347,7 @@ class GenerationBudgetLedger(Protocol):
     def reserve(
         self,
         reservation_id: BudgetReservationId,
+        run_id: CommandId,
         estimated_usage: NonNegativeDecimal,
     ) -> None: ...
 

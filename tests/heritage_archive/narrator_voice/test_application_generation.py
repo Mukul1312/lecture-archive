@@ -33,6 +33,7 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     ValidateRenderRecipeHandler,
 )
 from heritage_archive.contexts.narrator_voice.application.ports import ReleasePolicyResolution, SynthesisResult
+from heritage_archive.contexts.narrator_voice.application.recovery import BudgetRecoveryState
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
@@ -172,11 +173,25 @@ class GenerationApplicationTests(unittest.TestCase):
         )
 
     def test_success_reserves_before_external_freezes_exact_preview_bytes_and_settles_usage(self) -> None:
-        result = self.handler()(self.command())
+        command = self.command()
+        self.gateway.after_call = lambda: self.assertEqual(
+            self.budget.read(self.reservation_id), BudgetRecoveryState.RESERVED
+        )
+
+        result = self.handler()(command)
         stored = self.jobs.load(self.job_id)
         take = stored.takes[0]
         self.assertEqual((result.state, result.take_id, take.effective_input.rendered_transcript_bytes), (AttemptState.COMPLETED, self.take_id, self.preview.rendered_transcript_bytes))
         self.assertEqual(self.gateway.calls[0].rendered_transcript_bytes, self.preview.rendered_transcript_bytes)
+        self.assertEqual(
+            self.budget.actions[0],
+            (
+                "reserve",
+                self.reservation_id,
+                command.command_id,
+                NonNegativeDecimal(self.preview.estimated_usage),
+            ),
+        )
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
         self.assertGreaterEqual(len(self.workspaces.saves), 2)
 
@@ -251,7 +266,7 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual((result.state, result.budget_disposition, self.budget.read(self.reservation_id).value), (AttemptState.UNKNOWN, "unknown", "settled"))
 
     def test_fake_budget_finalization_is_idempotent_only_for_exact_terminal_facts(self) -> None:
-        self.budget.reserve(self.reservation_id, NonNegativeDecimal("42"))
+        self.budget.reserve(self.reservation_id, CommandId(uuid(932)), NonNegativeDecimal("42"))
         self.budget.settle(self.reservation_id, NonNegativeDecimal("42"))
         self.budget.settle(self.reservation_id, NonNegativeDecimal("42"))
 
@@ -263,10 +278,10 @@ class GenerationApplicationTests(unittest.TestCase):
     def test_fake_budget_release_and_hold_require_their_exact_original_reason(self) -> None:
         released = BudgetReservationId(uuid(930))
         held = BudgetReservationId(uuid(931))
-        self.budget.reserve(released, NonNegativeDecimal("1"))
+        self.budget.reserve(released, CommandId(uuid(932)), NonNegativeDecimal("1"))
         self.budget.release(released, "not sent")
         self.budget.release(released, "not sent")
-        self.budget.reserve(held, NonNegativeDecimal("1"))
+        self.budget.reserve(held, CommandId(uuid(933)), NonNegativeDecimal("1"))
         self.budget.hold(held, "ambiguous")
         self.budget.hold(held, "ambiguous")
 

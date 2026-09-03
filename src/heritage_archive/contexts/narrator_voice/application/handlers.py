@@ -934,7 +934,11 @@ class GenerateTakeHandler:
             )
         )
         try:
-            self.budget.reserve(reservation_id, NonNegativeDecimal(preview.estimated_usage))
+            self.budget.reserve(
+                reservation_id,
+                command.command_id,
+                NonNegativeDecimal(preview.estimated_usage),
+            )
         except BudgetDenied as error:
             previous = job.revision
             job.finalize_generation_outcome(
