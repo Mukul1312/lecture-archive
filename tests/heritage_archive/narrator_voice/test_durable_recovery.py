@@ -148,6 +148,28 @@ class DurableAttemptEvidenceTests(unittest.TestCase):
             )
             self.assertFalse(mismatch.frozen_plan_matches)
 
+    def test_workspace_accepts_a_direct_evidence_backed_reserved_to_published_jump(self) -> None:
+        """Handlers may persist complete post-side-effect evidence without each intermediate file rewrite."""
+        with self._root() as root:
+            store = FilesystemAttemptWorkspaceStore(root)
+            reserved = self._reserved_workspace()
+            publication = self._publication(root)
+            published = replace(
+                reserved,
+                effective_input_digest=digest("input"),
+                frozen_plan_digest=digest("input"),
+                submission=SubmissionEvidence.COMPLETED,
+                events=(self._terminal_event(),),
+                staged_artifacts=(publication.reference,),
+                published_artifacts=(publication,),
+                state=AttemptState.ARTIFACTS_PUBLISHED,
+            )
+
+            store.save(reserved)
+            store.save(published)
+
+            self.assertEqual(store.load(reserved.attempt_id), published)
+
     def test_provider_verifier_requires_no_events_for_dry_assembly(self) -> None:
         """Dry local assembly records no provider claim, while generation needs a sealed terminal."""
         workspace = AttemptWorkspaceEvidence(

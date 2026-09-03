@@ -308,14 +308,23 @@ _WORKSPACE_STATE_SUCCESSORS = {
     AttemptState.RESERVED: {
         AttemptState.RESERVED,
         AttemptState.INPUT_FROZEN,
+        AttemptState.EXTERNAL_WORK_STARTED,
+        AttemptState.ARTIFACTS_STAGED,
+        AttemptState.ARTIFACTS_PUBLISHED,
         AttemptState.BLOCKED,
+        AttemptState.FAILED,
+        AttemptState.UNKNOWN,
+        AttemptState.QUARANTINED,
     },
     AttemptState.INPUT_FROZEN: {
         AttemptState.INPUT_FROZEN,
         AttemptState.EXTERNAL_WORK_STARTED,
+        AttemptState.ARTIFACTS_STAGED,
+        AttemptState.ARTIFACTS_PUBLISHED,
         AttemptState.BLOCKED,
         AttemptState.FAILED,
         AttemptState.UNKNOWN,
+        AttemptState.QUARANTINED,
     },
     AttemptState.EXTERNAL_WORK_STARTED: {
         AttemptState.EXTERNAL_WORK_STARTED,
