@@ -165,7 +165,7 @@ class NarrationJobMasteringTests(unittest.TestCase):
         )
 
         never_issued = NarrationMasterSnapshot.create(
-            snapshot_id=issued.snapshot_id,
+            snapshot_id=NarrationMasterSnapshotId(uuid(320)),
             issuing_job_id=issued.issuing_job_id,
             issuing_job_revision=issued.issuing_job_revision,
             source_master=master,
