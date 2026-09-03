@@ -36,6 +36,7 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     DecodedMediaFacts,
     ProviderTerminalClass,
     SubmissionEvidence,
+    narration_assembly_plan_digest,
 )
 from heritage_archive.kernel import ActorId, ArtifactId, ValidationError
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -228,7 +229,7 @@ class RecoveryDecisionTests(unittest.TestCase):
             AttemptState.UNKNOWN,
         ))
 
-    def test_post_artifact_cas_refusal_records_narration_recovery_without_another_assembly(self) -> None:
+    def test_post_artifact_cas_refusal_preserves_narration_workspace_before_recovery(self) -> None:
         fixture = generation_fixture.GenerationApplicationTests(
             "test_success_reserves_before_external_freezes_exact_preview_bytes_and_settles_usage"
         )
@@ -268,7 +269,13 @@ class RecoveryDecisionTests(unittest.TestCase):
 
         self.assertEqual(recovered.state, AttemptState.UNKNOWN)
         self.assertEqual(len(assembler.narration_calls), 1)
-        self.assertEqual(fixture.workspaces.saves[-1].state, AttemptState.UNKNOWN)
+        self.assertEqual(len(fixture.store.calls), 2)
+        workspace = fixture.workspaces.load(recovered.attempt_id)
+        self.assertEqual(workspace.state, AttemptState.ARTIFACTS_PUBLISHED)
+        self.assertEqual(
+            fixture.jobs.load(fixture.job_id).narration_assembly_attempt(recovered.attempt_id).state,
+            AttemptState.EXTERNAL_WORK_STARTED,
+        )
 
     def test_generation_post_provider_workspace_binds_the_attempt_reservation_revision(self) -> None:
         fixture = generation_fixture.GenerationApplicationTests(
@@ -351,6 +358,94 @@ class RecoveryDecisionTests(unittest.TestCase):
         self.assertEqual((job.assembly_attempts[-1].state, len(job.masters), replay.revision), (AttemptState.COMPLETED, 1, completed.revision))
         self.assertEqual((len(assembler.narration_calls), len(fixture.store.calls)), (1, 2))
 
+    def test_narration_post_artifact_workspace_save_failure_never_stages_the_aggregate(self) -> None:
+        fixture = generation_fixture.GenerationApplicationTests(
+            "test_success_reserves_before_external_freezes_exact_preview_bytes_and_settles_usage"
+        )
+        fixture.setUp()
+        generated = fixture.handler()(fixture.command())
+        actors = FakeActorResolver({"operator": ActorId(uuid(1010))})
+        fixture.ids.values[ReviewDecisionId] = [ReviewDecisionId(uuid(1011))]
+        fixture.ids.values[SelectionDecisionId] = [SelectionDecisionId(uuid(1012))]
+        fixture.ids.values[NarrationAssemblyAttemptId] = [NarrationAssemblyAttemptId(uuid(1013))]
+        fixture.ids.values[AttemptWorkspaceId] = [AttemptWorkspaceId(uuid(1014))]
+        reviewed = RecordReviewDecisionHandler(fixture.jobs, actors, fixture.clock, fixture.ids)(
+            RecordReviewDecisionCommand(CommandId(uuid(1015)), "operator", fixture.job_id, generated.take_id, ReviewOutcome.ACCEPTED, "accepted", generated.revision)
+        )
+        selected = SelectWorkingTakeHandler(fixture.jobs, fixture.reader, actors, fixture.clock, fixture.ids)(
+            SelectWorkingTakeCommand(CommandId(uuid(1016)), "operator", fixture.job_id, fixture.passage_id, generated.take_id, "selected", reviewed.revision)
+        )
+        fixture.store.artifact_ids.append(ArtifactId(uuid(1017)))
+        original_save = fixture.workspaces.save
+
+        def fail_after_publication(workspace) -> None:
+            if workspace.state is AttemptState.ARTIFACTS_PUBLISHED:
+                raise RuntimeError("fake post-artifact workspace failure")
+            original_save(workspace)
+
+        fixture.workspaces.save = fail_after_publication
+        assembler = FakeDryPcmAssembler()
+        result = AssembleNarrationMasterHandler(
+            fixture.jobs, fixture.reader, fixture.clock, fixture.ids, assembler, fixture.store, fixture.workspaces,
+        )(
+            AssembleNarrationMasterCommand(CommandId(uuid(1018)), fixture.job_id, (), selected.revision, SafeRelativeArtifactPath("fake/narration-workspace-failure.wav"))
+        )
+
+        attempt = fixture.jobs.load(fixture.job_id).narration_assembly_attempt(result.attempt_id)
+        self.assertEqual((result.state, attempt.state), (AttemptState.UNKNOWN, AttemptState.EXTERNAL_WORK_STARTED))
+        self.assertEqual((len(assembler.narration_calls), len(fixture.store.calls)), (1, 2))
+        reconciled = ReconcileNarrationAssemblyAttemptHandler(
+            fixture.jobs, fixture.reader, fixture.clock, fixture.workspaces,
+            FakeAttemptWorkspaceVerifier(), FakeProviderEventVerifier(),
+            RecoveryArtifactEvidence(DecodedMediaFacts(CanonicalAudioFacts(), 100, 2, False)), fixture.ids,
+        )(
+            ReconcileNarrationAssemblyAttemptCommand(CommandId(uuid(1019)), fixture.job_id, result.attempt_id, result.revision)
+        )
+        self.assertEqual(fixture.jobs.load(fixture.job_id).narration_assembly_attempt(result.attempt_id).state, AttemptState.UNKNOWN)
+        self.assertEqual((reconciled.revision, len(assembler.narration_calls), len(fixture.store.calls)), (result.revision + 1, 1, 2))
+
+    def test_tampered_narration_assembly_plan_is_quarantined_without_reassembly(self) -> None:
+        fixture = generation_fixture.GenerationApplicationTests(
+            "test_success_reserves_before_external_freezes_exact_preview_bytes_and_settles_usage"
+        )
+        fixture.setUp()
+        generated = fixture.handler()(fixture.command())
+        actors = FakeActorResolver({"operator": ActorId(uuid(1020))})
+        fixture.ids.values[ReviewDecisionId] = [ReviewDecisionId(uuid(1021))]
+        fixture.ids.values[SelectionDecisionId] = [SelectionDecisionId(uuid(1022))]
+        fixture.ids.values[NarrationAssemblyAttemptId] = [NarrationAssemblyAttemptId(uuid(1023))]
+        fixture.ids.values[NarrationMasterId] = [NarrationMasterId(uuid(1024))]
+        fixture.ids.values[AttemptWorkspaceId] = [AttemptWorkspaceId(uuid(1025))]
+        reviewed = RecordReviewDecisionHandler(fixture.jobs, actors, fixture.clock, fixture.ids)(
+            RecordReviewDecisionCommand(CommandId(uuid(1026)), "operator", fixture.job_id, generated.take_id, ReviewOutcome.ACCEPTED, "accepted", generated.revision)
+        )
+        selected = SelectWorkingTakeHandler(fixture.jobs, fixture.reader, actors, fixture.clock, fixture.ids)(
+            SelectWorkingTakeCommand(CommandId(uuid(1027)), "operator", fixture.job_id, fixture.passage_id, generated.take_id, "selected", reviewed.revision)
+        )
+        fixture.store.artifact_ids.append(ArtifactId(uuid(1028)))
+        fixture.jobs.reject_on_save_calls.add(fixture.jobs.save_calls + 4)
+        assembler = FakeDryPcmAssembler()
+        unknown = AssembleNarrationMasterHandler(
+            fixture.jobs, fixture.reader, fixture.clock, fixture.ids, assembler, fixture.store, fixture.workspaces,
+        )(
+            AssembleNarrationMasterCommand(CommandId(uuid(1029)), fixture.job_id, (), selected.revision, SafeRelativeArtifactPath("fake/tampered-narration-plan.wav"))
+        )
+        workspace = fixture.workspaces.load(unknown.attempt_id)
+        fixture.workspaces.values[unknown.attempt_id] = replace(
+            workspace,
+            frozen_plan_digest=narration_assembly_plan_digest((TakeId(uuid(1030)),), ()),
+        )
+        reconciled = ReconcileNarrationAssemblyAttemptHandler(
+            fixture.jobs, fixture.reader, fixture.clock, fixture.workspaces,
+            FakeAttemptWorkspaceVerifier(), FakeProviderEventVerifier(),
+            RecoveryArtifactEvidence(DecodedMediaFacts(CanonicalAudioFacts(), 100, 2, False)), fixture.ids,
+        )(
+            ReconcileNarrationAssemblyAttemptCommand(CommandId(uuid(1031)), fixture.job_id, unknown.attempt_id, unknown.revision)
+        )
+
+        self.assertEqual(fixture.jobs.load(fixture.job_id).narration_assembly_attempt(unknown.attempt_id).state, AttemptState.QUARANTINED)
+        self.assertEqual((reconciled.revision, len(assembler.narration_calls), len(fixture.store.calls)), (unknown.revision + 1, 1, 2))
+
     def test_episode_unknown_completion_recovers_once_from_verified_workspace_without_assembly_replay(self) -> None:
         case = episode_fixture.EpisodeApplicationTests("test_complete_exact_episode_timing_fallback_correction_and_presentation_handoff")
         flow, episode_id, _, _, configured = case.configured()
@@ -382,6 +477,7 @@ class RecoveryDecisionTests(unittest.TestCase):
         episode = flow.episodes.load(episode_id)
         self.assertEqual((episode.assembly_attempts[-1].state, len(episode.speech_masters), replay.revision), (AttemptState.COMPLETED, 1, completed.revision))
         self.assertEqual((len(flow.assembler.episode_calls), len(flow.artifacts.calls)), (1, artifact_calls_before_recovery))
+        self.assertEqual(flow.workspaces.load(attempt_id).state, AttemptState.ARTIFACTS_PUBLISHED)
 
 
 if __name__ == "__main__":

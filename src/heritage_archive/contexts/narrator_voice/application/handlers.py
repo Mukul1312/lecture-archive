@@ -1538,35 +1538,12 @@ class AssembleNarrationMasterHandler:
     artifacts: ImmutableArtifactStore
     workspaces: AttemptWorkspaceStore
 
-    def _record_post_artifact_cas_unknown(
+    def _post_artifact_recovery_required(
         self,
         command: AssembleNarrationMasterCommand,
         attempt_id: NarrationAssemblyAttemptId,
-        workspace_id: AttemptWorkspaceId,
-        artifact,
     ) -> NarrationAssemblyResult:
         recovered = _load_job(self.repository, command.job_id)
-        attempt = recovered.narration_assembly_attempt(attempt_id)
-        if not attempt.state.terminal:
-            previous = recovered.revision
-            recovered.finalize_narration_assembly_outcome(
-                attempt_id,
-                AttemptState.UNKNOWN,
-                "repository CAS failed after immutable artifact publication",
-                self.clock.now(),
-                expected_revision=previous,
-            )
-            _cas_or_conflict(self.repository.save(recovered, previous), "narration assembly recovery")
-        self.workspaces.save(
-            _narration_assembly_workspace(
-                workspace_id,
-                recovered,
-                attempt_id,
-                AttemptState.UNKNOWN,
-                artifact=artifact,
-                recovery=("post-artifact repository CAS conflict",),
-            )
-        )
         return NarrationAssemblyResult(
             command.command_id,
             recovered.job_id,
@@ -1621,16 +1598,24 @@ class AssembleNarrationMasterHandler:
         artifact = self.artifacts.publish(
             command.artifact_location, assembled.canonical_wav_bytes, "audio/wav", self.clock.now()
         )
+        try:
+            self.workspaces.save(
+                _narration_assembly_workspace(
+                    workspace_id, job, attempt_id, AttemptState.ARTIFACTS_PUBLISHED, artifact=artifact
+                )
+            )
+        except Exception:
+            return self._post_artifact_recovery_required(command, attempt_id)
         previous = job.revision
         job.stage_narration_master(
             attempt_id, artifact, assembled.media, assembled.passage_offsets, expected_revision=previous
         )
         if not self.repository.save(job, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
+            return self._post_artifact_recovery_required(command, attempt_id)
         previous = job.revision
         job.mark_narration_master_published(attempt_id, expected_revision=previous)
         if not self.repository.save(job, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
+            return self._post_artifact_recovery_required(command, attempt_id)
         try:
             _active_authority(self.authority, job.contract, AuthorityOperation.ASSEMBLE, self.clock.now())
         except AuthorizationDenied as error:
@@ -1640,24 +1625,13 @@ class AssembleNarrationMasterHandler:
                 self.clock.now(), expected_revision=previous,
             )
             if not self.repository.save(job, previous):
-                return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
-            self.workspaces.save(
-                _narration_assembly_workspace(
-                    workspace_id, job, attempt_id, AttemptState.QUARANTINED,
-                    artifact=artifact, recovery=(str(error),),
-                )
-            )
+                return self._post_artifact_recovery_required(command, attempt_id)
             return NarrationAssemblyResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.QUARANTINED, None)
         master_id = self.identifiers.new_id(NarrationMasterId)
         previous = job.revision
         job.complete_narration_assembly(attempt_id, master_id, self.clock.now(), expected_revision=previous)
         if not self.repository.save(job, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
-        self.workspaces.save(
-            _narration_assembly_workspace(
-                workspace_id, job, attempt_id, AttemptState.COMPLETED, artifact=artifact
-            )
-        )
+            return self._post_artifact_recovery_required(command, attempt_id)
         return NarrationAssemblyResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.COMPLETED, master_id)
 
 
@@ -1961,35 +1935,12 @@ class AssembleEpisodeSpeechMasterHandler:
     artifacts: ImmutableArtifactStore
     workspaces: AttemptWorkspaceStore
 
-    def _record_post_artifact_cas_unknown(
+    def _post_artifact_recovery_required(
         self,
         command: AssembleEpisodeSpeechMasterCommand,
         attempt_id: EpisodeAssemblyAttemptId,
-        workspace_id: AttemptWorkspaceId,
-        artifact,
     ) -> EpisodeAssemblyResult:
         recovered = _load_episode(self.repository, command.episode_id)
-        attempt = recovered.episode_assembly_attempt(attempt_id)
-        if not attempt.state.terminal:
-            previous = recovered.revision
-            recovered.finalize_episode_assembly_outcome(
-                attempt_id,
-                AttemptState.UNKNOWN,
-                "repository CAS failed after immutable artifact publication",
-                self.clock.now(),
-                expected_revision=previous,
-            )
-            _cas_or_conflict(self.repository.save(recovered, previous), "episode assembly recovery")
-        self.workspaces.save(
-            _episode_assembly_workspace(
-                workspace_id,
-                recovered,
-                attempt_id,
-                AttemptState.UNKNOWN,
-                artifact=artifact,
-                recovery=("post-artifact repository CAS conflict",),
-            )
-        )
         return EpisodeAssemblyResult(
             command.command_id,
             recovered.episode_id,
@@ -2044,16 +1995,24 @@ class AssembleEpisodeSpeechMasterHandler:
         artifact = self.artifacts.publish(
             command.artifact_location, assembled.canonical_wav_bytes, "audio/wav", self.clock.now()
         )
+        try:
+            self.workspaces.save(
+                _episode_assembly_workspace(
+                    workspace_id, episode, attempt_id, AttemptState.ARTIFACTS_PUBLISHED, artifact=artifact
+                )
+            )
+        except Exception:
+            return self._post_artifact_recovery_required(command, attempt_id)
         previous = episode.revision
         episode.stage_episode_speech_master(
             attempt_id, artifact, assembled.media, assembled.component_offsets, expected_revision=previous
         )
         if not self.repository.save(episode, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
+            return self._post_artifact_recovery_required(command, attempt_id)
         previous = episode.revision
         episode.mark_episode_speech_master_published(attempt_id, expected_revision=previous)
         if not self.repository.save(episode, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
+            return self._post_artifact_recovery_required(command, attempt_id)
         try:
             _require_episode_sources_current(
                 episode, self.jobs, self.authority, AuthorityOperation.ASSEMBLE, self.clock.now()
@@ -2065,24 +2024,13 @@ class AssembleEpisodeSpeechMasterHandler:
                 self.clock.now(), expected_revision=previous,
             )
             if not self.repository.save(episode, previous):
-                return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
-            self.workspaces.save(
-                _episode_assembly_workspace(
-                    workspace_id, episode, attempt_id, AttemptState.QUARANTINED,
-                    artifact=artifact, recovery=(str(error),),
-                )
-            )
+                return self._post_artifact_recovery_required(command, attempt_id)
             return EpisodeAssemblyResult(command.command_id, episode.episode_id, episode.revision, attempt_id, AttemptState.QUARANTINED, None)
         master_id = self.identifiers.new_id(EpisodeSpeechMasterId)
         previous = episode.revision
         episode.complete_episode_assembly(attempt_id, master_id, self.clock.now(), expected_revision=previous)
         if not self.repository.save(episode, previous):
-            return self._record_post_artifact_cas_unknown(command, attempt_id, workspace_id, artifact)
-        self.workspaces.save(
-            _episode_assembly_workspace(
-                workspace_id, episode, attempt_id, AttemptState.COMPLETED, artifact=artifact
-            )
-        )
+            return self._post_artifact_recovery_required(command, attempt_id)
         return EpisodeAssemblyResult(command.command_id, episode.episode_id, episode.revision, attempt_id, AttemptState.COMPLETED, master_id)
 
 

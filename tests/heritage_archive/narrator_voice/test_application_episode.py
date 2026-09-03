@@ -46,6 +46,7 @@ from heritage_archive.contexts.narrator_voice.domain.evidence import (
     CueProvenance,
     ListeningOutcome,
     TimingReviewStatus,
+    episode_assembly_plan_digest,
 )
 from heritage_archive.contexts.narrator_voice.domain.errors import AuthorizationDenied, RevisionConflict
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -228,6 +229,85 @@ class EpisodeApplicationTests(unittest.TestCase):
             )
         )
         self.assertEqual((result.revision, flow.episodes.load(episode_id).assembly_attempts[-1].state), (episode.revision + 1, AttemptState.QUARANTINED))
+
+    def test_post_artifact_workspace_failure_leaves_episode_attempt_recovery_required(self) -> None:
+        flow, episode_id, _, _, configured = self.configured()
+        flow.add(EpisodeAssemblyAttemptId, EpisodeAssemblyAttemptId(uuid(1400)))
+        flow.add(AttemptWorkspaceId, AttemptWorkspaceId(uuid(1401)))
+        artifacts_before_assembly = len(flow.artifacts.calls)
+        original_save = flow.workspaces.save
+
+        def fail_after_publication(workspace) -> None:
+            if workspace.state is AttemptState.ARTIFACTS_PUBLISHED:
+                raise RuntimeError("fake post-artifact workspace failure")
+            original_save(workspace)
+
+        flow.workspaces.save = fail_after_publication
+        result = AssembleEpisodeSpeechMasterHandler(
+            flow.episodes, flow.jobs, flow.authority, flow.clock, flow.ids,
+            flow.assembler, flow.artifacts, flow.workspaces,
+        )(
+            AssembleEpisodeSpeechMasterCommand(
+                CommandId(uuid(1402)), episode_id, configured.revision,
+                SafeRelativeArtifactPath("fake/episode-workspace-failure.wav"),
+            )
+        )
+
+        attempt = flow.episodes.load(episode_id).episode_assembly_attempt(result.attempt_id)
+        self.assertEqual((result.state, attempt.state), (AttemptState.UNKNOWN, AttemptState.EXTERNAL_WORK_STARTED))
+        self.assertEqual(
+            (len(flow.assembler.episode_calls), len(flow.artifacts.calls)),
+            (1, artifacts_before_assembly + 1),
+        )
+        reconciled = ReconcileEpisodeAssemblyAttemptHandler(
+            flow.episodes, flow.jobs, flow.authority, flow.clock, flow.workspaces,
+            flow.workspace_verifier, flow.provider_event_verifier, flow.artifact_verifier,
+        )(
+            ReconcileEpisodeAssemblyAttemptCommand(CommandId(uuid(1403)), episode_id, result.attempt_id, result.revision)
+        )
+        self.assertEqual(flow.episodes.load(episode_id).episode_assembly_attempt(result.attempt_id).state, AttemptState.UNKNOWN)
+        self.assertEqual(
+            (reconciled.revision, len(flow.assembler.episode_calls), len(flow.artifacts.calls)),
+            (result.revision + 1, 1, artifacts_before_assembly + 1),
+        )
+
+    def test_tampered_episode_assembly_plan_is_quarantined_without_reassembly(self) -> None:
+        flow, episode_id, _, _, configured = self.configured()
+        attempt_id = EpisodeAssemblyAttemptId(uuid(1410))
+        flow.add(EpisodeAssemblyAttemptId, attempt_id)
+        flow.add(AttemptWorkspaceId, AttemptWorkspaceId(uuid(1411)))
+        flow.episodes.reject_on_save_calls.add(flow.episodes.save_calls + 4)
+        artifacts_before_assembly = len(flow.artifacts.calls)
+        unknown = AssembleEpisodeSpeechMasterHandler(
+            flow.episodes, flow.jobs, flow.authority, flow.clock, flow.ids,
+            flow.assembler, flow.artifacts, flow.workspaces,
+        )(
+            AssembleEpisodeSpeechMasterCommand(
+                CommandId(uuid(1412)), episode_id, configured.revision,
+                SafeRelativeArtifactPath("fake/tampered-episode-plan.wav"),
+            )
+        )
+        workspace = flow.workspaces.load(attempt_id)
+        attempt = flow.episodes.load(episode_id).episode_assembly_attempt(attempt_id)
+        flow.workspaces.values[attempt_id] = replace(
+            workspace,
+            frozen_plan_digest=episode_assembly_plan_digest(
+                attempt.component_snapshot_digests, attempt.gap_samples + 1,
+            ),
+        )
+
+        reconciled = ReconcileEpisodeAssemblyAttemptHandler(
+            flow.episodes, flow.jobs, flow.authority, flow.clock, flow.workspaces,
+            flow.workspace_verifier, flow.provider_event_verifier, flow.artifact_verifier,
+        )(
+            ReconcileEpisodeAssemblyAttemptCommand(CommandId(uuid(1413)), episode_id, attempt_id, unknown.revision)
+        )
+
+        self.assertEqual(flow.episodes.load(episode_id).episode_assembly_attempt(attempt_id).state, AttemptState.QUARANTINED)
+        self.assertEqual(
+            (reconciled.revision, len(flow.assembler.episode_calls), len(flow.artifacts.calls)),
+            (unknown.revision + 1, 1, artifacts_before_assembly + 1),
+        )
 
 
 if __name__ == "__main__":

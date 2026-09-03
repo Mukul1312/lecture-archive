@@ -1417,8 +1417,13 @@ class NarrationJob:
             if existing != master:
                 raise ValidationError("completed narration recovery replay must name the exact existing master")
             return existing
-        if attempt.state is not AttemptState.UNKNOWN:
-            raise DomainInvariantError("only unknown narration assembly may complete from recovery evidence")
+        if attempt.state not in {
+            AttemptState.EXTERNAL_WORK_STARTED,
+            AttemptState.ARTIFACTS_STAGED,
+            AttemptState.ARTIFACTS_PUBLISHED,
+            AttemptState.UNKNOWN,
+        }:
+            raise DomainInvariantError("narration assembly state cannot complete from recovery evidence")
         if any(value.master_id == master.master_id for value in self._masters):
             raise ValidationError("recovered narration master identity belongs to another attempt")
         completed = replace(
