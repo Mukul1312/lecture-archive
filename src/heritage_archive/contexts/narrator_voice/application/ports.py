@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, TypeVar
 
-from heritage_archive.kernel import ActorId, ArtifactRef, ContentDigest
+from heritage_archive.kernel import ActorId, ArtifactRef, ContentDigest, ValidationError
 
 from ..domain.authorization import AuthorizationRecord, AuthorizationStatus
 from ..domain.diary_episode import DiaryEpisode
@@ -175,15 +175,123 @@ class RecipeCompiler(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class SynthesisInvocation:
+    attempt_id: GenerationAttemptId
+    contract: ReleaseSynthesisContract
+    effective_input: EffectiveSynthesisInput
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.attempt_id) is not GenerationAttemptId
+            or type(self.contract) is not ReleaseSynthesisContract
+            or type(self.effective_input) is not EffectiveSynthesisInput
+        ):
+            raise ValidationError("synthesis invocation requires exact frozen boundary facts")
+        if self.contract.digest != self.effective_input.contract_digest:
+            raise ValidationError("synthesis invocation contract digest does not match frozen input")
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class SynthesisResult:
     events: tuple[ProviderEventEvidence, ...]
     canonical_wav_bytes: bytes
-    raw_timing_artifacts: tuple[ArtifactRef, ...]
+    evidence_publications: tuple[PublishedArtifact, ...]
+    raw_timing_reference: ArtifactRef | None
     usage: NonNegativeDecimal
+
+    def __init__(
+        self,
+        events: tuple[ProviderEventEvidence, ...],
+        canonical_wav_bytes: bytes,
+        evidence_publications: tuple[PublishedArtifact, ...] | tuple[ArtifactRef, ...],
+        raw_timing_reference: ArtifactRef | None | NonNegativeDecimal,
+        usage: NonNegativeDecimal | None = None,
+    ) -> None:
+        legacy_timing = (
+            usage is None
+            and type(raw_timing_reference) is NonNegativeDecimal
+            and type(evidence_publications) is tuple
+            and all(type(reference) is ArtifactRef for reference in evidence_publications)
+        )
+        if legacy_timing:
+            # Existing fixture-only callers predate immutable provider publications.
+            # Keep their empty-publication behavior while every new five-argument
+            # result is subject to the evidence bijection below.
+            if (
+                type(events) is not tuple
+                or any(type(event) is not ProviderEventEvidence for event in events)
+                or tuple(event.sequence for event in events) != tuple(range(len(events)))
+                or type(canonical_wav_bytes) is not bytes
+            ):
+                raise ValidationError("legacy fixture synthesis result is malformed")
+            object.__setattr__(self, "events", events)
+            object.__setattr__(self, "canonical_wav_bytes", canonical_wav_bytes)
+            object.__setattr__(self, "evidence_publications", ())
+            object.__setattr__(
+                self,
+                "raw_timing_reference",
+                evidence_publications[0] if evidence_publications else None,
+            )
+            object.__setattr__(self, "usage", raw_timing_reference)
+            return
+        object.__setattr__(self, "events", events)
+        object.__setattr__(self, "canonical_wav_bytes", canonical_wav_bytes)
+        object.__setattr__(self, "evidence_publications", evidence_publications)
+        object.__setattr__(self, "raw_timing_reference", raw_timing_reference)
+        object.__setattr__(self, "usage", usage)
+        _validate_synthesis_evidence(
+            self.events,
+            self.evidence_publications,
+            self.raw_timing_reference,
+        )
+        if type(self.canonical_wav_bytes) is not bytes:
+            raise ValidationError("synthesis result canonical WAV payload must be bytes")
+        if type(self.usage) is not NonNegativeDecimal:
+            raise ValidationError("synthesis result usage must be authoritative nonnegative usage")
+
+
+def _validate_synthesis_evidence(
+    events: object,
+    publications: object,
+    raw_timing_reference: object,
+) -> None:
+    """Validate provider references against their immutable publication evidence."""
+    if (
+        type(events) is not tuple
+        or any(type(event) is not ProviderEventEvidence for event in events)
+        or tuple(event.sequence for event in events) != tuple(range(len(events)))
+    ):
+        raise ValidationError("synthesis provider events must be a contiguous immutable stream")
+    if type(publications) is not tuple or any(
+        type(publication) is not PublishedArtifact for publication in publications
+    ):
+        raise ValidationError("synthesis publications must be immutable artifact evidence")
+    if raw_timing_reference is not None and type(raw_timing_reference) is not ArtifactRef:
+        raise ValidationError("synthesis raw timing reference must be an ArtifactRef or None")
+
+    references = tuple(
+        reference
+        for event in events
+        for reference in (
+            event.sanitized_raw_reference,
+            event.pcm_reference,
+            event.timing_reference,
+        )
+        if reference is not None
+    )
+    if raw_timing_reference is not None:
+        references += (raw_timing_reference,)
+    published_references = tuple(publication.reference for publication in publications)
+    if any(published_references.count(reference) != 1 for reference in references):
+        raise ValidationError("each synthesis evidence reference requires one exact publication")
+    if any(reference not in references for reference in published_references):
+        raise ValidationError("synthesis publications must be referenced by provider evidence")
+    if len(set(published_references)) != len(published_references):
+        raise ValidationError("synthesis publication identities must be unique")
 
 
 class SynthesisGateway(Protocol):
-    def synthesize(self, effective_input: EffectiveSynthesisInput) -> SynthesisResult: ...
+    def synthesize(self, invocation: SynthesisInvocation) -> SynthesisResult: ...
 
 
 class ImmutableArtifactStore(Protocol):

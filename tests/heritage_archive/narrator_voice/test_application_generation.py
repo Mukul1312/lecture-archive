@@ -33,13 +33,21 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     ValidateRenderRecipeHandler,
 )
 from heritage_archive.contexts.narrator_voice.application.ports import ReleasePolicyResolution, SynthesisResult
+from heritage_archive.contexts.narrator_voice.application.synthesis_failures import (
+    SynthesisAmbiguousFailure,
+    SynthesisFailureEvidence,
+    SynthesisPreSendFailure,
+    SynthesisSubmittedFailure,
+)
 from heritage_archive.contexts.narrator_voice.application.recovery import BudgetRecoveryState
 from heritage_archive.contexts.narrator_voice.domain.authorization import AuthorizationRecord
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
+    PublishedArtifact,
     ProviderEventEvidence,
     ProviderEventKind,
     ProviderTerminalClass,
+    SubmissionEvidence,
 )
 from heritage_archive.contexts.narrator_voice.domain.errors import RevisionConflict
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -157,7 +165,14 @@ class GenerationApplicationTests(unittest.TestCase):
             ProviderEventId(uuid(918)), 0, ProviderEventKind.TERMINAL, raw, raw.content_digest, NOW,
             "fake-request", "fake-response", None, timing, "42", ProviderTerminalClass.SUCCESS,
         )
-        self.synthesis_result = SynthesisResult((event,), b"RIFF-fake-canonical-wav", (timing,), NonNegativeDecimal("42"))
+        self.evidence_publications = (
+            PublishedArtifact(raw, SafeRelativeArtifactPath("evidence/event.json"), NOW),
+            PublishedArtifact(timing, SafeRelativeArtifactPath("evidence/timing.json"), NOW),
+        )
+        self.synthesis_result = SynthesisResult(
+            (event,), b"RIFF-fake-canonical-wav", self.evidence_publications,
+            timing, NonNegativeDecimal("42"),
+        )
         self.gateway = FakeSynthesisGateway(self.synthesis_result)
 
     def handler(self):
@@ -182,7 +197,10 @@ class GenerationApplicationTests(unittest.TestCase):
         stored = self.jobs.load(self.job_id)
         take = stored.takes[0]
         self.assertEqual((result.state, result.take_id, take.effective_input.rendered_transcript_bytes), (AttemptState.COMPLETED, self.take_id, self.preview.rendered_transcript_bytes))
-        self.assertEqual(self.gateway.calls[0].rendered_transcript_bytes, self.preview.rendered_transcript_bytes)
+        self.assertEqual(
+            self.gateway.calls[0].effective_input.rendered_transcript_bytes,
+            self.preview.rendered_transcript_bytes,
+        )
         self.assertEqual(
             self.budget.actions[0],
             (
@@ -194,6 +212,53 @@ class GenerationApplicationTests(unittest.TestCase):
         )
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
         self.assertGreaterEqual(len(self.workspaces.saves), 2)
+
+    def test_input_and_external_boundaries_are_durable_before_the_gateway_call(self) -> None:
+        def assert_pre_call_boundary() -> None:
+            workspace = self.workspaces.load(self.attempt_id)
+            self.assertEqual(
+                (workspace.state, workspace.submission),
+                (AttemptState.EXTERNAL_WORK_STARTED, SubmissionEvidence.NOT_STARTED),
+            )
+
+        self.gateway.after_call = assert_pre_call_boundary
+
+        self.handler()(self.command())
+
+        self.assertEqual(
+            tuple(workspace.state for workspace in self.workspaces.saves[:4]),
+            (
+                AttemptState.RESERVED,
+                AttemptState.INPUT_FROZEN,
+                AttemptState.EXTERNAL_WORK_STARTED,
+                AttemptState.ARTIFACTS_PUBLISHED,
+            ),
+        )
+
+    def test_gateway_invocation_binds_attempt_complete_contract_and_frozen_input(self) -> None:
+        from heritage_archive.contexts.narrator_voice.application.ports import SynthesisInvocation
+
+        self.handler()(self.command())
+
+        invocation = self.gateway.calls[0]
+        self.assertIs(type(invocation), SynthesisInvocation)
+        self.assertEqual(
+            (invocation.attempt_id, invocation.contract, invocation.effective_input),
+            (
+                self.attempt_id,
+                self.jobs.load(self.job_id).contract,
+                self.jobs.load(self.job_id).generation_attempt(self.attempt_id).effective_input,
+            ),
+        )
+        mismatched_contract = replace(invocation.contract, model_snapshot="different-model")
+        calls_before_rejection = len(self.gateway.calls)
+        with self.assertRaises(ValidationError):
+            SynthesisInvocation(
+                invocation.attempt_id,
+                mismatched_contract,
+                invocation.effective_input,
+            )
+        self.assertEqual(len(self.gateway.calls), calls_before_rejection)
 
     def test_batch_rejects_exact_billable_character_total_above_caller_accepted_cap_before_side_effects(self) -> None:
         command = GeneratePendingPassagesCommand(
@@ -212,7 +277,7 @@ class GenerationApplicationTests(unittest.TestCase):
 
     def test_provider_response_without_one_final_success_event_fails_and_settles_without_publishing(self) -> None:
         self.gateway.result = SynthesisResult(
-            (), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42")
+            (), b"RIFF-invalid-event-stream", (), None, NonNegativeDecimal("42")
         )
 
         result = self.handler()(self.command())
@@ -227,7 +292,10 @@ class GenerationApplicationTests(unittest.TestCase):
             kind=ProviderEventKind.AUDIO,
             terminal_classification=None,
         )
-        self.gateway.result = SynthesisResult((partial,), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+        self.gateway.result = SynthesisResult(
+            (partial,), b"RIFF-invalid-event-stream", self.evidence_publications,
+            self.synthesis_result.raw_timing_reference, NonNegativeDecimal("42"),
+        )
 
         self.handler()(self.command())
 
@@ -237,7 +305,10 @@ class GenerationApplicationTests(unittest.TestCase):
         failure_terminal = replace(
             self.synthesis_result.events[0], terminal_classification=ProviderTerminalClass.FAILURE,
         )
-        self.gateway.result = SynthesisResult((failure_terminal,), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+        self.gateway.result = SynthesisResult(
+            (failure_terminal,), b"RIFF-invalid-event-stream", self.evidence_publications,
+            self.synthesis_result.raw_timing_reference, NonNegativeDecimal("42"),
+        )
 
         self.handler()(self.command())
 
@@ -256,7 +327,20 @@ class GenerationApplicationTests(unittest.TestCase):
         result = self.handler()(self.command())
 
         workspace = self.workspaces.load(self.attempt_id)
-        self.assertEqual((result.state, workspace.state, workspace.published_artifacts, self.budget.read(self.reservation_id).value), (AttemptState.FAILED, AttemptState.FAILED, (), "settled"))
+        self.assertEqual(
+            (
+                result.state,
+                workspace.state,
+                workspace.published_artifacts,
+                self.budget.read(self.reservation_id).value,
+            ),
+            (
+                AttemptState.FAILED,
+                AttemptState.FAILED,
+                self.evidence_publications,
+                "settled",
+            ),
+        )
         self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 1))
 
     def test_budget_commit_then_raise_reports_unknown_without_a_downgrade(self) -> None:
@@ -291,7 +375,9 @@ class GenerationApplicationTests(unittest.TestCase):
             self.budget.hold(held, "different reason")
 
     def test_invalid_provider_result_CAS_refusal_preserves_failed_workspace_and_settled_usage(self) -> None:
-        self.gateway.result = SynthesisResult((), b"RIFF-invalid-event-stream", (), NonNegativeDecimal("42"))
+        self.gateway.result = SynthesisResult(
+            (), b"RIFF-invalid-event-stream", (), None, NonNegativeDecimal("42")
+        )
         self.jobs.reject_on_save_calls.add(8)
 
         result = self.handler()(self.command())
@@ -342,6 +428,80 @@ class GenerationApplicationTests(unittest.TestCase):
             )
         )
         self.assertEqual((reconciled.revision, self.jobs.load(self.job_id).generation_attempts[0].state), (result.revision + 1, AttemptState.QUARANTINED))
+
+    def test_evidence_bearing_failures_persist_before_their_explicit_budget_disposition(self) -> None:
+        cases = (
+            (
+                SynthesisPreSendFailure,
+                SubmissionEvidence.DEFINITELY_NOT_SENT,
+                ProviderTerminalClass.DEFINITE_PRE_SEND_FAILURE,
+                NonNegativeDecimal("3"),
+                AttemptState.BLOCKED,
+                "release",
+            ),
+            (
+                SynthesisAmbiguousFailure,
+                SubmissionEvidence.AMBIGUOUS,
+                ProviderTerminalClass.AMBIGUOUS,
+                None,
+                AttemptState.UNKNOWN,
+                "hold",
+            ),
+            (
+                SynthesisSubmittedFailure,
+                SubmissionEvidence.COMPLETED,
+                ProviderTerminalClass.FAILURE,
+                NonNegativeDecimal("3"),
+                AttemptState.FAILED,
+                "settle",
+            ),
+        )
+        for failure_type, submission, terminal, usage, state, budget_action in cases:
+            with self.subTest(failure_type=failure_type.__name__):
+                self.setUp()
+                event = replace(self.synthesis_result.events[0], terminal_classification=terminal)
+                evidence = SynthesisFailureEvidence(
+                    submission, (event,), self.evidence_publications,
+                    self.synthesis_result.raw_timing_reference, usage,
+                    "fixture_provider_failure",
+                )
+                self.gateway.failure = failure_type(evidence)
+
+                result = self.handler()(self.command())
+                workspace = self.workspaces.load(self.attempt_id)
+
+                self.assertEqual((result.state, workspace.state), (state, state))
+                self.assertEqual(
+                    (workspace.events, workspace.published_artifacts, workspace.recovery_evidence),
+                    ((event,), self.evidence_publications, ("fixture_provider_failure",)),
+                )
+                self.assertEqual(self.budget.actions[-1][0], budget_action)
+
+    def test_submitted_failure_without_authoritative_usage_holds_failed_attempt_for_reconciliation(self) -> None:
+        event = replace(
+            self.synthesis_result.events[0], terminal_classification=ProviderTerminalClass.FAILURE
+        )
+        self.gateway.failure = SynthesisSubmittedFailure(SynthesisFailureEvidence(
+            SubmissionEvidence.COMPLETED, (event,), self.evidence_publications,
+            self.synthesis_result.raw_timing_reference, None, "usage_unavailable",
+        ))
+
+        result = self.handler()(self.command())
+
+        self.assertEqual((result.state, result.budget_disposition), (AttemptState.FAILED, "held"))
+        self.assertEqual(self.budget.actions[-1][0], "hold")
+
+    def test_unexpected_post_boundary_exception_is_sanitized_unknown_and_holds_budget(self) -> None:
+        self.gateway.mode = "unexpected"
+
+        result = self.handler()(self.command())
+        workspace = self.workspaces.load(self.attempt_id)
+
+        self.assertEqual((result.state, workspace.state), (AttemptState.UNKNOWN, AttemptState.UNKNOWN))
+        self.assertEqual(workspace.submission, SubmissionEvidence.AMBIGUOUS)
+        self.assertEqual(workspace.recovery_evidence, ("unexpected_synthesis_failure",))
+        self.assertNotIn("private provider exception text", repr(workspace))
+        self.assertEqual(self.budget.actions[-1][0], "hold")
 
     def test_authority_withdrawal_racing_after_provider_quarantines_artifact_and_settles_actual_usage(self) -> None:
         def withdraw() -> None:
@@ -394,14 +554,14 @@ class GenerationApplicationTests(unittest.TestCase):
 
     def test_post_provider_workspace_save_failure_holds_without_aggregate_CAS_or_provider_replay(self) -> None:
         self.workspaces.fail_next_save = False
-        # initial reservation workspace is saved first; fail the evidence save after the provider returns.
+        # Reserved, input-frozen and pre-call boundary workspaces precede provider evidence.
         original_save = self.workspaces.save
         saves = 0
 
         def fail_on_second_save(workspace):
             nonlocal saves
             saves += 1
-            if saves == 2:
+            if saves == 4:
                 self.workspaces.fail_next_save = True
             return original_save(workspace)
 
@@ -421,6 +581,91 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual((len(self.gateway.calls), len(self.store.calls)), (1, 1))
         self.assertEqual((result.budget_disposition, self.budget.read(self.reservation_id).value), ("unknown", "reserved"))
         self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "settle"])
+
+
+class SynthesisEvidenceContractTests(unittest.TestCase):
+    def evidence(self):
+        raw = ArtifactRef(ArtifactId(uuid(940)), digest("raw provider event"), 18, "application/json")
+        pcm = ArtifactRef(ArtifactId(uuid(941)), digest("partial pcm"), 10, "audio/pcm")
+        timing = ArtifactRef(ArtifactId(uuid(942)), digest("combined timing"), 16, "application/json")
+        event = ProviderEventEvidence(
+            ProviderEventId(uuid(943)), 0, ProviderEventKind.TERMINAL,
+            raw, raw.content_digest, NOW, "request", "response", pcm, timing,
+            "7", ProviderTerminalClass.SUCCESS,
+        )
+        publications = (
+            PublishedArtifact(raw, SafeRelativeArtifactPath("evidence/raw.json"), NOW),
+            PublishedArtifact(pcm, SafeRelativeArtifactPath("evidence/audio.pcm"), NOW),
+            PublishedArtifact(timing, SafeRelativeArtifactPath("evidence/timing.json"), NOW),
+        )
+        return event, publications, timing
+
+    def test_result_retains_contiguous_events_publications_timing_and_usage(self) -> None:
+        event, publications, timing = self.evidence()
+
+        result = SynthesisResult(
+            (event,), b"RIFF fixture", publications, timing, NonNegativeDecimal("7")
+        )
+
+        self.assertEqual(
+            (result.events, result.evidence_publications, result.raw_timing_reference, result.usage),
+            ((event,), publications, timing, NonNegativeDecimal("7")),
+        )
+        with self.assertRaises(ValidationError):
+            replace(result, evidence_publications=publications[1:])
+        with self.assertRaises(ValidationError):
+            replace(result, events=(replace(event, sequence=1),))
+        for changed_reference in (
+            ArtifactRef(
+                event.sanitized_raw_reference.artifact_id,
+                digest("different bytes"),
+                event.sanitized_raw_reference.byte_size,
+                event.sanitized_raw_reference.media_type,
+            ),
+            ArtifactRef(
+                event.sanitized_raw_reference.artifact_id,
+                event.sanitized_raw_reference.content_digest,
+                event.sanitized_raw_reference.byte_size + 1,
+                event.sanitized_raw_reference.media_type,
+            ),
+            ArtifactRef(
+                event.sanitized_raw_reference.artifact_id,
+                event.sanitized_raw_reference.content_digest,
+                event.sanitized_raw_reference.byte_size,
+                "text/plain",
+            ),
+        ):
+            with self.subTest(changed_reference=changed_reference):
+                mismatched = PublishedArtifact(
+                    changed_reference,
+                    publications[0].relative_location,
+                    publications[0].published_at,
+                )
+                with self.assertRaises(ValidationError):
+                    replace(result, evidence_publications=(mismatched, *publications[1:]))
+
+    def test_each_failure_category_carries_validated_immutable_sanitized_evidence(self) -> None:
+        event, publications, timing = self.evidence()
+        cases = (
+            (SynthesisPreSendFailure, SubmissionEvidence.DEFINITELY_NOT_SENT),
+            (SynthesisAmbiguousFailure, SubmissionEvidence.AMBIGUOUS),
+            (SynthesisSubmittedFailure, SubmissionEvidence.COMPLETED),
+        )
+        for failure_type, submission in cases:
+            with self.subTest(failure_type=failure_type.__name__):
+                evidence = SynthesisFailureEvidence(
+                    submission, (event,), publications, timing,
+                    NonNegativeDecimal("7"), "provider_terminal_failure",
+                )
+                failure = failure_type(evidence)
+                self.assertIs(failure.evidence, evidence)
+                self.assertEqual(str(failure), "provider_terminal_failure")
+
+        with self.assertRaises(ValidationError):
+            SynthesisFailureEvidence(
+                SubmissionEvidence.AMBIGUOUS, (event,), publications, timing,
+                None, "timeout: secret provider detail",
+            )
 
 
 if __name__ == "__main__":

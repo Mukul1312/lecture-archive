@@ -656,7 +656,11 @@ class AttemptWorkspaceEvidence:
                 AttemptState.COMPLETED,
             }
             and self.staged_artifacts.count(artifact.reference) == 1
-            and self.published_artifacts == (artifact,)
+            and self.published_artifacts.count(artifact) == 1
+            and sum(
+                publication.reference.media_type == "audio/wav"
+                for publication in self.published_artifacts
+            ) == 1
         )
 
 

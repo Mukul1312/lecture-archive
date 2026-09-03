@@ -131,6 +131,7 @@ from .ports import (
     RecipeCompileRequest,
     RecipeCompiler,
     SynthesisGateway,
+    SynthesisInvocation,
     TimingNormalizer,
     TimingNormalizationRequest,
     TimingSourcePassage,
@@ -166,6 +167,12 @@ from .results import (
     PresentationHandoffResult,
     SnapshotIssuedResult,
     TimedPackageResult,
+)
+from .synthesis_failures import (
+    SynthesisAmbiguousFailure,
+    SynthesisFailureEvidence,
+    SynthesisPreSendFailure,
+    SynthesisSubmittedFailure,
 )
 from .status import (
     project_authorization_history,
@@ -421,9 +428,14 @@ def _verified_workspace_artifact_and_media(
     artifact_evidence: ArtifactEvidenceVerifier,
     workspace: AttemptWorkspaceEvidence,
 ):
-    if len(workspace.published_artifacts) != 1:
-        raise ValidationError("recovery completion requires exactly one published output artifact")
-    artifact = workspace.published_artifacts[0]
+    audio_publications = tuple(
+        publication
+        for publication in workspace.published_artifacts
+        if publication.reference.media_type == "audio/wav"
+    )
+    if len(audio_publications) != 1:
+        raise ValidationError("recovery completion requires exactly one canonical audio publication")
+    artifact = audio_publications[0]
     media = artifact_evidence.recover_media(workspace, artifact)
     if type(media) is not DecodedMediaFacts or media.all_digital_silence:
         raise ValidationError("recovery completion requires verified non-silent decoded media")
@@ -773,9 +785,11 @@ def _workspace(
     *,
     effective_input=None,
     events=(),
+    publications=(),
     artifact=None,
     recovery=(),
 ):
+    all_publications = publications + (() if artifact is None else (artifact,))
     return AttemptWorkspaceEvidence(
         workspace_id,
         AttemptKind.GENERATION,
@@ -788,8 +802,8 @@ def _workspace(
         None if effective_input is None else effective_input.request_digest,
         submission,
         events,
-        () if artifact is None else (artifact.reference,),
-        () if artifact is None else (artifact,),
+        tuple(publication.reference for publication in all_publications),
+        all_publications,
         recovery,
         state,
     )
@@ -844,7 +858,9 @@ class GenerateTakeHandler:
             _workspace(
                 workspace_id, job, attempt_id, reservation_id, preview,
                 AttemptState.FAILED, SubmissionEvidence.COMPLETED,
-                effective_input=effective_input, events=events, recovery=(reason,),
+                effective_input=effective_input, events=events,
+                publications=generated.evidence_publications,
+                recovery=(reason,),
             ),
             "settle", generated.usage,
         )
@@ -865,6 +881,70 @@ class GenerateTakeHandler:
             AttemptState.FAILED,
             None,
             "settled",
+        )
+
+    def _record_synthesis_failure(
+        self,
+        command: GenerateTakeCommand,
+        job,
+        attempt_id: GenerationAttemptId,
+        reservation_id: BudgetReservationId,
+        workspace_id: AttemptWorkspaceId,
+        preview: GenerationPreview,
+        effective_input: EffectiveSynthesisInput,
+        evidence: SynthesisFailureEvidence,
+        state: AttemptState,
+        budget_action: str,
+        aggregate_reason: str,
+    ) -> GenerationRunResult:
+        budget_fact = evidence.usage if budget_action == "settle" else evidence.reason_code
+        disposition = self._persist_workspace_then_finalize_budget(
+            command,
+            job,
+            attempt_id,
+            reservation_id,
+            _workspace(
+                workspace_id,
+                job,
+                attempt_id,
+                reservation_id,
+                preview,
+                state,
+                evidence.submission,
+                effective_input=effective_input,
+                events=evidence.events,
+                publications=evidence.publications,
+                recovery=(evidence.reason_code,),
+            ),
+            budget_action,
+            budget_fact,
+        )
+        budget_disposition = {
+            "release": "released",
+            "hold": "held",
+            "settle": "settled",
+        }[budget_action]
+        if disposition is not None:
+            return self._recovery_required(command, attempt_id, disposition)
+        previous = job.revision
+        job.finalize_generation_outcome(
+            attempt_id,
+            state,
+            evidence.submission,
+            aggregate_reason,
+            self.clock.now(),
+            expected_revision=previous,
+        )
+        if not self.repository.save(job, previous):
+            return self._recovery_required(command, attempt_id, budget_disposition)
+        return GenerationRunResult(
+            command.command_id,
+            job.job_id,
+            job.revision,
+            attempt_id,
+            state,
+            None,
+            budget_disposition,
         )
 
     def _recovery_required(
@@ -1011,6 +1091,18 @@ class GenerateTakeHandler:
         previous = job.revision
         job.freeze_generation_input(attempt_id, effective_input, expected_revision=previous)
         _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        self.workspaces.save(
+            _workspace(
+                workspace_id,
+                job,
+                attempt_id,
+                reservation_id,
+                preview,
+                AttemptState.INPUT_FROZEN,
+                SubmissionEvidence.NOT_STARTED,
+                effective_input=effective_input,
+            )
+        )
 
         # This second read is intentionally adjacent to the persisted external-work transition.
         try:
@@ -1038,9 +1130,73 @@ class GenerateTakeHandler:
         previous = job.revision
         job.mark_generation_external_work_started(attempt_id, self.clock.now(), expected_revision=previous)
         _cas_or_conflict(self.repository.save(job, previous), "narration job")
+        try:
+            self.workspaces.save(
+                _workspace(
+                    workspace_id,
+                    job,
+                    attempt_id,
+                    reservation_id,
+                    preview,
+                    AttemptState.EXTERNAL_WORK_STARTED,
+                    SubmissionEvidence.NOT_STARTED,
+                    effective_input=effective_input,
+                )
+            )
+        except Exception:
+            try:
+                self.budget.hold(reservation_id, "external work boundary persistence failed")
+            except Exception:
+                return self._recovery_required(command, attempt_id, "unknown")
+            return self._recovery_required(command, attempt_id, "held")
 
         try:
-            generated = self.gateway.synthesize(effective_input)
+            generated = self.gateway.synthesize(
+                SynthesisInvocation(attempt_id, job.contract, effective_input)
+            )
+        except SynthesisPreSendFailure as error:
+            return self._record_synthesis_failure(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                error.evidence,
+                AttemptState.BLOCKED,
+                "release",
+                "external gateway proved request was not sent",
+            )
+        except SynthesisAmbiguousFailure as error:
+            return self._record_synthesis_failure(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                error.evidence,
+                AttemptState.UNKNOWN,
+                "hold",
+                "external gateway outcome is ambiguous",
+            )
+        except SynthesisSubmittedFailure as error:
+            action = "settle" if error.evidence.usage is not None else "hold"
+            return self._record_synthesis_failure(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                error.evidence,
+                AttemptState.FAILED,
+                action,
+                "external gateway recorded a definitive failure",
+            )
         except DefinitePreSendFailure as error:
             disposition = self._persist_workspace_then_finalize_budget(
                 command, job, attempt_id, reservation_id,
@@ -1104,6 +1260,28 @@ class GenerateTakeHandler:
             if not self.repository.save(job, previous):
                 return self._recovery_required(command, attempt_id, "held")
             return GenerationRunResult(command.command_id, job.job_id, job.revision, attempt_id, AttemptState.FAILED, None, "held")
+        except Exception:
+            evidence = SynthesisFailureEvidence(
+                SubmissionEvidence.AMBIGUOUS,
+                (),
+                (),
+                None,
+                None,
+                "unexpected_synthesis_failure",
+            )
+            return self._record_synthesis_failure(
+                command,
+                job,
+                attempt_id,
+                reservation_id,
+                workspace_id,
+                preview,
+                effective_input,
+                evidence,
+                AttemptState.UNKNOWN,
+                "hold",
+                "unexpected synthesis failure requires reconciliation",
+            )
 
         event_stream_is_contiguous = (
             type(generated.events) is tuple
@@ -1184,7 +1362,8 @@ class GenerateTakeHandler:
             _workspace(
                 workspace_id, job, attempt_id, reservation_id, preview,
                 AttemptState.ARTIFACTS_PUBLISHED, SubmissionEvidence.COMPLETED,
-                effective_input=effective_input, events=generated.events, artifact=artifact,
+                effective_input=effective_input, events=generated.events,
+                publications=generated.evidence_publications, artifact=artifact,
             ),
             "settle", generated.usage,
         )
@@ -1230,7 +1409,7 @@ class GenerateTakeHandler:
             effective_input,
             artifact,
             media,
-            generated.raw_timing_artifacts[0] if generated.raw_timing_artifacts else None,
+            generated.raw_timing_reference,
             self.clock.now(),
         )
         previous = job.revision

@@ -290,19 +290,24 @@ class FakeSynthesisGateway:
     def __init__(self, result: SynthesisResult) -> None:
         self.result = result
         self.mode = "success"
+        self.failure = None
         self.calls = []
         self.after_call = None
 
-    def synthesize(self, effective_input):
-        self.calls.append(effective_input)
+    def synthesize(self, invocation):
+        self.calls.append(invocation)
         if self.after_call is not None:
             self.after_call()
+        if self.failure is not None:
+            raise self.failure
         if self.mode == "pre_send":
             raise DefinitePreSendFailure("fake definitely not sent")
         if self.mode == "ambiguous":
             raise AmbiguousExternalFailure("fake ambiguous provider outcome")
         if self.mode == "failed":
             raise ExternalWorkFailed("fake definitive provider failure")
+        if self.mode == "unexpected":
+            raise RuntimeError("private provider exception text")
         return self.result
 
 
@@ -384,10 +389,33 @@ class FakeWorkspaceStore:
                 before is None or before == after
                 for before, after in zip(immutable_binding, candidate_binding, strict=True)
             )
+            successors = {
+                AttemptState.RESERVED: {
+                    AttemptState.INPUT_FROZEN, AttemptState.EXTERNAL_WORK_STARTED,
+                    AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED,
+                    AttemptState.BLOCKED, AttemptState.FAILED, AttemptState.UNKNOWN,
+                    AttemptState.QUARANTINED,
+                },
+                AttemptState.INPUT_FROZEN: {
+                    AttemptState.EXTERNAL_WORK_STARTED, AttemptState.BLOCKED,
+                    AttemptState.FAILED, AttemptState.UNKNOWN, AttemptState.QUARANTINED,
+                },
+                AttemptState.EXTERNAL_WORK_STARTED: {
+                    AttemptState.ARTIFACTS_STAGED, AttemptState.ARTIFACTS_PUBLISHED,
+                    AttemptState.BLOCKED, AttemptState.FAILED, AttemptState.UNKNOWN,
+                    AttemptState.QUARANTINED,
+                },
+                AttemptState.ARTIFACTS_STAGED: {
+                    AttemptState.ARTIFACTS_PUBLISHED, AttemptState.FAILED,
+                    AttemptState.UNKNOWN, AttemptState.QUARANTINED,
+                },
+                AttemptState.ARTIFACTS_PUBLISHED: {
+                    AttemptState.COMPLETED, AttemptState.QUARANTINED,
+                },
+            }
             if (
                 not compatible_binding
-                or existing.state is not AttemptState.RESERVED
-                or existing.state is workspace.state
+                or workspace.state not in successors.get(existing.state, set())
             ):
                 raise ValidationError("fake workspace evidence is immutable once saved")
         self.values[workspace.attempt_id] = workspace
@@ -453,12 +481,20 @@ class FakeArtifactEvidenceVerifier:
 
     def recover_media(self, workspace, artifact):
         self.verify(workspace)
+        audio_publications = tuple(
+            publication
+            for publication in workspace.published_artifacts
+            if publication.reference.media_type == "audio/wav"
+        ) if type(workspace) is AttemptWorkspaceEvidence else ()
         if (
             type(workspace) is not AttemptWorkspaceEvidence
-            or workspace.published_artifacts != (artifact,)
+            or artifact.reference.media_type != "audio/wav"
+            or audio_publications != (artifact,)
+            or workspace.staged_artifacts.count(artifact.reference) != 1
+            or workspace.published_artifacts.count(artifact) != 1
             or self.media is None
         ):
-            raise ValidationError("fake recovery requires the workspace's exact configured publication")
+            raise ValidationError("fake recovery requires one exact configured audio publication")
         if type(self.media) is not DecodedMediaFacts or self.media.all_digital_silence:
             raise ValidationError("fake recovery media must be configured non-silent decoded facts")
         return self.media

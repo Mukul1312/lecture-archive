@@ -18,7 +18,11 @@ from heritage_archive.kernel import ArtifactId, ValidationError
 from heritage_archive.contexts.narrator_voice.application.ports import DryPcmSource
 from heritage_archive.contexts.narrator_voice.domain.evidence import PassageOffset
 from heritage_archive.contexts.narrator_voice.domain.ids import PassageId
-from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole, SafeRelativeArtifactPath
+from heritage_archive.contexts.narrator_voice.domain.values import (
+    CanonicalAudioFacts,
+    ComponentRole,
+    SafeRelativeArtifactPath,
+)
 from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
     FilesystemArtifactEvidenceVerifier,
     FilesystemArtifactStore,
@@ -27,6 +31,7 @@ from heritage_archive.contexts.narrator_voice.infrastructure.local_root import L
 from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import (
     CanonicalWavInspector,
     ExactPcmAssembler,
+    encode_canonical_pcm16_wav,
 )
 from tests.heritage_archive.narrator_voice.fixtures import NOW, digest, uuid
 
@@ -35,6 +40,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class CanonicalPcmAudioTests(unittest.TestCase):
+    def test_public_encoder_writes_exact_canonical_header_and_preserves_pcm_bytes(self) -> None:
+        pcm = b"\x01\x80\xff\x7f"
+
+        payload = encode_canonical_pcm16_wav(pcm, CanonicalAudioFacts())
+
+        self.assertEqual(
+            payload,
+            b"RIFF\x28\x00\x00\x00WAVE"
+            b"fmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00"
+            b"\x88\x58\x01\x00\x02\x00\x10\x00"
+            b"data\x04\x00\x00\x00\x01\x80\xff\x7f",
+        )
+        self.assertEqual(_frames(payload), pcm)
+        with self.assertRaises(ValidationError):
+            encode_canonical_pcm16_wav(b"\x01", CanonicalAudioFacts())
+
     def test_inspector_accepts_only_non_silent_pcm16_mono_44k1_riff_wave(self) -> None:
         inspector = CanonicalWavInspector()
         payload = _wav(b"\x01\x00\x02\x00")

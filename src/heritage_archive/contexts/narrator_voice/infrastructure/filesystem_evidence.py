@@ -181,11 +181,21 @@ class FilesystemArtifactEvidenceVerifier:
             raise ValidationError("media recovery requires exact workspace and publication evidence")
         if self._media_inspector is None:
             raise ValidationError("media recovery requires an injected MediaInspector")
+        verified = self.verify(workspace)
+        if not verified.artifact_verified or not verified.publication_verified:
+            raise ValidationError("media recovery requires a fully verified workspace")
+        audio_publications = tuple(
+            publication
+            for publication in workspace.published_artifacts
+            if publication.reference.media_type == "audio/wav"
+        )
         if (
-            workspace.staged_artifacts != (artifact.reference,)
-            or workspace.published_artifacts != (artifact,)
+            artifact.reference.media_type != "audio/wav"
+            or audio_publications != (artifact,)
+            or workspace.staged_artifacts.count(artifact.reference) != 1
+            or workspace.published_artifacts.count(artifact) != 1
         ):
-            raise ValidationError("media recovery requires the workspace's exact single publication")
+            raise ValidationError("media recovery requires one exact canonical audio publication")
         payload = self.read_verified_bytes(artifact)
         try:
             media = self._media_inspector.inspect_canonical_wav(payload)
@@ -471,6 +481,8 @@ def _workspace_evidence_stage(workspace: AttemptWorkspaceEvidence) -> RecoverySt
         return RecoveryStage.ARTIFACTS_PUBLISHED
     if workspace.staged_artifacts:
         return RecoveryStage.ARTIFACTS_STAGED
+    if workspace.state is AttemptState.EXTERNAL_WORK_STARTED:
+        return RecoveryStage.EXTERNAL_WORK_STARTED
     if workspace.submission in {SubmissionEvidence.STARTED, SubmissionEvidence.COMPLETED, SubmissionEvidence.AMBIGUOUS}:
         return RecoveryStage.EXTERNAL_WORK_STARTED
     if workspace.effective_input_digest is not None or workspace.frozen_plan_digest is not None:

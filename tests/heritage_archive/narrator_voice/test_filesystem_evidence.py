@@ -33,6 +33,11 @@ from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence
     FilesystemArtifactStore,
 )
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
+from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import (
+    CanonicalWavInspector,
+    encode_canonical_pcm16_wav,
+)
+from heritage_archive.contexts.narrator_voice.domain.values import CanonicalAudioFacts
 from tests.heritage_archive.narrator_voice.fixtures import NOW, digest, uuid
 
 
@@ -40,6 +45,73 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemEvidenceContracts(unittest.TestCase):
+    def test_multi_publication_workspace_recovers_exactly_one_requested_canonical_audio(self) -> None:
+        with self._storage_root() as root:
+            store = FilesystemArtifactStore(
+                root,
+                _IdentifierSource([
+                    ArtifactId(uuid(323)), ArtifactId(uuid(324)), ArtifactId(uuid(325)),
+                ]),
+            )
+            evidence = store.publish(
+                SafeRelativeArtifactPath("evidence/event.json"), b"{}", "application/json", NOW
+            )
+            audio = store.publish(
+                SafeRelativeArtifactPath("takes/canonical.wav"),
+                encode_canonical_pcm16_wav(b"\x01\x00\x02\x00", CanonicalAudioFacts()),
+                "audio/wav", NOW,
+            )
+            other_audio = store.publish(
+                SafeRelativeArtifactPath("takes/other.wav"),
+                encode_canonical_pcm16_wav(b"\x03\x00\x04\x00", CanonicalAudioFacts()),
+                "audio/wav", NOW,
+            )
+            workspace = self._published_workspace(
+                audio,
+                publications=(evidence, audio),
+            )
+            verifier = FilesystemArtifactEvidenceVerifier(root, CanonicalWavInspector())
+
+            facts = verifier.verify(workspace)
+            media = verifier.recover_media(workspace, audio)
+
+            self.assertTrue(facts.artifact_verified and facts.publication_verified)
+            self.assertEqual(media.sample_count, 2)
+            self.assertTrue(workspace.matches_completion_binding(
+                attempt_kind=workspace.attempt_kind,
+                aggregate_id=workspace.aggregate_id,
+                attempt_id=workspace.attempt_id,
+                reservation_revision=workspace.reservation_revision,
+                artifact=audio,
+                budget_reservation_id=workspace.budget_reservation_id,
+                preview_digest=workspace.preview_digest,
+                effective_input_digest=workspace.effective_input_digest,
+                frozen_plan_digest=workspace.frozen_plan_digest,
+            ))
+
+            missing = self._published_workspace(audio, publications=(evidence,))
+            duplicate = self._published_workspace(audio, publications=(evidence, audio, audio))
+            competing = self._published_workspace(
+                audio, publications=(evidence, audio, other_audio)
+            )
+            with self.assertRaises(ValidationError):
+                verifier.recover_media(missing, audio)
+            with self.assertRaises(ValidationError):
+                verifier.recover_media(duplicate, audio)
+            with self.assertRaises(ValidationError):
+                verifier.recover_media(competing, audio)
+            self.assertFalse(competing.matches_completion_binding(
+                attempt_kind=competing.attempt_kind,
+                aggregate_id=competing.aggregate_id,
+                attempt_id=competing.attempt_id,
+                reservation_revision=competing.reservation_revision,
+                artifact=audio,
+                budget_reservation_id=competing.budget_reservation_id,
+                preview_digest=competing.preview_digest,
+                effective_input_digest=competing.effective_input_digest,
+                frozen_plan_digest=competing.frozen_plan_digest,
+            ))
+
     def test_publish_binds_exact_bytes_to_safe_location_and_delays_identity_until_available(self) -> None:
         """Issuing an ID before no-clobber availability can orphan an artifact identity."""
         payload = b"RIFF exact immutable narration bytes"
@@ -211,7 +283,9 @@ class FilesystemEvidenceContracts(unittest.TestCase):
     def _published_workspace(
         publication: PublishedArtifact,
         staged_artifacts: tuple[ArtifactRef, ...] | None = None,
+        publications: tuple[PublishedArtifact, ...] | None = None,
     ) -> AttemptWorkspaceEvidence:
+        exact_publications = (publication,) if publications is None else publications
         return AttemptWorkspaceEvidence(
             AttemptWorkspaceId(uuid(310)),
             AttemptKind.GENERATION,
@@ -224,8 +298,8 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             digest("input"),
             SubmissionEvidence.COMPLETED,
             (),
-            (publication.reference,) if staged_artifacts is None else staged_artifacts,
-            (publication,),
+            tuple(item.reference for item in exact_publications) if staged_artifacts is None else staged_artifacts,
+            exact_publications,
             (),
             AttemptState.ARTIFACTS_PUBLISHED,
         )

@@ -49,7 +49,7 @@ class ExactPcmAssembler:
                 gap = gaps_samples[index]
                 frames.append(_zero_pcm_samples(gap))
                 cursor += gap
-        payload = _encode_canonical_wav(b"".join(frames))
+        payload = encode_canonical_pcm16_wav(b"".join(frames), CanonicalAudioFacts())
         media, _ = _decode_canonical_wav(payload)
         return DryAssemblyResult(payload, media, tuple(projected_offsets), ())
 
@@ -77,7 +77,10 @@ class ExactPcmAssembler:
         _validate_offsets_within_source(intro_offsets, intro_media.sample_count)
         _validate_offsets_within_source(diary_offsets, diary_media.sample_count)
         diary_start = intro_media.sample_count + gap_samples
-        payload = _encode_canonical_wav(intro_pcm + _zero_pcm_samples(gap_samples) + diary_pcm)
+        payload = encode_canonical_pcm16_wav(
+            intro_pcm + _zero_pcm_samples(gap_samples) + diary_pcm,
+            CanonicalAudioFacts(),
+        )
         media, _ = _decode_canonical_wav(payload)
         components = (
             ComponentOffset(
@@ -139,15 +142,18 @@ def _decode_canonical_wav(payload: bytes) -> tuple[DecodedMediaFacts, bytes]:
     )
 
 
-def _encode_canonical_wav(pcm_frames: bytes) -> bytes:
-    if type(pcm_frames) is not bytes or not pcm_frames or len(pcm_frames) % 2 != 0:
-        raise ValidationError("assembled PCM frames must be nonempty complete PCM16 samples")
+def encode_canonical_pcm16_wav(raw_pcm: bytes, audio: CanonicalAudioFacts) -> bytes:
+    """Wrap exact even-length PCM16 bytes in the fixed canonical RIFF/WAVE header."""
+    if type(audio) is not CanonicalAudioFacts:
+        raise ValidationError("canonical PCM encoding requires exact canonical audio facts")
+    if type(raw_pcm) is not bytes or not raw_pcm or len(raw_pcm) % 2 != 0:
+        raise ValidationError("canonical PCM must contain nonempty complete PCM16 samples")
     output = BytesIO()
     with wave.open(output, "wb") as destination:
-        destination.setnchannels(1)
-        destination.setsampwidth(2)
-        destination.setframerate(44_100)
-        destination.writeframes(pcm_frames)
+        destination.setnchannels(audio.channels)
+        destination.setsampwidth(audio.sample_width_bits // 8)
+        destination.setframerate(audio.sample_rate_hz)
+        destination.writeframes(raw_pcm)
     return output.getvalue()
 
 

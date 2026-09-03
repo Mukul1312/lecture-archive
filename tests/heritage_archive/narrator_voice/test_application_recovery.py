@@ -31,6 +31,9 @@ from heritage_archive.contexts.narrator_voice.application.ports import (
     ProviderEventVerifier,
     AttemptWorkspaceVerifier,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
+    FilesystemAttemptWorkspaceVerifier,
+)
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptState,
     DecodedMediaFacts,
@@ -113,6 +116,26 @@ def facts(**changes: object) -> RecoveryFacts:
 
 
 class RecoveryDecisionTests(unittest.TestCase):
+    def test_explicit_pre_call_workspace_is_external_started_even_before_submission(self) -> None:
+        fixture = generation_fixture.GenerationApplicationTests(
+            "test_input_and_external_boundaries_are_durable_before_the_gateway_call"
+        )
+        fixture.setUp()
+        fixture.handler()(fixture.command())
+        workspace = fixture.workspaces.saves[2]
+        attempt = fixture.jobs.load(fixture.job_id).generation_attempt(fixture.attempt_id)
+
+        verified = FilesystemAttemptWorkspaceVerifier().verify(
+            workspace,
+            GenerationRecoveryTarget(fixture.job_id, fixture.attempt_id, fixture.reservation_id),
+            AttemptState.EXTERNAL_WORK_STARTED,
+            attempt.reservation_revision,
+            attempt.effective_input.request_digest,
+        )
+
+        self.assertEqual(workspace.submission, SubmissionEvidence.NOT_STARTED)
+        self.assertEqual(verified.last_confirmed_stage, RecoveryStage.EXTERNAL_WORK_STARTED)
+
     def test_recovery_requires_separate_trusted_workspace_provider_artifact_and_budget_ports(self) -> None:
         for port in (
             AttemptWorkspaceVerifier,
