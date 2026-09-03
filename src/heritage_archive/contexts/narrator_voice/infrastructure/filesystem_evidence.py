@@ -97,8 +97,7 @@ class FilesystemArtifactEvidenceVerifier:
         published_references = tuple(item.reference for item in workspace.published_artifacts)
         locations_match_staging = workspace.staged_artifacts == published_references
         bytes_match_publications = publication_observed and all(
-            _publication_matches(self._root, publication)
-            for publication in workspace.published_artifacts
+            self._publication_matches(publication) for publication in workspace.published_artifacts
         )
         verified = (
             artifact_observed
@@ -113,6 +112,34 @@ class FilesystemArtifactEvidenceVerifier:
             verified,
         )
 
+    def read_verified_bytes(self, publication: PublishedArtifact) -> bytes:
+        """Return immutable payload bytes only after the publication evidence matches."""
+        if type(publication) is not PublishedArtifact:
+            raise ValidationError("artifact byte read requires a PublishedArtifact")
+        try:
+            destination = _artifact_path(self._root, publication.relative_location)
+            if not os.path.lexists(destination):
+                raise ValidationError("published artifact is missing")
+            _reject_existing_reparse_point(destination)
+            if not destination.is_file():
+                raise ValidationError("published artifact must be a regular file")
+            payload = destination.read_bytes()
+        except OSError as error:
+            raise ValidationError("published artifact cannot be read safely") from error
+        if (
+            ContentDigest.from_bytes(payload) != publication.reference.content_digest
+            or len(payload) != publication.reference.byte_size
+        ):
+            raise ValidationError("published artifact bytes do not match immutable evidence")
+        return payload
+
+    def _publication_matches(self, publication: PublishedArtifact) -> bool:
+        try:
+            self.read_verified_bytes(publication)
+        except ValidationError:
+            return False
+        return True
+
 
 def _validate_media_type(value: object) -> str:
     media_type = require_canonical_text(value, field="media_type", nonempty=True)
@@ -125,18 +152,6 @@ def _validate_publication_time(value: object) -> datetime:
     if type(value) is not datetime or value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(value):
         raise ValidationError("artifact publication time must be an aware UTC datetime")
     return value
-
-
-def _publication_matches(root: LocalNarrationRoot, publication: PublishedArtifact) -> bool:
-    try:
-        destination = _artifact_path(root, publication.relative_location)
-        payload = destination.read_bytes()
-    except (OSError, ValidationError):
-        return False
-    return (
-        ContentDigest.from_bytes(payload) == publication.reference.content_digest
-        and len(payload) == publication.reference.byte_size
-    )
 
 
 def _artifact_path(root: LocalNarrationRoot, location: SafeRelativeArtifactPath) -> Path:

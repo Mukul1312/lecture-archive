@@ -146,6 +146,38 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             self.assertEqual((facts.artifact_observed, facts.artifact_verified), (True, False))
             self.assertEqual((facts.publication_observed, facts.publication_verified), (True, False))
 
+    def test_read_verified_bytes_returns_only_the_exact_immutable_payload(self) -> None:
+        """Audio assembly must not accept a safe path without its byte evidence."""
+        payload = b"verified local PCM container"
+        with self._storage_root() as root:
+            publication = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(321))])).publish(
+                SafeRelativeArtifactPath("takes/verified.wav"), payload, "audio/wav", NOW
+            )
+            verifier = FilesystemArtifactEvidenceVerifier(root)
+
+            self.assertEqual(verifier.read_verified_bytes(publication), payload)
+
+            (root.artifacts / "takes" / "verified.wav").write_bytes(b"tampered")
+            with self.assertRaises(ValidationError):
+                verifier.read_verified_bytes(publication)
+
+    def test_read_verified_bytes_refuses_reparse_paths_and_non_publication_values(self) -> None:
+        """A direct byte reader must preserve the same local-path boundary as publication."""
+        payload = b"immutable verifier path boundary"
+        with self._storage_root() as root:
+            publication = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(322))])).publish(
+                SafeRelativeArtifactPath("takes/reparse.wav"), payload, "audio/wav", NOW
+            )
+            verifier = FilesystemArtifactEvidenceVerifier(root)
+            with self.assertRaises(ValidationError):
+                verifier.read_verified_bytes(object())  # type: ignore[arg-type]
+            with patch(
+                "heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence._is_reparse_point",
+                side_effect=lambda path: path == root.artifacts / "takes" / "reparse.wav",
+            ):
+                with self.assertRaisesRegex(ValidationError, "reparse"):
+                    verifier.read_verified_bytes(publication)
+
     def test_verifier_refuses_an_extra_unpublished_staged_artifact(self) -> None:
         """Treating staged containment as enough would accept an unpaired artifact in recovery evidence."""
         payload = b"paired artifact bytes"
