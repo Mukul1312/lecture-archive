@@ -13,7 +13,18 @@ SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ArtifactId, ArtifactRef, ContentDigest, ValidationError
+from heritage_archive.kernel import (
+    ArtifactId,
+    ArtifactRef,
+    ContentDigest,
+    ValidationError,
+    canonical_json,
+    parse_strict_json,
+)
+from heritage_archive.contexts.narrator_voice.application.schema_v1 import (
+    decode_schema_v1,
+    encode_schema_v1,
+)
 from heritage_archive.contexts.narrator_voice.domain.evidence import (
     AttemptKind,
     AttemptState,
@@ -43,6 +54,7 @@ from heritage_archive.contexts.narrator_voice.domain.values import SafeRelativeA
 from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence import (
     FilesystemArtifactEvidenceVerifier,
     FilesystemArtifactStore,
+    FilesystemAttemptWorkspaceStore,
     FilesystemAttemptWorkspaceVerifier,
     FilesystemProviderEventVerifier,
 )
@@ -59,6 +71,75 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemEvidenceContracts(unittest.TestCase):
+    def test_workspace_store_loads_legacy_record_missing_only_raw_timing_reference(self) -> None:
+        with self._storage_root() as root:
+            workspace = self._published_workspace(
+                PublishedArtifact(
+                    ArtifactRef(
+                        ArtifactId(uuid(332)),
+                        digest("legacy canonical audio"),
+                        22,
+                        "audio/wav",
+                    ),
+                    SafeRelativeArtifactPath("takes/legacy.wav"),
+                    NOW,
+                )
+            )
+            legacy = self._legacy_workspace_record(workspace)
+            path = (
+                root.attempts
+                / workspace.attempt_kind.value
+                / f"{workspace.attempt_id.value}.json"
+            )
+            path.parent.mkdir()
+            path.write_bytes(legacy)
+
+            with self.assertRaises(ValidationError):
+                decode_schema_v1(legacy, AttemptWorkspaceEvidence)
+            loaded = FilesystemAttemptWorkspaceStore(root).load(workspace.attempt_id)
+
+            self.assertEqual(loaded, workspace)
+            self.assertIsNone(loaded.raw_timing_reference)
+
+    def test_workspace_store_legacy_read_migration_rejects_unknown_or_other_missing_fields(self) -> None:
+        with self._storage_root() as root:
+            publication = PublishedArtifact(
+                ArtifactRef(
+                    ArtifactId(uuid(333)),
+                    digest("strict legacy canonical audio"),
+                    29,
+                    "audio/wav",
+                ),
+                SafeRelativeArtifactPath("takes/strict-legacy.wav"),
+                NOW,
+            )
+            workspace = self._published_workspace(publication)
+            path = (
+                root.attempts
+                / workspace.attempt_kind.value
+                / f"{workspace.attempt_id.value}.json"
+            )
+            path.parent.mkdir()
+            legacy_envelope = parse_strict_json(
+                self._legacy_workspace_record(workspace)
+            )
+            unknown = dict(legacy_envelope)
+            unknown_payload = dict(legacy_envelope["payload"])
+            unknown_payload["unknown"] = True
+            unknown["payload"] = unknown_payload
+            missing = dict(legacy_envelope)
+            missing_payload = dict(legacy_envelope["payload"])
+            del missing_payload["state"]
+            missing["payload"] = missing_payload
+
+            for invalid in (unknown, missing):
+                with self.subTest(payload_fields=sorted(invalid["payload"])):
+                    path.write_bytes(canonical_json(invalid))
+                    with self.assertRaises(ValidationError):
+                        FilesystemAttemptWorkspaceStore(root).load(
+                            workspace.attempt_id
+                        )
+
     def test_provider_evidence_only_is_not_artifact_complete_or_recoverable(self) -> None:
         with self._storage_root() as root:
             evidence = FilesystemArtifactStore(
@@ -401,6 +482,14 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             (),
             AttemptState.ARTIFACTS_PUBLISHED,
         )
+
+    @staticmethod
+    def _legacy_workspace_record(workspace: AttemptWorkspaceEvidence) -> bytes:
+        envelope = parse_strict_json(encode_schema_v1(workspace))
+        payload = dict(envelope["payload"])
+        del payload["raw_timing_reference"]
+        envelope["payload"] = payload
+        return canonical_json(envelope)
 
     def _storage_root(self):
         temporary_directory = tempfile.TemporaryDirectory()

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
 import stat
 
-from heritage_archive.kernel import ArtifactId, ArtifactRef, ContentDigest, ValidationError, require_canonical_text
+from heritage_archive.kernel import (
+    ArtifactId,
+    ArtifactRef,
+    ContentDigest,
+    ValidationError,
+    canonical_json,
+    parse_strict_json,
+    require_canonical_text,
+)
 from heritage_archive.platform.storage.local_files import (
     PublicationEvidenceMismatch,
     SingleWriterFileLock,
@@ -30,7 +39,7 @@ from ..application.recovery import (
     RecoveryStage,
     RecoveryTarget,
 )
-from ..application.schema_v1 import decode_schema_v1, encode_schema_v1
+from ..application.schema_v1 import SCHEMA_VERSION, decode_schema_v1, encode_schema_v1
 from ..domain.evidence import (
     AttemptKind,
     AttemptState,
@@ -212,6 +221,46 @@ class FilesystemArtifactEvidenceVerifier:
         return media
 
 
+_WORKSPACE_SCHEMA_V1_FIELDS = {
+    "__type__",
+    *(field.name for field in fields(AttemptWorkspaceEvidence)),
+}
+_LEGACY_WORKSPACE_SCHEMA_V1_FIELDS = (
+    _WORKSPACE_SCHEMA_V1_FIELDS - {"raw_timing_reference"}
+)
+
+
+def _decode_workspace_schema_v1(raw: bytes) -> AttemptWorkspaceEvidence:
+    """Read the sole pre-field workspace shape without weakening schema-v1."""
+    try:
+        return decode_schema_v1(raw, AttemptWorkspaceEvidence)
+    except ValidationError as strict_error:
+        try:
+            envelope = parse_strict_json(raw)
+        except ValidationError:
+            raise strict_error
+        if (
+            canonical_json(envelope) != raw
+            or type(envelope) is not dict
+            or set(envelope) != {"schema_version", "record_type", "payload"}
+            or type(envelope["schema_version"]) is not int
+            or envelope["schema_version"] != SCHEMA_VERSION
+            or envelope["record_type"] != AttemptWorkspaceEvidence.__name__
+            or type(envelope["payload"]) is not dict
+            or set(envelope["payload"]) != _LEGACY_WORKSPACE_SCHEMA_V1_FIELDS
+            or envelope["payload"].get("__type__")
+            != AttemptWorkspaceEvidence.__name__
+        ):
+            raise strict_error
+        migrated_payload = dict(envelope["payload"])
+        migrated_payload["raw_timing_reference"] = None
+        migrated_envelope = dict(envelope)
+        migrated_envelope["payload"] = migrated_payload
+        return decode_schema_v1(
+            canonical_json(migrated_envelope), AttemptWorkspaceEvidence
+        )
+
+
 class FilesystemAttemptWorkspaceStore:
     """Durably replaces one canonical evidence file per nominal attempt identity."""
 
@@ -232,7 +281,7 @@ class FilesystemAttemptWorkspaceStore:
         try:
             if not path.is_file():
                 raise ValidationError("attempt workspace evidence must be a regular file")
-            workspace = decode_schema_v1(path.read_bytes(), AttemptWorkspaceEvidence)
+            workspace = _decode_workspace_schema_v1(path.read_bytes())
         except (OSError, TypeError, ValueError) as error:
             raise ValidationError("attempt workspace evidence is unreadable or noncanonical") from error
         if workspace.attempt_kind is not kind or workspace.attempt_id != attempt_id:
