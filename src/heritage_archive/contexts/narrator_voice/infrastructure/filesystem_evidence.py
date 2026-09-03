@@ -13,10 +13,38 @@ from heritage_archive.platform.storage.local_files import (
     PublicationEvidenceMismatch,
     SingleWriterFileLock,
     publish_bytes_no_clobber,
+    replace_bytes_atomically,
 )
 
-from ..application.ports import IdentifierSource, VerifiedArtifactRecoveryFacts
-from ..domain.evidence import AttemptWorkspaceEvidence, PublishedArtifact
+from ..application.ports import (
+    IdentifierSource,
+    MediaInspector,
+    VerifiedArtifactRecoveryFacts,
+    VerifiedProviderRecoveryFacts,
+    VerifiedWorkspaceRecoveryFacts,
+)
+from ..application.recovery import (
+    EpisodeAssemblyRecoveryTarget,
+    GenerationRecoveryTarget,
+    NarrationAssemblyRecoveryTarget,
+    RecoveryStage,
+    RecoveryTarget,
+)
+from ..application.schema_v1 import decode_schema_v1, encode_schema_v1
+from ..domain.evidence import (
+    AttemptKind,
+    AttemptState,
+    AttemptWorkspaceEvidence,
+    DecodedMediaFacts,
+    ProviderEventKind,
+    PublishedArtifact,
+    SubmissionEvidence,
+)
+from ..domain.ids import (
+    EpisodeAssemblyAttemptId,
+    GenerationAttemptId,
+    NarrationAssemblyAttemptId,
+)
 from ..domain.values import SafeRelativeArtifactPath
 from .local_root import LocalNarrationRoot
 
@@ -82,10 +110,13 @@ class FilesystemArtifactStore:
 class FilesystemArtifactEvidenceVerifier:
     """Checks workspace artifact facts against immutable bytes without retaining state."""
 
-    def __init__(self, root: LocalNarrationRoot) -> None:
+    def __init__(self, root: LocalNarrationRoot, media_inspector: MediaInspector | None = None) -> None:
         if type(root) is not LocalNarrationRoot:
             raise ValidationError("filesystem artifact verifier requires a LocalNarrationRoot")
+        if media_inspector is not None and not callable(getattr(media_inspector, "inspect_canonical_wav", None)):
+            raise ValidationError("filesystem artifact verifier media inspector is invalid")
         self._root = root
+        self._media_inspector = media_inspector
 
     def verify(self, workspace: AttemptWorkspaceEvidence | None) -> VerifiedArtifactRecoveryFacts:
         if workspace is None:
@@ -139,6 +170,276 @@ class FilesystemArtifactEvidenceVerifier:
         except ValidationError:
             return False
         return True
+
+    def recover_media(
+        self,
+        workspace: AttemptWorkspaceEvidence,
+        artifact: PublishedArtifact,
+    ) -> DecodedMediaFacts:
+        """Inspect exactly one verified workspace publication without inventing media facts."""
+        if type(workspace) is not AttemptWorkspaceEvidence or type(artifact) is not PublishedArtifact:
+            raise ValidationError("media recovery requires exact workspace and publication evidence")
+        if self._media_inspector is None:
+            raise ValidationError("media recovery requires an injected MediaInspector")
+        if (
+            workspace.staged_artifacts != (artifact.reference,)
+            or workspace.published_artifacts != (artifact,)
+        ):
+            raise ValidationError("media recovery requires the workspace's exact single publication")
+        payload = self.read_verified_bytes(artifact)
+        try:
+            media = self._media_inspector.inspect_canonical_wav(payload)
+        except Exception as error:
+            raise ValidationError("published artifact media cannot be inspected") from error
+        if type(media) is not DecodedMediaFacts or media.all_digital_silence:
+            raise ValidationError("media recovery requires non-silent decoded media facts")
+        return media
+
+
+class FilesystemAttemptWorkspaceStore:
+    """Durably replaces one canonical evidence file per nominal attempt identity."""
+
+    def __init__(self, root: LocalNarrationRoot) -> None:
+        if type(root) is not LocalNarrationRoot:
+            raise ValidationError("filesystem workspace store requires a LocalNarrationRoot")
+        self._root = root
+
+    def load(
+        self,
+        attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId,
+    ) -> AttemptWorkspaceEvidence | None:
+        kind = _attempt_kind_for_id(attempt_id)
+        path = _workspace_path(self._root, kind, attempt_id.value, create_directory=False)
+        if not os.path.lexists(path):
+            return None
+        _reject_existing_reparse_point(path)
+        try:
+            if not path.is_file():
+                raise ValidationError("attempt workspace evidence must be a regular file")
+            workspace = decode_schema_v1(path.read_bytes(), AttemptWorkspaceEvidence)
+        except (OSError, TypeError, ValueError) as error:
+            raise ValidationError("attempt workspace evidence is unreadable or noncanonical") from error
+        if workspace.attempt_kind is not kind or workspace.attempt_id != attempt_id:
+            raise ValidationError("attempt workspace filename and typed evidence do not match")
+        return workspace
+
+    def save(self, workspace: AttemptWorkspaceEvidence) -> None:
+        if type(workspace) is not AttemptWorkspaceEvidence:
+            raise ValidationError("workspace store requires AttemptWorkspaceEvidence")
+        path = _workspace_path(self._root, workspace.attempt_kind, workspace.attempt_id.value, create_directory=True)
+        with SingleWriterFileLock(self._root.writer_lock):
+            existing = self.load(workspace.attempt_id)
+            if existing == workspace:
+                return
+            if existing is not None:
+                _validate_workspace_progression(existing, workspace)
+            try:
+                replace_bytes_atomically(self._root.staging, path, encode_schema_v1(workspace))
+            except (OSError, PublicationEvidenceMismatch) as error:
+                raise ValidationError("attempt workspace evidence cannot be durably replaced") from error
+
+
+class FilesystemAttemptWorkspaceVerifier:
+    """Derives trusted local recovery facts from typed workspace evidence only."""
+
+    def verify(
+        self,
+        workspace: AttemptWorkspaceEvidence | None,
+        target: RecoveryTarget,
+        attempt_state: AttemptState,
+        reservation_revision: int,
+        expected_frozen_plan_digest: ContentDigest | None,
+    ) -> VerifiedWorkspaceRecoveryFacts:
+        if type(attempt_state) is not AttemptState or type(reservation_revision) is not int or reservation_revision < 0:
+            raise ValidationError("recovery verification requires exact attempt state and reservation revision")
+        if expected_frozen_plan_digest is not None and type(expected_frozen_plan_digest) is not ContentDigest:
+            raise ValidationError("recovery verification expected plan digest is invalid")
+        if workspace is None:
+            return VerifiedWorkspaceRecoveryFacts(False, False, RecoveryStage.RESERVED, SubmissionEvidence.NOT_STARTED)
+        if type(workspace) is not AttemptWorkspaceEvidence:
+            raise ValidationError("recovery verification requires workspace evidence or None")
+        expected_kind, aggregate_id, attempt_id, budget_id = _target_binding(target)
+        matches = (
+            workspace.attempt_kind is expected_kind
+            and workspace.aggregate_id == aggregate_id
+            and workspace.attempt_id == attempt_id
+            and workspace.reservation_revision == reservation_revision
+            and workspace.budget_reservation_id == budget_id
+        )
+        return VerifiedWorkspaceRecoveryFacts(
+            matches,
+            workspace.frozen_plan_digest == expected_frozen_plan_digest,
+            _workspace_evidence_stage(workspace),
+            workspace.submission,
+        )
+
+
+class FilesystemProviderEventVerifier:
+    """Seals local provider-event structure; it never attests remote-provider authenticity."""
+
+    def verify(self, workspace: AttemptWorkspaceEvidence | None) -> VerifiedProviderRecoveryFacts:
+        if workspace is None:
+            return VerifiedProviderRecoveryFacts(None, False)
+        if type(workspace) is not AttemptWorkspaceEvidence:
+            raise ValidationError("provider event verification requires workspace evidence or None")
+        if workspace.attempt_kind is not AttemptKind.GENERATION:
+            return VerifiedProviderRecoveryFacts(None, workspace.events == ())
+        events = workspace.events
+        terminals = tuple(event for event in events if event.terminal_classification is not None)
+        sealed = (
+            bool(events)
+            and tuple(event.sequence for event in events) == tuple(range(len(events)))
+            and len(terminals) == 1
+            and events[-1] is terminals[0]
+            and events[-1].kind is ProviderEventKind.TERMINAL
+        )
+        return VerifiedProviderRecoveryFacts(
+            events[-1].terminal_classification if sealed else None,
+            sealed,
+        )
+
+
+_WORKSPACE_KIND_BY_ATTEMPT_TYPE = {
+    GenerationAttemptId: AttemptKind.GENERATION,
+    NarrationAssemblyAttemptId: AttemptKind.NARRATION_ASSEMBLY,
+    EpisodeAssemblyAttemptId: AttemptKind.EPISODE_ASSEMBLY,
+}
+_WORKSPACE_STATE_RANK = {
+    AttemptState.RESERVED: 0,
+    AttemptState.INPUT_FROZEN: 1,
+    AttemptState.EXTERNAL_WORK_STARTED: 2,
+    AttemptState.ARTIFACTS_STAGED: 3,
+    AttemptState.ARTIFACTS_PUBLISHED: 4,
+}
+_SUBMISSION_SUCCESSOR = {
+    SubmissionEvidence.NOT_STARTED: {
+        SubmissionEvidence.NOT_STARTED,
+        SubmissionEvidence.DEFINITELY_NOT_SENT,
+        SubmissionEvidence.STARTED,
+        SubmissionEvidence.COMPLETED,
+        SubmissionEvidence.AMBIGUOUS,
+    },
+    SubmissionEvidence.STARTED: {
+        SubmissionEvidence.STARTED,
+        SubmissionEvidence.COMPLETED,
+        SubmissionEvidence.AMBIGUOUS,
+    },
+    SubmissionEvidence.COMPLETED: {SubmissionEvidence.COMPLETED},
+    SubmissionEvidence.DEFINITELY_NOT_SENT: {SubmissionEvidence.DEFINITELY_NOT_SENT},
+    SubmissionEvidence.AMBIGUOUS: {SubmissionEvidence.AMBIGUOUS},
+}
+
+
+def _attempt_kind_for_id(
+    attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId,
+) -> AttemptKind:
+    kind = _WORKSPACE_KIND_BY_ATTEMPT_TYPE.get(type(attempt_id))
+    if kind is None:
+        raise ValidationError("workspace load requires an exact nominal attempt identity")
+    return kind
+
+
+def _workspace_path(
+    root: LocalNarrationRoot,
+    kind: AttemptKind,
+    attempt_value: str,
+    *,
+    create_directory: bool,
+) -> Path:
+    if type(kind) is not AttemptKind or type(attempt_value) is not str:
+        raise ValidationError("workspace path requires exact attempt-kind evidence")
+    attempts = root.attempts
+    _require_existing_artifact_directory(attempts)
+    kind_directory = attempts / kind.value
+    if os.path.lexists(kind_directory):
+        _require_existing_artifact_directory(kind_directory)
+    elif not create_directory:
+        return kind_directory / f"{attempt_value}.json"
+    else:
+        try:
+            kind_directory.mkdir()
+        except FileExistsError:
+            _require_existing_artifact_directory(kind_directory)
+        except OSError as error:
+            raise ValidationError("workspace kind directory cannot be created") from error
+        else:
+            _require_existing_artifact_directory(kind_directory)
+    result = kind_directory / f"{attempt_value}.json"
+    _reject_existing_reparse_point(result)
+    if not result.is_relative_to(attempts):
+        raise ValidationError("workspace path escapes the local attempt root")
+    return result
+
+
+def _validate_workspace_progression(
+    existing: AttemptWorkspaceEvidence,
+    candidate: AttemptWorkspaceEvidence,
+) -> None:
+    if existing.attempt_id != candidate.attempt_id or existing.attempt_kind is not candidate.attempt_kind:
+        raise ValidationError("workspace attempt identity is immutable")
+    immutable = (
+        "workspace_id",
+        "attempt_kind",
+        "aggregate_id",
+        "attempt_id",
+        "reservation_revision",
+        "budget_reservation_id",
+        "preview_digest",
+    )
+    if any(getattr(existing, field) != getattr(candidate, field) for field in immutable):
+        raise ValidationError("workspace identity, reservation and preview bindings are immutable")
+    _validate_frozen_bindings(existing, candidate)
+    for field in ("events", "staged_artifacts", "published_artifacts", "recovery_evidence"):
+        before = getattr(existing, field)
+        after = getattr(candidate, field)
+        if after[:len(before)] != before:
+            raise ValidationError("workspace evidence can only grow by an exact tuple prefix")
+    if any(event.terminal_classification is not None for event in existing.events) and candidate.events != existing.events:
+        raise ValidationError("sealed provider evidence cannot be extended or rewritten")
+    if candidate.submission not in _SUBMISSION_SUCCESSOR[existing.submission]:
+        raise ValidationError("workspace submission evidence cannot regress or conflict")
+    if existing.state.terminal:
+        raise ValidationError("terminal workspace evidence cannot be rewritten")
+    if not candidate.state.terminal and _WORKSPACE_STATE_RANK[candidate.state] < _WORKSPACE_STATE_RANK[existing.state]:
+        raise ValidationError("workspace state cannot regress")
+
+
+def _validate_frozen_bindings(existing: AttemptWorkspaceEvidence, candidate: AttemptWorkspaceEvidence) -> None:
+    before_input, before_plan = existing.effective_input_digest, existing.frozen_plan_digest
+    after_input, after_plan = candidate.effective_input_digest, candidate.frozen_plan_digest
+    if existing.attempt_kind is AttemptKind.GENERATION:
+        if before_input is None and before_plan is None:
+            if (after_input is None) != (after_plan is None) or (after_input is not None and after_input != after_plan):
+                raise ValidationError("generation input and frozen plan must become the same digest together")
+            return
+        if before_input != after_input or before_plan != after_plan:
+            raise ValidationError("frozen generation input and plan bindings are immutable")
+        return
+    if before_input != after_input or before_plan != after_plan:
+        raise ValidationError("assembly frozen plan bindings are immutable")
+
+
+def _target_binding(target: RecoveryTarget):
+    if type(target) is GenerationRecoveryTarget:
+        return AttemptKind.GENERATION, target.job_id, target.attempt_id, target.budget_reservation_id
+    if type(target) is NarrationAssemblyRecoveryTarget:
+        return AttemptKind.NARRATION_ASSEMBLY, target.job_id, target.attempt_id, None
+    if type(target) is EpisodeAssemblyRecoveryTarget:
+        return AttemptKind.EPISODE_ASSEMBLY, target.episode_id, target.attempt_id, None
+    raise ValidationError("recovery target is not supported by filesystem evidence")
+
+
+def _workspace_evidence_stage(workspace: AttemptWorkspaceEvidence) -> RecoveryStage:
+    published = tuple(item.reference for item in workspace.published_artifacts)
+    if published and workspace.staged_artifacts == published:
+        return RecoveryStage.ARTIFACTS_PUBLISHED
+    if workspace.staged_artifacts:
+        return RecoveryStage.ARTIFACTS_STAGED
+    if workspace.submission in {SubmissionEvidence.STARTED, SubmissionEvidence.COMPLETED, SubmissionEvidence.AMBIGUOUS}:
+        return RecoveryStage.EXTERNAL_WORK_STARTED
+    if workspace.effective_input_digest is not None or workspace.frozen_plan_digest is not None:
+        return RecoveryStage.INPUT_FROZEN
+    return RecoveryStage.RESERVED
 
 
 def _validate_media_type(value: object) -> str:
