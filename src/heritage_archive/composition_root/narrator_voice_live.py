@@ -22,7 +22,7 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
     ShowEpisodeStatusHandler, ShowNarrationEditorHandler, ShowNarrationStatusHandler,
     ValidateRenderRecipeHandler,
 )
-from heritage_archive.contexts.narrator_voice.application.ports import AuthorityObservation
+from heritage_archive.contexts.narrator_voice.application.ports import AuthorityObservation, IdentifierSource
 from heritage_archive.contexts.narrator_voice.infrastructure.budget_ledger import FilesystemGenerationBudgetLedger
 from heritage_archive.contexts.narrator_voice.infrastructure.cartesia_gateway import CartesiaCredentialUnavailable, CartesiaSynthesisGateway
 from heritage_archive.contexts.narrator_voice.infrastructure.cartesia_policy import ConfiguredNarrationReleasePolicyResolver
@@ -150,6 +150,7 @@ class LiveNarrationStudio:
 
 def build_live_narration(
     root: LocalNarrationRoot, *, process_principal: str | None = None,
+    identifiers: IdentifierSource | None = None,
 ) -> LiveNarrationStudio:
     """Construct shared local adapters without reading a key or transmitting.
 
@@ -166,7 +167,8 @@ def build_live_narration(
         token_hex(32) if process_principal is None else process_principal,
         configuration.actor_id,
     )
-    clock, identifiers = _UtcClock(), _Identifiers()
+    clock = _UtcClock()
+    identifiers = _Identifiers() if identifiers is None else identifiers
     media = CanonicalWavInspector()
     artifacts = FilesystemArtifactStore(root, identifiers)
     artifact_reader = FilesystemArtifactEvidenceVerifier(root, media)

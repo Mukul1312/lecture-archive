@@ -16,9 +16,14 @@ from heritage_archive.platform.storage.local_files import (
 from ..application.schema_v1 import decode_schema_v1, encode_schema_v1
 from ..domain.authorization import AuthorizationRecord, AuthorizationRecordSnapshot
 from ..domain.diary_episode import DiaryEpisode, DiaryEpisodeSnapshot
+from ..domain.errors import DomainInvariantError
 from ..domain.ids import AuthorizationRecordId, DiaryEpisodeId, NarrationJobId
 from ..domain.narration_job import NarrationJob, NarrationJobSnapshot
 from .local_root import LocalNarrationRoot, _is_reparse_point
+
+
+class FilesystemRepositoryFailure(ValidationError):
+    """Stored evidence or publication failed; not caller authoring validation."""
 
 
 class _FilesystemSnapshotRepository:
@@ -76,8 +81,8 @@ class _FilesystemSnapshotRepository:
                         raise ValidationError("aggregate snapshot does not match its directory and revision")
                 identities.append(aggregate_id)
             return tuple(identities)
-        except (OSError, TypeError, ValueError) as error:
-            raise ValidationError("aggregate discovery requires valid canonical directories and histories") from error
+        except (OSError, TypeError, ValueError, DomainInvariantError) as error:
+            raise FilesystemRepositoryFailure("aggregate discovery requires valid canonical directories and histories") from error
 
     @staticmethod
     def _require_directory(path: Path) -> None:
@@ -89,6 +94,12 @@ class _FilesystemSnapshotRepository:
             raise ValidationError("filesystem repository received the wrong aggregate root type")
         if expected_revision is not None and (type(expected_revision) is not int or expected_revision < 1):
             raise ValidationError("expected revision must be a positive integer or None")
+        try:
+            return self._save(root, expected_revision)
+        except OSError as error:
+            raise FilesystemRepositoryFailure("aggregate storage operation failed") from error
+
+    def _save(self, root: object, expected_revision: int | None) -> bool:
         aggregate_id = self._aggregate_id(root)
         with SingleWriterFileLock(self._root.writer_lock):
             current_revision, _ = self._current_contiguous(aggregate_id)
@@ -99,12 +110,12 @@ class _FilesystemSnapshotRepository:
                 raise ValidationError("aggregate revision must be the next immutable repository revision")
             destination = self._revision_path(aggregate_id, revision)
             if os.path.lexists(destination):
-                raise ValidationError("immutable aggregate revision destination is already occupied")
+                raise FilesystemRepositoryFailure("immutable aggregate revision destination is already occupied")
             self._reject_future_revision_files(aggregate_id, revision)
             try:
                 payload = encode_schema_v1(root.to_snapshot())
-            except (AttributeError, TypeError, ValueError) as error:
-                raise ValidationError("aggregate snapshot cannot be encoded as schema-v1") from error
+            except (AttributeError, TypeError, ValueError, DomainInvariantError) as error:
+                raise FilesystemRepositoryFailure("aggregate snapshot cannot be encoded as schema-v1") from error
             try:
                 publish_bytes_no_clobber(
                     self._root.staging,
@@ -113,9 +124,9 @@ class _FilesystemSnapshotRepository:
                     staging_suffix=".json",
                 )
             except FileExistsError as error:
-                raise ValidationError("immutable aggregate revision destination is already occupied") from error
+                raise FilesystemRepositoryFailure("immutable aggregate revision destination is already occupied") from error
             except (OSError, PublicationEvidenceMismatch) as error:
-                raise ValidationError("immutable aggregate revision publication failed") from error
+                raise FilesystemRepositoryFailure("immutable aggregate revision publication failed") from error
         return True
 
     def _current_contiguous(self, aggregate_id: object) -> tuple[int | None, Any | None]:
@@ -129,15 +140,15 @@ class _FilesystemSnapshotRepository:
             try:
                 snapshot = decode_schema_v1(path.read_bytes(), self._snapshot_type)
                 root = self._root_type.from_snapshot(snapshot)
-            except (OSError, TypeError, ValueError) as error:
+            except (OSError, TypeError, ValueError, DomainInvariantError) as error:
                 # A later invalid revision is a recovery boundary, not a newer state.
                 if current is not None:
                     return revision - 1, current
-                raise ValidationError("first aggregate revision is not valid canonical data") from error
+                raise FilesystemRepositoryFailure("first aggregate revision is not valid canonical data") from error
             if root.revision != revision:
                 if current is not None:
                     return revision - 1, current
-                raise ValidationError("first aggregate revision does not match its immutable filename")
+                raise FilesystemRepositoryFailure("first aggregate revision does not match its immutable filename")
             current = root
             revision += 1
 
@@ -169,11 +180,11 @@ class _FilesystemSnapshotRepository:
         try:
             entries = tuple(revisions.iterdir())
         except OSError as error:
-            raise ValidationError("aggregate revision directory cannot be read") from error
+            raise FilesystemRepositoryFailure("aggregate revision directory cannot be read") from error
         for entry in entries:
             name = entry.name
             if name.endswith(".json") and len(name) == 25 and name[:-5].isdigit() and int(name[:-5]) > revision:
-                raise ValidationError("aggregate revision history has a gap or future revision")
+                raise FilesystemRepositoryFailure("aggregate revision history has a gap or future revision")
 
 
 class FilesystemAuthorizationRecordRepository:

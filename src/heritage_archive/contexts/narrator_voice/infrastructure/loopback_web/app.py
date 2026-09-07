@@ -10,9 +10,11 @@ from .security import ASSET_TYPES, ProcessSecurity, WebInputError, json_error, s
 
 class NarratorWebApplication:
     def __init__(self, security: ProcessSecurity, *, dispatch: Callable[[WebRequest], WebResponse] | None = None,
-                 assets: Mapping[str, bytes] | None = None):
+                 assets: Mapping[str, bytes] | None = None,
+                 render_root: Callable[[str], bytes] | None = None):
         self._security = security
         self._dispatch = dispatch
+        self._render_root = render_root
         self._assets = dict(assets or {})
         if any(path not in ASSET_TYPES or type(body) is not bytes for path, body in self._assets.items()):
             raise ValueError("invalid fixed assets")
@@ -28,8 +30,15 @@ class NarratorWebApplication:
             headers = self._security.validate(request)
             read = request.method in {"GET", "HEAD"}
             if read and request.path == "/":
+                body = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+                        '<meta name="narrator-csrf" content="' + self._security.csrf_token + '">'
+                        '<title>Narration studio</title><script src="/assets/studio.js" defer></script>'
+                        '</head><body data-narrator-bootstrap><p>Opening the local studio. '
+                        'If it does not open, enable cookies and reload this page.</p></body></html>').encode()
+                if self._render_root is not None and self._security.has_current_session(headers):
+                    body = self._render_root(self._security.csrf_token)
                 response = WebResponse(200,
-                    ('<!doctype html><html><head><meta name="narrator-csrf" content="' + self._security.csrf_token + '"></head><body></body></html>').encode(),
+                    body,
                     ((b"content-type", b"text/html; charset=utf-8"),
                      (b"set-cookie", ("narrator_session=" + self._security.session_token + "; Path=/; HttpOnly; SameSite=Strict").encode())))
             elif read and request.path in ASSET_TYPES:

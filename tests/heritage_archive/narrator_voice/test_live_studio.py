@@ -70,6 +70,16 @@ HANDLER_WIRING = (
 
 
 class LiveNarrationStudioTests(unittest.TestCase):
+    def test_injected_identifier_source_is_shared_by_handlers_gateway_and_artifact_writer(self):
+        identifiers = Identifiers()
+        studio = self.build_studio(process_principal=PRINCIPAL, identifiers=identifiers)
+        self.assertIs(studio.handlers.prepare_diary.identifiers, identifiers)
+        self.assertIs(studio.handlers.prepare_episode.identifiers, identifiers)
+        self.assertIs(studio.handlers.estimate.identifiers, identifiers)
+        self.assertIs(studio.gateway._identifiers, identifiers)
+        self.assertIs(studio.handlers.generate.artifacts._identifiers, identifiers)
+        self.assertFalse(hasattr(studio.handlers, "identifiers"))
+
     def setUp(self):
         directory = self.enterContext(TemporaryDirectory(prefix="local-studio-graph-fixture-"))
         self.root = LocalNarrationRoot.open(Path(directory), (Path(__file__).resolve().parents[3],))

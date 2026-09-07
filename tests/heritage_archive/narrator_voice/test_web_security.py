@@ -26,6 +26,28 @@ POST_HEADERS = (HOST, (b"origin", b"http://127.0.0.1:8765"),
 
 
 class WebSecurityTests(unittest.TestCase):
+    def test_private_root_callback_runs_only_for_current_session(self):
+        import inspect
+        self.assertIn("render_root", inspect.signature(NarratorWebApplication).parameters)
+        render = Mock(return_value=b"private-editor")
+        app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), render_root=render)
+        for method in ("GET", "HEAD"):
+            for cookie in ((), ((b"cookie", b"narrator_session=" + b"c" * 64),)):
+                response = app(WebRequest(method, "/", (HOST, *cookie)))
+                self.assertEqual(response.status, 200)
+                self.assertNotIn(b"private-editor", response.body)
+                if method == "GET":
+                    self.assertIn(b'data-narrator-bootstrap', response.body)
+                    self.assertIn(b'/assets/studio.js', response.body)
+        render.assert_not_called()
+        response = app(WebRequest("GET", "/", (HOST, POST_HEADERS[3])))
+        self.assertEqual(response.body, b"private-editor")
+        render.assert_called_once_with(CSRF)
+        self.assertIn(b"set-cookie", dict(response.headers))
+        head = app(WebRequest("HEAD", "/", (HOST, POST_HEADERS[3])))
+        self.assertEqual(head.body, b"")
+        self.assertEqual(head.headers, response.headers)
+
     def test_deep_json_parser_recursion_is_a_generic_secured_400(self):
         body = b'{"value":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}"
         self.assert_rejected(WebRequest("POST", "/fixture", POST_HEADERS, body), 400, "invalid_json")
@@ -211,10 +233,31 @@ class WebSecurityTests(unittest.TestCase):
 
 
 class WebCompositionTests(unittest.TestCase):
+    @staticmethod
+    def stub_studio():
+        from heritage_archive.contexts.narrator_voice.infrastructure.cartesia_policy import ConfiguredNarrationReleasePolicyResolver
+        from heritage_archive.contexts.narrator_voice.domain.values import Lane
+        from tests.heritage_archive.narrator_voice.test_cartesia_policy import profile
+        return SimpleNamespace(close=Mock(), handlers=SimpleNamespace(),
+                               policies=ConfiguredNarrationReleasePolicyResolver(profile(), profile(Lane.C)))
+
+    def test_route_or_asset_construction_failure_closes_studio_exactly_once(self):
+        from heritage_archive.composition_root import narrator_voice_web as web
+        for target in ("NarrationAuthoringRoutes", "files"):
+            with self.subTest(target=target):
+                studio = self.stub_studio()
+                with (patch.object(web, "build_live_narration", return_value=studio),
+                      patch.object(web, target, side_effect=RuntimeError("SENTINEL-construction")),
+                      patch.object(web, "serve_loopback") as serve):
+                    with self.assertRaises(RuntimeError):
+                        web.serve_narration(object())
+                studio.close.assert_called_once_with()
+                serve.assert_not_called()
+
     def test_application_construction_failure_closes_studio_exactly_once(self):
         from heritage_archive.composition_root import narrator_voice_web as web
 
-        studio = SimpleNamespace(close=Mock())
+        studio = self.stub_studio()
         with (patch.object(web, "build_live_narration", return_value=studio),
               patch.object(web, "NarratorWebApplication", side_effect=RuntimeError("SENTINEL-construction")),
               patch.object(web, "serve_loopback") as serve):
@@ -227,14 +270,16 @@ class WebCompositionTests(unittest.TestCase):
         from heritage_archive.composition_root import narrator_voice_web as web
 
         principal, session, csrf = "a" * 64, "b" * 64, "c" * 64
-        studio = SimpleNamespace(close=Mock())
+        studio = self.stub_studio()
         with (patch.object(web, "token_hex", side_effect=[principal, principal, session, principal, session, csrf]) as generate,
               patch.object(web, "build_live_narration", return_value=studio) as build,
               patch.object(web, "serve_loopback") as serve):
             web.serve_narration(object())
         self.assertEqual(generate.call_count, 6)
         self.assertTrue(all(call.args == (32,) for call in generate.call_args_list))
-        self.assertEqual(build.call_args.kwargs, {"process_principal": principal})
+        self.assertEqual(set(build.call_args.kwargs), {"process_principal", "identifiers"})
+        self.assertEqual(build.call_args.kwargs["process_principal"], principal)
+        self.assertIs(build.call_args.kwargs["identifiers"], serve.call_args.args[0]._dispatch._identifiers)
         security = serve.call_args.args[0]._security
         self.assertEqual((security.session_token, security.csrf_token), (session, csrf))
         studio.close.assert_called_once_with()
@@ -259,9 +304,9 @@ class WebCompositionTests(unittest.TestCase):
                 applications, studios, principals, closes = [], [], [], []
                 real_builder = web.build_live_narration
 
-                def build(root, *, process_principal):
+                def build(root, *, process_principal, identifiers):
                     principals.append(process_principal)
-                    studio = real_builder(root, process_principal=process_principal)
+                    studio = real_builder(root, process_principal=process_principal, identifiers=identifiers)
                     studios.append(studio)
                     close = patch.object(studio.transport, "close", wraps=studio.transport.close)
                     closes.append(close.start())

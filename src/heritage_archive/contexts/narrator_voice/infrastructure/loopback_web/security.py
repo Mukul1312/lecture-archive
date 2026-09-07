@@ -58,6 +58,10 @@ class ProcessSecurity:
             raise WebInputError(413, "body_too_large")
         return headers
 
+    def has_current_session(self, headers: dict[bytes, bytes]) -> bool:
+        """Query only after validate has checked the incoming header pairs."""
+        return _matches(_session_cookie(headers.get(b"cookie")), self.session_token)
+
 
 def _matches(candidate: str, expected: str) -> bool:
     return bool(_TOKEN.fullmatch(candidate)) and secrets.compare_digest(candidate, expected)

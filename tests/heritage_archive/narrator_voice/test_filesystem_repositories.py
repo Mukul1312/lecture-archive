@@ -49,6 +49,47 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemRepositoryContracts(unittest.TestCase):
+    def test_storage_failures_are_typed_separately_from_caller_validation_and_cas(self):
+        from heritage_archive.contexts.narrator_voice.infrastructure import filesystem_repositories as fs
+        self.assertTrue(hasattr(fs, "FilesystemRepositoryFailure"))
+        failure = fs.FilesystemRepositoryFailure
+        self.assertTrue(issubclass(failure, ValidationError))
+        with self._storage_root() as root:
+            repository = FilesystemDiaryEpisodeRepository(root)
+            episode = DiaryEpisode.prepare(DiaryEpisodeId(uuid(1280)), NOW)
+            with self.assertRaises(ValidationError) as caught:
+                repository.save(episode, True)
+            self.assertNotIsInstance(caught.exception, failure)
+            for target, error in (("publish_bytes_no_clobber", OSError("private storage")),
+                                  ("encode_schema_v1", ValueError("private encoding"))):
+                with patch.object(fs, target, side_effect=error), self.assertRaises(failure):
+                    repository.save(episode, None)
+            self.assertTrue(repository.save(episode, None))
+            self.assertFalse(repository.save(episode, None))
+            path = root.aggregates / "diary-episodes" / episode.episode_id.value / "revisions" / "00000000000000000001.json"
+            path.write_bytes(b"corrupt")
+            with self.assertRaises(failure):
+                repository.load(episode.episode_id)
+            with self.assertRaises(failure):
+                repository.list_ids()
+
+    def test_rehydration_invariant_and_lock_storage_faults_are_typed(self):
+        from heritage_archive.contexts.narrator_voice.infrastructure import filesystem_repositories as fs
+        from heritage_archive.contexts.narrator_voice.domain.errors import DomainInvariantError
+        with self._storage_root() as root:
+            repository = FilesystemDiaryEpisodeRepository(root)
+            episode = DiaryEpisode.prepare(DiaryEpisodeId(uuid(1281)), NOW)
+            with patch.object(fs.SingleWriterFileLock, "__enter__", side_effect=OSError("private lock path")):
+                with self.assertRaises(Exception) as caught:
+                    repository.save(episode, None)
+                self.assertIsInstance(caught.exception, fs.FilesystemRepositoryFailure)
+            repository.save(episode, None)
+            with patch.object(DiaryEpisode, "from_snapshot", side_effect=DomainInvariantError("private invalid evidence")):
+                with self.assertRaises(fs.FilesystemRepositoryFailure):
+                    repository.load(episode.episode_id)
+                with self.assertRaises(fs.FilesystemRepositoryFailure):
+                    repository.list_ids()
+
     def test_discovery_is_empty_ordered_and_survives_reopening(self) -> None:
         for repository_type, kind, make, id_type in self._discoverable_types():
             with self.subTest(kind=kind), self._storage_root() as root:
