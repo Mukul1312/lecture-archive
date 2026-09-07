@@ -84,6 +84,7 @@ class RecipeAuthoringIntent:
 class RegisterAuthorizationCommand:
     command_id: CommandId
     principal: str
+    record_id: AuthorizationRecordId
     scope: AuthorityScope
     evidence_digest: ContentDigest
 

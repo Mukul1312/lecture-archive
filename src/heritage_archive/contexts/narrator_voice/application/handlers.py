@@ -191,7 +191,6 @@ class RegisterAuthorizationHandler:
     repository: AuthorizationRecordRepository
     actors: ActorResolver
     clock: Clock
-    identifiers: IdentifierSource
 
     def __call__(self, command: RegisterAuthorizationCommand) -> AuthorizationResult:
         principal = self.actors.resolve_principal(command.principal)
@@ -199,10 +198,9 @@ class RegisterAuthorizationHandler:
             raise AuthorizationDenied("authority administration requires the configured steward")
         actor_id = principal.actor_id
         now = self.clock.now()
-        record_id = self.identifiers.new_id(AuthorizationRecordId)
-        record = AuthorizationRecord.register(record_id, actor_id, command.scope, command.evidence_digest, now)
+        record = AuthorizationRecord.register(command.record_id, actor_id, command.scope, command.evidence_digest, now)
         _cas_or_conflict(self.repository.save(record, None), "authorization record")
-        return AuthorizationResult(command.command_id, record_id, record.revision, record.status_at(now))
+        return AuthorizationResult(command.command_id, command.record_id, record.revision, record.status_at(now))
 
 
 @dataclass(frozen=True, slots=True)

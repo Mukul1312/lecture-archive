@@ -47,7 +47,7 @@ class AuthorityApplicationTests(unittest.TestCase):
         self.repository = FakeAuthorizationRepository()
         self.clock = FakeClock(NOW)
         self.actor_resolver = FakeActorResolver({"fake-session": self.actor, "fake-other": ActorId(uuid(703))})
-        self.ids = FakeIdentifierSource({AuthorizationRecordId: [self.record_id], AuthorityChangeId: [self.change_id]})
+        self.ids = FakeIdentifierSource({AuthorityChangeId: [self.change_id]})
         self.reader = FakeAuthorizationStatusReader(self.repository)
         self.scope = AuthorityScope(
             "fake-speaker", "fake-voice", "or", "fake narration", None,
@@ -55,15 +55,18 @@ class AuthorityApplicationTests(unittest.TestCase):
         )
 
     def register(self):
-        return RegisterAuthorizationHandler(self.repository, self.actor_resolver, self.clock, self.ids)(
-            RegisterAuthorizationCommand(CommandId(uuid(704)), "fake-session", self.scope, digest("fake evidence"))
+        return RegisterAuthorizationHandler(self.repository, self.actor_resolver, self.clock)(
+            RegisterAuthorizationCommand(
+                CommandId(uuid(704)), "fake-session", self.record_id, self.scope, digest("fake evidence")
+            )
         )
 
-    def test_register_resolves_actor_server_side_and_saves_new_root_with_redacted_result(self) -> None:
+    def test_register_persists_the_configured_record_id_without_requesting_an_authorization_id(self) -> None:
         result = self.register()
         stored = self.repository.load(self.record_id)
         self.assertEqual((result.record_id, result.revision, result.status), (self.record_id, 1, AuthorizationStatus.ACTIVE))
         self.assertEqual((stored.steward_actor_id, self.actor_resolver.calls), (self.actor, ["fake-session"]))
+        self.assertEqual(self.ids.calls, [])
         self.assertFalse(hasattr(result, "evidence_digest"))
 
     def test_register_CAS_refusal_has_no_persisted_mutation(self) -> None:
@@ -85,12 +88,19 @@ class AuthorityApplicationTests(unittest.TestCase):
             },
         )
         with self.assertRaises(AuthorizationDenied):
-            RegisterAuthorizationHandler(self.repository, resolver, self.clock, self.ids)(
+            RegisterAuthorizationHandler(self.repository, resolver, self.clock)(
                 RegisterAuthorizationCommand(
-                    CommandId(uuid(709)), "fake-review-only", self.scope, digest("fake denied evidence"),
+                    CommandId(uuid(709)), "fake-review-only", self.record_id, self.scope, digest("fake denied evidence"),
                 )
             )
         self.assertIsNone(self.repository.load(self.record_id))
+
+    def test_duplicate_registration_refuses_to_clobber_the_configured_record(self) -> None:
+        self.register()
+        with self.assertRaises(RevisionConflict):
+            self.register()
+        stored = self.repository.load(self.record_id)
+        self.assertEqual((stored.record_id, stored.revision, stored.current_scope), (self.record_id, 1, self.scope))
 
     def test_change_uses_server_resolved_steward_expected_revision_and_status_history(self) -> None:
         self.register()
