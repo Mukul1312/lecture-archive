@@ -252,6 +252,17 @@ class IssueNarrationMasterSnapshotCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class DiscoverStudioCommand:
+    command_id: CommandId
+
+
+@dataclass(frozen=True, slots=True)
+class ShowNarrationEditorCommand:
+    command_id: CommandId
+    job_id: NarrationJobId
+
+
+@dataclass(frozen=True, slots=True)
 class ShowNarrationStatusCommand:
     command_id: CommandId
     job_id: NarrationJobId

@@ -6,6 +6,7 @@ from dataclasses import asdict, fields, is_dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -78,6 +79,131 @@ class _AdvancingClock:
 
 
 class ApplicationStatusProjectionTests(unittest.TestCase):
+    def _studio_repositories(self, filesystem):
+        from tests.heritage_archive.narrator_voice.fakes import FakeDiaryEpisodeRepository, FakeNarrationJobRepository
+        from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_repositories import FilesystemDiaryEpisodeRepository, FilesystemNarrationJobRepository
+        from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
+
+        if not filesystem:
+            return FakeNarrationJobRepository(), FakeDiaryEpisodeRepository(), None
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = LocalNarrationRoot.open(Path(temporary.name), (SOURCE_ROOT.parent,))
+        root.initialize_layout()
+        return FilesystemNarrationJobRepository(root), FilesystemDiaryEpisodeRepository(root), root
+
+    def test_studio_discovery_returns_only_opaque_sorted_ids_from_fake_and_reopened_filesystem(self):
+        from heritage_archive.contexts.narrator_voice.application.commands import DiscoverStudioCommand
+        from heritage_archive.contexts.narrator_voice.application.handlers import DiscoverStudioHandler
+        from heritage_archive.contexts.narrator_voice.domain.ids import NarrationJobId, PassageId
+        from heritage_archive.contexts.narrator_voice.domain.narration_job import PassageDraft, prepare_lane_b_diary_job
+        from tests.heritage_archive.narrator_voice.fixtures import make_contract, make_defaults
+
+        for filesystem in (False, True):
+            with self.subTest(filesystem=filesystem):
+                jobs, episodes, root = self._studio_repositories(filesystem)
+                command = DiscoverStudioCommand(CommandId(uuid(1600)))
+                empty = DiscoverStudioHandler(jobs, episodes)(command)
+                self.assertEqual((empty.job_ids, empty.episode_ids), ((), ()))
+                for index in (1602, 1601):
+                    jobs.save(prepare_lane_b_diary_job(NarrationJobId(uuid(index)), make_contract(), make_defaults(),
+                        (PassageDraft(PassageId(uuid(index + 100)), 0, PassageText("operator text")),), NOW), None)
+                    episodes.save(DiaryEpisode.prepare(DiaryEpisodeId(uuid(index + 10)), NOW), None)
+                if root is not None:
+                    jobs, episodes = type(jobs)(root), type(episodes)(root)
+                discovery = DiscoverStudioHandler(jobs, episodes)(command)
+                self.assertEqual(discovery.job_ids, (NarrationJobId(uuid(1601)), NarrationJobId(uuid(1602))))
+                self.assertEqual(discovery.episode_ids, (DiaryEpisodeId(uuid(1611)), DiaryEpisodeId(uuid(1612))))
+                self.assertEqual({field.name for field in fields(discovery)}, {"job_ids", "episode_ids"})
+                self.assertTrue(type(discovery).__dataclass_params__.frozen)
+
+    def test_editor_restores_ordered_text_controls_recipes_and_view_only_preview(self):
+        from heritage_archive.contexts.narrator_voice.application.commands import ShowNarrationEditorCommand
+        from heritage_archive.contexts.narrator_voice.application.handlers import ShowNarrationEditorHandler
+        from heritage_archive.contexts.narrator_voice.domain.ids import NarrationJobId, PassageId
+        from heritage_archive.contexts.narrator_voice.domain.narration_job import PassageDraft, prepare_lane_b_diary_job
+        from heritage_archive.contexts.narrator_voice.domain.values import BreakControl
+        from tests.heritage_archive.narrator_voice.fixtures import make_contract, make_defaults, make_recipe, make_preview
+
+        for filesystem in (False, True):
+            with self.subTest(filesystem=filesystem):
+                jobs, _, root = self._studio_repositories(filesystem)
+                first, second = PassageId(uuid(1621)), PassageId(uuid(1622))
+                job = prepare_lane_b_diary_job(NarrationJobId(uuid(1620)), make_contract(), make_defaults(), (
+                    PassageDraft(first, 0, PassageText("old text")), PassageDraft(second, 1, PassageText("second")),
+                ), NOW)
+                jobs.save(job, None)
+
+                def persist(action):
+                    before = job.revision
+                    action(before)
+                    self.assertTrue(jobs.save(job, before))
+
+                persist(lambda rev: job.revise_passage_text(first, PassageText("current operator text"), NOW, expected_revision=rev))
+                persist(lambda rev: job.reorder_passages((second, first), expected_revision=rev))
+                recipe = replace(make_recipe(PassageText("current operator text"), recipe_index=1623, text_revision=2), controls=(BreakControl(7, 100),))
+                persist(lambda rev: job.record_render_recipe(first, recipe, expected_revision=rev))
+                persist(lambda rev: job.require_render_recipe(first, recipe.recipe_id, expected_revision=rev))
+                persist(lambda rev: job.require_dictionary_digest(first, job.defaults.dictionary.content_digest, expected_revision=rev))
+                preview = make_preview(job_id=job.job_id, base_revision=6, passage_id=first,
+                    text=PassageText("current operator text"), recipe=recipe, contract=job.contract, preview_index=1624)
+                persist(lambda rev: job.issue_generation_preview(preview, expected_revision=rev))
+                if root is not None:
+                    jobs = type(jobs)(root)
+                command = ShowNarrationEditorCommand(CommandId(uuid(1625)), job.job_id)
+                editor = ShowNarrationEditorHandler(jobs)(command)
+                self.assertEqual((editor.job_id, editor.revision, editor.lane), (job.job_id, 7, job.lane))
+                self.assertEqual(asdict(editor.defaults), {"speed": "0.90", "volume": "1.00", "emotion": "calm", "dictionary_configured": True})
+                self.assertEqual(tuple((p.passage_id, p.order, p.text, p.text_revision) for p in editor.passages), (
+                    (second, 0, "second", 1), (first, 1, "current operator text", 2)))
+                self.assertEqual((editor.passages[0].recipe_required, editor.passages[0].dictionary_required, editor.passages[0].latest_preview), (False, False, None))
+                passage = editor.passages[1]
+                self.assertTrue(passage.recipe_required)
+                self.assertTrue(passage.dictionary_required)
+                projected_recipe = passage.recipes[0]
+                self.assertEqual((projected_recipe.recipe_id, projected_recipe.revision, projected_recipe.text_revision,
+                    projected_recipe.controls, projected_recipe.current, projected_recipe.required),
+                    (recipe.recipe_id, 1, 2, (BreakControl(7, 100),), True, True))
+                self.assertEqual(asdict(passage.latest_preview), {
+                    "preview_id": {"value": uuid(1624)}, "base_job_revision": 6,
+                    "canonical_projection": "current operator text", "billable_characters": 34,
+                    "estimated_usage": "34", "issued_at": NOW,
+                })
+                forbidden = {"settings", "authority_snapshot", "record_id", "endpoint", "contract", "contract_digest",
+                    "dictionary", "opaque_reference", "capability_snapshot", "provider", "voice_binding", "preview_digest", "confirmation_token"}
+
+                def check_safe(value):
+                    if is_dataclass(value):
+                        self.assertTrue(type(value).__dataclass_params__.frozen)
+                        self.assertFalse(forbidden & {field.name for field in fields(value)})
+                        for field in fields(value):
+                            check_safe(getattr(value, field.name))
+                    elif isinstance(value, tuple):
+                        for item in value:
+                            check_safe(item)
+
+                check_safe(editor)
+                serialized = repr(asdict(editor))
+                for secret in ("fake://no-network", "fake-dictionary-a", job.contract.authority_record_id.value, "capability-a"):
+                    self.assertNotIn(secret, serialized)
+                self.assertEqual(jobs.load(job.job_id).to_snapshot(), job.to_snapshot())
+                persist(lambda rev: job.revise_passage_text(first, PassageText("newer text"), NOW, expected_revision=rev))
+                stale = ShowNarrationEditorHandler(jobs)(command).passages[1]
+                self.assertFalse(stale.recipe_required)
+                self.assertFalse(stale.recipes[0].current)
+                self.assertEqual(stale.latest_preview, passage.latest_preview)
+
+    def test_editor_missing_job_is_not_found(self):
+        from heritage_archive.contexts.narrator_voice.application.commands import ShowNarrationEditorCommand
+        from heritage_archive.contexts.narrator_voice.application.handlers import ShowNarrationEditorHandler
+        from heritage_archive.contexts.narrator_voice.domain.errors import NotFound
+        from heritage_archive.contexts.narrator_voice.domain.ids import NarrationJobId
+
+        for filesystem in (False, True):
+            jobs, _, _ = self._studio_repositories(filesystem)
+            with self.assertRaises(NotFound):
+                ShowNarrationEditorHandler(jobs)(ShowNarrationEditorCommand(CommandId(uuid(1630)), NarrationJobId(uuid(1631))))
+
     def _completed_flow(self):
         fixture = episode_fixture.EpisodeApplicationTests(
             "test_complete_exact_episode_timing_fallback_correction_and_presentation_handoff"

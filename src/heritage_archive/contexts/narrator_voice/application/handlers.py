@@ -73,6 +73,8 @@ from ..domain.values import (
     ResolvedControl,
 )
 from .commands import (
+    DiscoverStudioCommand,
+    ShowNarrationEditorCommand,
     EstimateGenerationCommand,
     AssembleNarrationMasterCommand,
     AssembleEpisodeSpeechMasterCommand,
@@ -151,6 +153,8 @@ from .recovery import (
     decide_target_recovery,
 )
 from .results import (
+    StudioDiscoveryResult,
+    NarrationEditorResult,
     AuthorizationResult,
     AuthorizationStatusResult,
     GenerationEstimateResult,
@@ -175,6 +179,7 @@ from .synthesis_failures import (
     SynthesisSubmittedFailure,
 )
 from .status import (
+    project_narration_editor,
     project_authorization_history,
     project_episode_status,
     project_narration_status,
@@ -1873,6 +1878,23 @@ class IssueNarrationMasterSnapshotHandler:
         )
         _cas_or_conflict(self.repository.save(job, command.expected_revision), "narration job")
         return SnapshotIssuedResult(command.command_id, job.job_id, job.revision, snapshot)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoverStudioHandler:
+    jobs: NarrationJobRepository
+    episodes: DiaryEpisodeRepository
+
+    def __call__(self, command: DiscoverStudioCommand) -> StudioDiscoveryResult:
+        return StudioDiscoveryResult(self.jobs.list_ids(), self.episodes.list_ids())
+
+
+@dataclass(frozen=True, slots=True)
+class ShowNarrationEditorHandler:
+    repository: NarrationJobRepository
+
+    def __call__(self, command: ShowNarrationEditorCommand) -> NarrationEditorResult:
+        return project_narration_editor(_load_job(self.repository, command.job_id))
 
 
 @dataclass(frozen=True, slots=True)

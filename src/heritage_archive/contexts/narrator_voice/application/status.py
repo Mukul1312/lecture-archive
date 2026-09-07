@@ -30,16 +30,119 @@ from ..domain.ids import (
     EpisodeListeningDecisionId,
     EpisodeSpeechMasterId,
     GenerationAttemptId,
+    GenerationPreviewId,
     NarrationAssemblyAttemptId,
     NarrationJobId,
     NarrationMasterId,
     PassageId,
+    PassageRenderRecipeId,
     TakeId,
     TimedNarrationPackageId,
 )
 from ..domain.narration_job import NarrationJob
-from ..domain.values import AuthorityOperation, ComponentRole, Lane
+from ..domain.values import AuthorityOperation, ComponentRole, Lane, RenderControl
 from .ports import AuthorityObservation
+
+
+@dataclass(frozen=True, slots=True)
+class StudioDiscoveryProjection:
+    job_ids: tuple[NarrationJobId, ...]
+    episode_ids: tuple[DiaryEpisodeId, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EditorDeliveryControlsProjection:
+    speed: str
+    volume: str
+    emotion: str | None
+    dictionary_configured: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EditorRecipeProjection:
+    recipe_id: PassageRenderRecipeId
+    revision: int
+    text_revision: int
+    controls: tuple[RenderControl, ...]
+    current: bool
+    required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EditorPreviewProjection:
+    """Persisted display facts only; this is never generation confirmation authority."""
+
+    preview_id: GenerationPreviewId
+    base_job_revision: int
+    canonical_projection: str
+    billable_characters: int
+    estimated_usage: str
+    issued_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EditorPassageProjection:
+    passage_id: PassageId
+    order: int
+    text: str
+    text_revision: int
+    recipes: tuple[EditorRecipeProjection, ...]
+    recipe_required: bool
+    dictionary_required: bool
+    latest_preview: EditorPreviewProjection | None
+
+
+@dataclass(frozen=True, slots=True)
+class NarrationEditorProjection:
+    job_id: NarrationJobId
+    revision: int
+    lane: Lane
+    defaults: EditorDeliveryControlsProjection
+    passages: tuple[EditorPassageProjection, ...]
+
+
+def project_narration_editor(job: NarrationJob) -> NarrationEditorProjection:
+    if type(job) is not NarrationJob:
+        raise ValidationError("narration editor requires a NarrationJob")
+    latest_previews = {preview.passage_id: preview for preview in job.previews}
+    passages = []
+    for passage in job.passages:
+        text = passage.current_text_revision
+        preview = latest_previews.get(passage.passage_id)
+        passages.append(EditorPassageProjection(
+            passage.passage_id,
+            passage.order,
+            text.text.value,
+            text.revision,
+            tuple(EditorRecipeProjection(
+                recipe.recipe_id,
+                recipe.revision,
+                recipe.text_revision,
+                recipe.controls,
+                recipe.text_revision == text.revision and recipe.text_digest == text.text.digest,
+                recipe.recipe_id == passage.required_recipe_id,
+            ) for recipe in passage.recipes),
+            passage.required_recipe_id is not None,
+            passage.required_dictionary_digest is not None,
+            None if preview is None else EditorPreviewProjection(
+                preview.preview_id,
+                preview.base_job_revision,
+                preview.canonical_projection,
+                preview.billable_characters,
+                preview.estimated_usage,
+                preview.issued_at,
+            ),
+        ))
+    defaults = job.defaults
+    return NarrationEditorProjection(
+        job.job_id,
+        job.revision,
+        job.lane,
+        EditorDeliveryControlsProjection(
+            defaults.speed.value, defaults.volume.value, defaults.emotion, defaults.dictionary is not None,
+        ),
+        tuple(passages),
+    )
 
 
 class AuthorityHistoryKind(str, Enum):

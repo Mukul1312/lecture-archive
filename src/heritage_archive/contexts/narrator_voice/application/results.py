@@ -26,12 +26,16 @@ from .status import (
     AuthorizationHistoryProjection,
     EpisodeStatusProjection,
     NarrationStatusProjection,
+    NarrationEditorProjection,
+    StudioDiscoveryProjection,
 )
 
 
 AuthorizationStatusResult = AuthorizationHistoryProjection
 NarrationStatusResult = NarrationStatusProjection
 EpisodeStatusResult = EpisodeStatusProjection
+StudioDiscoveryResult = StudioDiscoveryProjection
+NarrationEditorResult = NarrationEditorProjection
 
 
 @dataclass(frozen=True, slots=True)

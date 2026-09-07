@@ -140,11 +140,17 @@ class FakeAuthorizationRepository(_CasRepository):
 
 
 class FakeNarrationJobRepository(_CasRepository):
+    def list_ids(self) -> tuple[NarrationJobId, ...]:
+        return tuple(sorted(self.values, key=lambda identity: identity.value))
+
     def load(self, identity: NarrationJobId) -> NarrationJob | None:
         return super().load(identity)
 
 
 class FakeDiaryEpisodeRepository(_CasRepository):
+    def list_ids(self) -> tuple[DiaryEpisodeId, ...]:
+        return tuple(sorted(self.values, key=lambda identity: identity.value))
+
     def load(self, identity: DiaryEpisodeId) -> DiaryEpisode | None:
         return super().load(identity)
 

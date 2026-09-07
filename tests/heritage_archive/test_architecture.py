@@ -488,6 +488,7 @@ class NarratorVoiceArchitectureTests(unittest.TestCase):
             "BuildTimedNarrationPackageHandler", "RecordTimingCorrectionHandler",
             "ShowEpisodeStatusHandler", "ExportPresentationHandoffHandler",
             "ReconcileEpisodeAssemblyAttemptHandler",
+            "DiscoverStudioHandler", "ShowNarrationEditorHandler",
         }
         self.assertEqual(handlers, expected)
         command_source = (self.NARRATOR_ROOT / "application" / "commands.py").read_text(encoding="utf-8")

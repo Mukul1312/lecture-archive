@@ -49,6 +49,86 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemRepositoryContracts(unittest.TestCase):
+    def test_discovery_is_empty_ordered_and_survives_reopening(self) -> None:
+        for repository_type, kind, make, id_type in self._discoverable_types():
+            with self.subTest(kind=kind), self._storage_root() as root:
+                repository = repository_type(root)
+                self.assertEqual(repository.list_ids(), ())
+                for index in (1252, 1251):
+                    self.assertTrue(repository.save(make(index), None))
+                reopened = LocalNarrationRoot.open(root.path, (PROJECT_ROOT,))
+                self.assertEqual(repository_type(reopened).list_ids(), (id_type(uuid(1251)), id_type(uuid(1252))))
+
+    def test_discovery_rejects_corrupt_directory_and_revision_histories(self) -> None:
+        for repository_type, kind, make, id_type in self._discoverable_types():
+            for defect in ("invalid-id", "file-entry", "kind-file", "empty", "first", "later", "gap", "identity", "revision-file-directory"):
+                with self.subTest(kind=kind, defect=defect), self._storage_root() as root:
+                    repository = repository_type(root)
+                    aggregate = make(1260)
+                    repository.save(aggregate, None)
+                    directory = root.aggregates / kind
+                    aggregate_dir = directory / uuid(1260)
+                    revisions = aggregate_dir / "revisions"
+                    first = revisions / "00000000000000000001.json"
+                    if defect == "invalid-id":
+                        (directory / "not-an-id").mkdir()
+                    elif defect == "file-entry":
+                        (directory / uuid(1261)).write_bytes(b"unexpected file")
+                    elif defect == "kind-file":
+                        directory.rename(root.path / "saved-kind")
+                        directory.write_bytes(b"unexpected file")
+                    elif defect == "empty":
+                        (directory / uuid(1261)).mkdir()
+                    elif defect == "first":
+                        first.write_bytes(b"invalid snapshot")
+                    elif defect == "later":
+                        (revisions / "00000000000000000002.json").write_bytes(b"invalid snapshot")
+                    elif defect == "gap":
+                        (revisions / "00000000000000000003.json").write_bytes(first.read_bytes())
+                    elif defect == "identity":
+                        aggregate_dir.rename(directory / uuid(1261))
+                    else:
+                        first.unlink()
+                        first.mkdir()
+                    with self.assertRaises(ValidationError):
+                        repository.list_ids()
+
+    def test_discovery_rejects_reparse_entries_without_following_them(self) -> None:
+        import os
+        import subprocess
+
+        for location in ("kind", "aggregate", "revisions"):
+            with self.subTest(location=location), self._storage_root() as root:
+                repository = FilesystemDiaryEpisodeRepository(root)
+                repository.save(DiaryEpisode.prepare(DiaryEpisodeId(uuid(1270)), NOW), None)
+                kind = root.aggregates / "diary-episodes"
+                target = root.path / "junction-target"
+                link = {"kind": kind, "aggregate": kind / uuid(1270), "revisions": kind / uuid(1270) / "revisions"}[location]
+                link.rename(target)
+                if os.name == "nt":
+                    completed = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, check=False)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                else:
+                    link.symlink_to(target, target_is_directory=True)
+                try:
+                    with self.assertRaises(ValidationError):
+                        repository.list_ids()
+                finally:
+                    if os.name == "nt":
+                        link.rmdir()
+                    else:
+                        link.unlink()
+
+    @staticmethod
+    def _discoverable_types():
+        return (
+            (FilesystemDiaryEpisodeRepository, "diary-episodes", lambda index: DiaryEpisode.prepare(DiaryEpisodeId(uuid(index)), NOW), DiaryEpisodeId),
+            (FilesystemNarrationJobRepository, "narration-jobs", lambda index: prepare_lane_b_diary_job(
+                NarrationJobId(uuid(index)), make_contract(lane=Lane.B), make_defaults(),
+                (PassageDraft(PassageId(uuid(index + 100)), 0, PassageText("discovery fixture")),), NOW,
+            ), NarrationJobId),
+        )
+
     def test_authorization_revisions_round_trip_and_refuse_stale_compare_and_swap(self) -> None:
         """A stale authorization write could overwrite immutable authority history."""
         record = AuthorizationRecord.register(

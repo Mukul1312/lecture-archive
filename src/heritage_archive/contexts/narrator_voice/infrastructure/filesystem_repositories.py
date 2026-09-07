@@ -18,7 +18,7 @@ from ..domain.authorization import AuthorizationRecord, AuthorizationRecordSnaps
 from ..domain.diary_episode import DiaryEpisode, DiaryEpisodeSnapshot
 from ..domain.ids import AuthorizationRecordId, DiaryEpisodeId, NarrationJobId
 from ..domain.narration_job import NarrationJob, NarrationJobSnapshot
-from .local_root import LocalNarrationRoot
+from .local_root import LocalNarrationRoot, _is_reparse_point
 
 
 class _FilesystemSnapshotRepository:
@@ -42,6 +42,47 @@ class _FilesystemSnapshotRepository:
 
     def load(self, aggregate_id: object) -> Any | None:
         return self._current_contiguous(aggregate_id)[1]
+
+    def list_ids(self) -> tuple[Any, ...]:
+        """Discover only complete, canonical histories; never recover past corruption."""
+        directory = self._root.aggregates / self._aggregate_kind
+        try:
+            self._require_directory(self._root.path)
+            self._require_directory(self._root.aggregates)
+            if not os.path.lexists(directory):
+                return ()
+            self._require_directory(directory)
+            identities = []
+            for aggregate_dir in sorted(directory.iterdir(), key=lambda entry: entry.name):
+                self._require_directory(aggregate_dir)
+                aggregate_id = self._aggregate_id_type(aggregate_dir.name)
+                if aggregate_id.value != aggregate_dir.name:
+                    raise ValidationError("aggregate directory identity must be canonical")
+                revisions = aggregate_dir / "revisions"
+                self._require_directory(revisions)
+                entries = sorted(revisions.iterdir(), key=lambda entry: entry.name)
+                if not entries:
+                    raise ValidationError("aggregate revision history cannot be empty")
+                for revision, entry in enumerate(entries, start=1):
+                    if (
+                        entry.name != f"{revision:020d}.json"
+                        or _is_reparse_point(entry)
+                        or not entry.is_file()
+                    ):
+                        raise ValidationError("aggregate revision history must be contiguous regular files")
+                    snapshot = decode_schema_v1(entry.read_bytes(), self._snapshot_type)
+                    aggregate = self._root_type.from_snapshot(snapshot)
+                    if aggregate.revision != revision or self._aggregate_id(aggregate) != aggregate_id:
+                        raise ValidationError("aggregate snapshot does not match its directory and revision")
+                identities.append(aggregate_id)
+            return tuple(identities)
+        except (OSError, TypeError, ValueError) as error:
+            raise ValidationError("aggregate discovery requires valid canonical directories and histories") from error
+
+    @staticmethod
+    def _require_directory(path: Path) -> None:
+        if _is_reparse_point(path) or not path.is_dir():
+            raise ValidationError("aggregate discovery requires a directory without reparse points")
 
     def save(self, root: object, expected_revision: int | None) -> bool:
         if type(root) is not self._root_type:
@@ -161,6 +202,9 @@ class FilesystemNarrationJobRepository:
     def load(self, job_id: NarrationJobId) -> NarrationJob | None:
         return self._snapshots.load(job_id)
 
+    def list_ids(self) -> tuple[NarrationJobId, ...]:
+        return self._snapshots.list_ids()
+
     def save(self, job: NarrationJob, expected_revision: int | None) -> bool:
         return self._snapshots.save(job, expected_revision)
 
@@ -175,6 +219,9 @@ class FilesystemDiaryEpisodeRepository:
 
     def load(self, episode_id: DiaryEpisodeId) -> DiaryEpisode | None:
         return self._snapshots.load(episode_id)
+
+    def list_ids(self) -> tuple[DiaryEpisodeId, ...]:
+        return self._snapshots.list_ids()
 
     def save(self, episode: DiaryEpisode, expected_revision: int | None) -> bool:
         return self._snapshots.save(episode, expected_revision)
