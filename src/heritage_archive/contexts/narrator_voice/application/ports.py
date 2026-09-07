@@ -340,6 +340,10 @@ class MediaInspector(Protocol):
     def inspect_canonical_wav(self, payload: bytes) -> DecodedMediaFacts: ...
 
 
+class VerifiedArtifactReader(Protocol):
+    def read_verified_bytes(self, publication: PublishedArtifact) -> bytes: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DryPcmSource:
     artifact: PublishedArtifact

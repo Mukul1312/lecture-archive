@@ -117,7 +117,7 @@ class FilesystemArtifactStore:
 
 
 class FilesystemArtifactEvidenceVerifier:
-    """Checks workspace artifact facts against immutable bytes without retaining state."""
+    """Checks recovery evidence and structurally implements VerifiedArtifactReader."""
 
     def __init__(self, root: LocalNarrationRoot, media_inspector: MediaInspector | None = None) -> None:
         if type(root) is not LocalNarrationRoot:

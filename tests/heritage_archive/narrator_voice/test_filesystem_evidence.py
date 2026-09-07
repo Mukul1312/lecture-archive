@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from pathlib import Path
 import sys
 import tempfile
@@ -428,6 +430,20 @@ class FilesystemEvidenceContracts(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValidationError, "reparse"):
                     verifier.read_verified_bytes(publication)
+
+    def test_direct_reader_rejects_wrong_declared_length_even_with_matching_digest(self) -> None:
+        """A digest-only byte reader would silently accept inconsistent publication size."""
+        with self._storage_root() as root:
+            publication = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(323))])).publish(
+                SafeRelativeArtifactPath("takes/length.wav"), b"exact immutable bytes", "audio/wav", NOW
+            )
+            wrong_size = replace(publication, reference=replace(
+                publication.reference, byte_size=publication.reference.byte_size + 1,
+            ))
+            with self.assertRaises(ValidationError) as caught:
+                FilesystemArtifactEvidenceVerifier(root).read_verified_bytes(wrong_size)
+            self.assertNotIn(str(root.artifacts), str(caught.exception))
+            self.assertNotIn("takes/length.wav", str(caught.exception))
 
     def test_verifier_refuses_an_extra_unpublished_staged_artifact(self) -> None:
         """Treating staged containment as enough would accept an unpaired artifact in recovery evidence."""

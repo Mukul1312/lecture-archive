@@ -39,6 +39,15 @@ NarrationEditorResult = NarrationEditorProjection
 
 
 @dataclass(frozen=True, slots=True)
+class AudioPlaybackResult:
+    command_id: CommandId
+    content_digest: ContentDigest
+    byte_size: int
+    media_type: str
+    payload: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class AuthorizationResult:
     command_id: CommandId
     record_id: AuthorizationRecordId

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from heritage_archive.kernel import ValidationError
+from heritage_archive.kernel import ContentDigest, ValidationError
 
 from ..domain.authorization import AuthorizationRecord
 from ..domain.diary_episode import DiaryEpisode, EpisodeStatus
@@ -33,6 +33,7 @@ from ..domain.evidence import (
     ProviderEventEvidence,
     ProviderEventKind,
     ProviderTerminalClass,
+    PublishedArtifact,
     TimingReviewStatus,
     TimedNarrationPackage,
     SubmissionEvidence,
@@ -44,6 +45,7 @@ from ..domain.ids import (
     AuthorizationRecordId,
     AuthorityChangeId,
     BudgetReservationId,
+    CommandId,
     DiaryEpisodeId,
     EpisodeAssemblyAttemptId,
     EpisodeListeningDecisionId,
@@ -73,6 +75,9 @@ from ..domain.values import (
     ResolvedControl,
 )
 from .commands import (
+    ReadTakeAudioCommand,
+    ReadNarrationMasterAudioCommand,
+    ReadEpisodeMasterAudioCommand,
     DiscoverStudioCommand,
     ShowNarrationEditorCommand,
     EstimateGenerationCommand,
@@ -127,6 +132,7 @@ from .ports import (
     IdentifierSource,
     ImmutableArtifactStore,
     MediaInspector,
+    VerifiedArtifactReader,
     NarrationJobRepository,
     NarrationReleasePolicyResolver,
     DiaryEpisodeRepository,
@@ -153,6 +159,7 @@ from .recovery import (
     decide_target_recovery,
 )
 from .results import (
+    AudioPlaybackResult,
     StudioDiscoveryResult,
     NarrationEditorResult,
     AuthorizationResult,
@@ -189,6 +196,68 @@ from .status import (
 def _cas_or_conflict(saved: bool, aggregate: str) -> None:
     if not saved:
         raise RevisionConflict(f"{aggregate} compare-and-swap refused the mutation")
+
+
+def _read_audio(
+    command_id: CommandId,
+    publication: PublishedArtifact,
+    stored_media: DecodedMediaFacts,
+    artifacts: VerifiedArtifactReader,
+    media: MediaInspector,
+) -> AudioPlaybackResult:
+    reference = publication.reference
+    if reference.media_type != "audio/wav":
+        raise ValidationError("audio playback requires a WAV publication")
+    try:
+        payload = artifacts.read_verified_bytes(publication)
+    except (ValidationError, OSError):
+        raise ValidationError("audio playback artifact could not be verified") from None
+    if (
+        type(payload) is not bytes
+        or len(payload) != reference.byte_size
+        or ContentDigest.from_bytes(payload) != reference.content_digest
+    ):
+        raise ValidationError("audio playback bytes do not match immutable evidence")
+    try:
+        decoded = media.inspect_canonical_wav(payload)
+    except (ValidationError, OSError):
+        raise ValidationError("audio playback WAV could not be inspected") from None
+    if type(decoded) is not DecodedMediaFacts or decoded != stored_media:
+        raise ValidationError("audio playback decoded media does not match stored evidence")
+    return AudioPlaybackResult(command_id, reference.content_digest, reference.byte_size, "audio/wav", payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadTakeAudioHandler:
+    repository: NarrationJobRepository
+    artifacts: VerifiedArtifactReader
+    media: MediaInspector
+
+    def __call__(self, command: ReadTakeAudioCommand) -> AudioPlaybackResult:
+        take = _load_job(self.repository, command.job_id).take(command.take_id)
+        return _read_audio(command.command_id, take.artifact, take.media, self.artifacts, self.media)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadNarrationMasterAudioHandler:
+    repository: NarrationJobRepository
+    artifacts: VerifiedArtifactReader
+    media: MediaInspector
+
+    def __call__(self, command: ReadNarrationMasterAudioCommand) -> AudioPlaybackResult:
+        master = _load_job(self.repository, command.job_id).master(command.master_id)
+        return _read_audio(command.command_id, master.artifact, master.media, self.artifacts, self.media)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadEpisodeMasterAudioHandler:
+    repository: DiaryEpisodeRepository
+    artifacts: VerifiedArtifactReader
+    media: MediaInspector
+
+    def __call__(self, command: ReadEpisodeMasterAudioCommand) -> AudioPlaybackResult:
+        master = _load_episode(self.repository, command.episode_id).speech_master(command.master_id)
+        return _read_audio(command.command_id, master.artifact, master.media, self.artifacts, self.media)
 
 
 @dataclass(frozen=True, slots=True)

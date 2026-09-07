@@ -257,6 +257,27 @@ class DiscoverStudioCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadTakeAudioCommand:
+    command_id: CommandId
+    job_id: NarrationJobId
+    take_id: TakeId
+
+
+@dataclass(frozen=True, slots=True)
+class ReadNarrationMasterAudioCommand:
+    command_id: CommandId
+    job_id: NarrationJobId
+    master_id: NarrationMasterId
+
+
+@dataclass(frozen=True, slots=True)
+class ReadEpisodeMasterAudioCommand:
+    command_id: CommandId
+    episode_id: DiaryEpisodeId
+    master_id: EpisodeSpeechMasterId
+
+
+@dataclass(frozen=True, slots=True)
 class ShowNarrationEditorCommand:
     command_id: CommandId
     job_id: NarrationJobId
