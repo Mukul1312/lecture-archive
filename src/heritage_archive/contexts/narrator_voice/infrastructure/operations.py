@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 import hashlib
 import os
 from pathlib import Path
@@ -25,14 +26,16 @@ from heritage_archive.platform.storage.local_files import (
 )
 
 from ..application.ports import IdentifierSource
-from ..domain.values import DictionaryBinding, NonNegativeDecimal, SafeRelativeArtifactPath
+from ..domain.ids import AuthorizationRecordId
+from ..domain.values import DictionaryBinding, FixedTwoDecimal, NonNegativeDecimal, SafeRelativeArtifactPath
 from .local_root import LocalNarrationRoot
 
 
 _INITIALIZATION_SCHEMA = "narrator_voice.local_studio_initialization"
 _CONFIGURATION_SCHEMA = "narrator_voice.local_studio_configuration"
 _BACKUP_SCHEMA = "narrator_voice.full_backup_manifest"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+_BACKUP_SCHEMA_VERSION = 1
 _INITIALIZATION_FIELDS = {
     "schema",
     "schema_version",
@@ -45,6 +48,11 @@ _INITIALIZATION_FIELDS = {
 }
 _CONFIGURATION_FIELDS = _INITIALIZATION_FIELDS | {"actor_id"}
 _PROFILE_FIELDS = {
+    "voice_binding",
+    "authorization_record_id",
+    "initial_speed",
+    "initial_volume",
+    "initial_emotion",
     "display_label",
     "speaker_identity",
     "opaque_provider_voice_reference",
@@ -76,16 +84,32 @@ class LocalStudioVoiceProfile:
     speaker_identity: str
     opaque_provider_voice_reference: str
     dictionary_binding: DictionaryBinding | None
+    voice_binding: str
+    authorization_record_id: AuthorizationRecordId
+    initial_speed: FixedTwoDecimal
+    initial_volume: FixedTwoDecimal
+    initial_emotion: str | None
 
     def __post_init__(self) -> None:
         for field, value in (
             ("profile display label", self.display_label),
             ("profile speaker identity", self.speaker_identity),
             ("opaque provider voice reference", self.opaque_provider_voice_reference),
+            ("voice binding", self.voice_binding),
         ):
             require_canonical_text(value, field=field, nonempty=True)
         if self.dictionary_binding is not None and type(self.dictionary_binding) is not DictionaryBinding:
             raise ValidationError("profile dictionary binding must be complete or null")
+        if type(self.authorization_record_id) is not AuthorizationRecordId:
+            raise ValidationError("profile requires an authorization record identity")
+        if type(self.initial_speed) is not FixedTwoDecimal or type(self.initial_volume) is not FixedTwoDecimal:
+            raise ValidationError("profile controls require fixed two decimal values")
+        if not Decimal("0.60") <= Decimal(self.initial_speed.value) <= Decimal("1.50"):
+            raise ValidationError("profile speed is outside the verified range")
+        if not Decimal("0.50") <= Decimal(self.initial_volume.value) <= Decimal("2.00"):
+            raise ValidationError("profile volume is outside the verified range")
+        if self.initial_emotion not in (None, "calm"):
+            raise ValidationError("profile emotion is unsupported")
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +231,7 @@ def load_local_studio_initialization(
     path: str | Path,
     forbidden_roots: tuple[Path, ...],
 ) -> LocalStudioInitialization:
-    """Load one external, canonical, strict v1 private initialization document."""
+    """Load one external, canonical, strict v2 private initialization document."""
     source = _external_file(path, forbidden_roots)
     document, _ = _read_canonical_object(source)
     return _decode_initialization(document)
@@ -542,6 +566,11 @@ def _decode_profile(value: JsonValue) -> LocalStudioVoiceProfile:
         _text(profile["speaker_identity"], "profile speaker identity"),
         _text(profile["opaque_provider_voice_reference"], "opaque provider voice reference"),
         dictionary,
+        _text(profile["voice_binding"], "voice binding"),
+        AuthorizationRecordId(profile["authorization_record_id"]),
+        FixedTwoDecimal(profile["initial_speed"]),
+        FixedTwoDecimal(profile["initial_volume"]),
+        profile["initial_emotion"],
     )
 
 
@@ -600,6 +629,11 @@ def _profile_document(profile: LocalStudioVoiceProfile) -> dict[str, JsonValue]:
         "speaker_identity": profile.speaker_identity,
         "opaque_provider_voice_reference": profile.opaque_provider_voice_reference,
         "dictionary_binding": dictionary,
+        "voice_binding": profile.voice_binding,
+        "authorization_record_id": profile.authorization_record_id.value,
+        "initial_speed": profile.initial_speed.value,
+        "initial_volume": profile.initial_volume.value,
+        "initial_emotion": profile.initial_emotion,
     }
 
 
@@ -838,7 +872,7 @@ def _hash_file(path: Path) -> tuple[ContentDigest, int]:
 def _manifest_document(entries: tuple[_BackupEntry, ...]) -> dict[str, JsonValue]:
     return {
         "schema": _BACKUP_SCHEMA,
-        "schema_version": _SCHEMA_VERSION,
+        "schema_version": _BACKUP_SCHEMA_VERSION,
         "files": [
             {
                 "path": entry.path,
@@ -858,7 +892,7 @@ def _load_manifest(path: Path) -> tuple[tuple[_BackupEntry, ...], ContentDigest]
     if (
         document["schema"] != _BACKUP_SCHEMA
         or type(schema_version) is not int
-        or schema_version != _SCHEMA_VERSION
+        or schema_version != _BACKUP_SCHEMA_VERSION
     ):
         raise ValidationError("backup manifest schema is not supported")
     values = document["files"]

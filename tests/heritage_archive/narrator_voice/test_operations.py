@@ -67,6 +67,11 @@ class LocalStudioOperationsTests(unittest.TestCase):
             self.assertEqual(first.configuration_digest.hex_digest, hashlib.sha256(first_bytes).hexdigest())
             self.assertEqual(configuration.actor_id, ActorId(uuid(1501)))
             self.assertEqual(configuration.lane_b.opaque_provider_voice_reference, "private-voice-b")
+            self.assertEqual(configuration.lane_b.voice_binding, "fixture-binding-b")
+            self.assertEqual(configuration.lane_b.authorization_record_id.value, uuid(3))
+            self.assertEqual(configuration.lane_c.initial_speed.value, "1.10")
+            self.assertIsNone(configuration.lane_c.initial_emotion)
+            self.assertEqual(parse_strict_json(first_bytes)["schema_version"], 2)
             self.assertNotIn(b"CARTESIA_API_KEY", first_bytes)
             self.assertNotIn(b"api_key", first_bytes)
             self.assertEqual(identifiers.calls, 1)
@@ -99,6 +104,12 @@ class LocalStudioOperationsTests(unittest.TestCase):
                 load_local_studio_initialization(path, (PROJECT_ROOT,))
 
             document = self._initialization_document()
+            document["schema_version"] = 1
+            path.write_bytes(canonical_json(document))
+            with self.assertRaises(ValidationError):
+                load_local_studio_initialization(path, (PROJECT_ROOT,))
+
+            document = self._initialization_document()
             document["schema_version"] = True
             path.write_bytes(canonical_json(document))
             with self.assertRaises(ValidationError):
@@ -115,7 +126,7 @@ class LocalStudioOperationsTests(unittest.TestCase):
                 load_local_studio_configuration(root)
 
             configuration_document["schema_version"] = 1
-            config_path.write_bytes(canonical_json(configuration_document) + b"\n")
+            config_path.write_bytes(canonical_json(configuration_document))
             with self.assertRaises(ValidationError):
                 load_local_studio_configuration(root)
 
@@ -154,6 +165,7 @@ class LocalStudioOperationsTests(unittest.TestCase):
             result = backup(root, destination, (PROJECT_ROOT,))
             manifest_path = destination / "backup-manifest.json"
             manifest = parse_strict_json(manifest_path.read_bytes())
+            self.assertEqual(manifest["schema_version"], 1)
             copied_paths = {entry["path"] for entry in manifest["files"]}
 
             self.assertEqual(result.manifest_digest.hex_digest, hashlib.sha256(manifest_path.read_bytes()).hexdigest())
@@ -264,11 +276,16 @@ class LocalStudioOperationsTests(unittest.TestCase):
         dictionary_digest = hashlib.sha256(b"fake private dictionary").hexdigest()
         return {
             "schema": "narrator_voice.local_studio_initialization",
-            "schema_version": 1,
+            "schema_version": 2,
             "operator_display_label": "Private Operator",
             "lane_b": {
                 "display_label": "SSGGSM Odia diary",
                 "speaker_identity": "private-speaker-b",
+                "voice_binding": "fixture-binding-b",
+                "authorization_record_id": uuid(3),
+                "initial_speed": "0.90",
+                "initial_volume": "1.00",
+                "initial_emotion": "calm",
                 "opaque_provider_voice_reference": "private-voice-b",
                 "dictionary_binding": {
                     "opaque_reference": "private-dictionary-b",
@@ -280,6 +297,11 @@ class LocalStudioOperationsTests(unittest.TestCase):
             "lane_c": {
                 "display_label": "Odia diary introduction",
                 "speaker_identity": "private-speaker-c",
+                "voice_binding": "fixture-binding-c",
+                "authorization_record_id": uuid(4),
+                "initial_speed": "1.10",
+                "initial_volume": "1.00",
+                "initial_emotion": None,
                 "opaque_provider_voice_reference": "private-voice-c",
                 "dictionary_binding": None,
             },

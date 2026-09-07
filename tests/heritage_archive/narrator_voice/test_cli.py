@@ -444,17 +444,27 @@ class NarratorVoiceCliTests(unittest.TestCase):
 def _private_initialization_document() -> dict[str, object]:
     return {
         "schema": "narrator_voice.local_studio_initialization",
-        "schema_version": 1,
+        "schema_version": 2,
         "operator_display_label": "Private Operator",
         "lane_b": {
             "display_label": "SSGGSM Odia diary",
             "speaker_identity": "private-speaker-b",
+            "voice_binding": "fixture-binding-b",
+            "authorization_record_id": "123e4567-e89b-42d3-a456-426614190003",
+            "initial_speed": "0.90",
+            "initial_volume": "1.00",
+            "initial_emotion": "calm",
             "opaque_provider_voice_reference": "private-voice-b",
             "dictionary_binding": None,
         },
         "lane_c": {
             "display_label": "Odia diary introduction",
             "speaker_identity": "private-speaker-c",
+            "voice_binding": "fixture-binding-c",
+            "authorization_record_id": "123e4567-e89b-42d3-a456-426614190004",
+            "initial_speed": "1.10",
+            "initial_volume": "1.00",
+            "initial_emotion": None,
             "opaque_provider_voice_reference": "private-voice-c",
             "dictionary_binding": None,
         },
