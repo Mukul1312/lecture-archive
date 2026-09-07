@@ -1,4 +1,4 @@
-"""Offline command adapter for local Narrator Voice operations.
+"""Command adapter for local Narrator Voice operations and fixed loopback serving.
 
 This module owns only protocol parsing, exact nominal-ID conversion, redacted
 serialization, and exit-code mapping.  The composition root supplies every
@@ -50,6 +50,7 @@ class CliOperations(Protocol):
     """Driver-facing facade implemented only by the composition root."""
 
     def initialize(self, config_file: Path) -> object: ...
+    def serve(self) -> None: ...
     def doctor(self) -> object: ...
     def backup(self, destination: Path) -> object: ...
     def verify_backup(self, source: Path) -> object: ...
@@ -104,9 +105,10 @@ def _absolute_path(raw: str) -> Path:
 def build_parser() -> argparse.ArgumentParser:
     parser = _RedactingArgumentParser(
         prog="python -m heritage_archive.composition_root.narrator_voice_cli",
-        description="Offline local operations for the Narrator Voice studio.",
+        description="Local operations and fixed loopback serving for the Narrator Voice studio.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("serve", help="serve the studio at http://127.0.0.1:8765")
 
     initialize = commands.add_parser("init", help="initialize the explicit live root")
     initialize.add_argument("--config-file", required=True, type=_absolute_path, metavar="ABS_PATH")
@@ -174,6 +176,9 @@ def main(
 
     try:
         facade = facade_factory(arguments.command != "verify-backup")
+        if arguments.command == "serve":
+            facade.serve()
+            return 0
         payload = _dispatch(arguments, facade)
     except CliConfigurationError:
         _emit(errors, {"error": "configuration_error"})

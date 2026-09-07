@@ -1,4 +1,4 @@
-"""Composition root for the offline Narrator Voice local-studio CLI."""
+"""Composition root for offline operations and lazy local-studio serving."""
 
 from __future__ import annotations
 
@@ -88,6 +88,11 @@ class _LocalOperationsFacade:
     def __init__(self, root: LocalNarrationRoot | None, forbidden_roots: tuple[Path, ...]) -> None:
         self._root = root
         self._forbidden_roots = forbidden_roots
+
+    def serve(self) -> None:
+        from heritage_archive.composition_root.narrator_voice_web import serve_narration
+
+        serve_narration(self._require_root())
 
     def initialize(self, config_file: Path):
         from heritage_archive.contexts.narrator_voice.infrastructure.operations import (

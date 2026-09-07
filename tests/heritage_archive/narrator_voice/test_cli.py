@@ -142,6 +142,58 @@ class _RecordingFacade:
 
 
 class NarratorVoiceCliTests(unittest.TestCase):
+    def test_serve_dispatches_once_without_stdout_and_has_no_configuration_flags(self):
+        facade = _RecordingFacade()
+        facade.serve = lambda: facade.calls.append(("serve", ()))
+        code, stdout, stderr, builds = self._run(["serve"], facade)
+        self.assertEqual((code, stdout, stderr, builds), (0, "", "", [True]))
+        self.assertEqual(facade.calls, [("serve", ())])
+        for flag in ("--host", "--port", "--workers", "--proxy-headers", "--cors", "--reload"):
+            with self.subTest(flag=flag):
+                code, stdout, stderr, builds = self._run(["serve", flag, "SENTINEL"])
+                self.assertEqual((code, stdout, builds), (2, "", []))
+                self.assertEqual(json.loads(stderr), {"error": "usage_error"})
+        self.assertEqual(self._run(["serve", "--help"])[0], 0)
+        facade.serve = lambda: (_ for _ in ()).throw(RuntimeError("SENTINEL"))
+        code, stdout, stderr, builds = self._run(["serve"], facade)
+        self.assertEqual((code, stdout, json.loads(stderr)), (1, "", {"error": "internal_failure"}))
+
+    def test_help_and_offline_imports_do_not_load_optional_web_or_live_composition(self):
+        repository = Path(__file__).resolve().parents[3]
+        script = '''
+import importlib.abc
+import sys
+class NoWeb(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'starlette', 'uvicorn', 'httpx'} or fullname.endswith(('narrator_voice_web', 'narrator_voice_live')):
+            raise AssertionError('optional web/live import')
+sys.meta_path.insert(0, NoWeb())
+from heritage_archive.composition_root import narrator_voice_cli
+from heritage_archive.contexts.narrator_voice.infrastructure.operations import DoctorResult
+assert narrator_voice_cli.main(['--help']) == 0
+assert narrator_voice_cli.main(['serve', '--help']) == 0
+from heritage_archive.contexts.narrator_voice.infrastructure import cli
+class Offline:
+    def doctor(self):
+        return DoctorResult(True, 0, ())
+assert cli.main(['doctor'], facade_factory=lambda require_root: Offline()) == 0
+'''
+        result = subprocess.run([sys.executable, "-c", script], cwd=repository,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_serve_composition_uses_only_the_explicit_root(self):
+        from heritage_archive.composition_root import narrator_voice_cli, narrator_voice_web
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.dict(os.environ, {"CARTESIA_NARRATION_ROOT": folder}, clear=True), patch.object(narrator_voice_web, "serve_narration") as serve:
+                stdout, stderr = StringIO(), StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    code = narrator_voice_cli.main(["serve"])
+            self.assertEqual((code, stdout.getvalue(), stderr.getvalue()), (0, "", ""))
+            self.assertEqual(serve.call_count, 1)
+            self.assertEqual(serve.call_args.args[0].path, Path(folder).resolve())
+
     def _run(
         self,
         arguments: list[str],
@@ -166,7 +218,7 @@ class NarratorVoiceCliTests(unittest.TestCase):
         self.assertIn("verify-backup", stdout)
 
         sentinel = "C:/private/SENTINEL-VOICE-ID"
-        for arguments in (["--root", sentinel, "doctor"], ["serve"], ["init", "--config-file", sentinel, "extra"]):
+        for arguments in (["--root", sentinel, "doctor"], ["serve", "--host", sentinel], ["init", "--config-file", sentinel, "extra"]):
             with self.subTest(arguments=arguments):
                 code, stdout, stderr, builds = self._run(list(arguments))
                 self.assertEqual((code, stdout, builds), (2, "", []))

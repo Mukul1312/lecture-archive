@@ -86,9 +86,13 @@ def guard(package_root: Path, package_name: str = PACKAGE) -> int:
     standard_library = set(sys.stdlib_module_names) | {"__future__"}
     for module, source in modules.items():
         source_context_layer = context_layer(module, package_name)
+        if len(module) >= 4 and module[:2] == (package_name, "contexts") and module[3] == "presentation":
+            violations.append(f"unsupported context layer: {module}")
         for imported in imports_from(source, module):
             if not imported:
                 continue
+            if imported[0] in {"starlette", "uvicorn"} and module[:3] != (package_name, "platform", "web"):
+                violations.append(f"web framework confinement: {module} -> {imported}")
             if imported[:1] == ("heritage_production",):
                 violations.append(f"legacy import: {module} -> {imported}")
             if module[:2] == (package_name, "kernel") and (
@@ -157,6 +161,21 @@ def guard(package_root: Path, package_name: str = PACKAGE) -> int:
 
 
 class ArchitectureGuardTests(unittest.TestCase):
+    def test_web_frameworks_are_confined_to_platform_web(self):
+        for module in ("composition_root/web.py", "platform/other.py", "contexts/a/infrastructure/web.py"):
+            for dependency in ("starlette", "uvicorn"):
+                with self.subTest(module=module, dependency=dependency):
+                    self.assert_guard_rejects(module, f"import {dependency}\n", "web framework confinement")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / PACKAGE
+            destination = root / "platform" / "web" / "loopback.py"
+            destination.parent.mkdir(parents=True)
+            destination.write_text("import starlette\nimport uvicorn\n", encoding="utf-8")
+            self.assertEqual(guard(root), 1)
+
+    def test_presentation_layer_cannot_escape_context_guard_even_when_empty(self):
+        self.assert_guard_rejects("contexts/a/presentation/__init__.py", "", "unsupported context layer")
+
     def test_real_kernel_is_scanned_and_is_stdlib_pure(self) -> None:
         self.assertGreaterEqual(guard(PACKAGE_ROOT, PACKAGE), 8)
 
