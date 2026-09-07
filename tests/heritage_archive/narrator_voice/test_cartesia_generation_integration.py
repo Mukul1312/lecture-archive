@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import os
+import json
 import sys
 import unittest
 
@@ -27,7 +28,10 @@ class CartesiaCompositionTests(unittest.TestCase):
     def test_real_completed_provider_without_usage_keeps_budget_held(self):
         self._run_generation(with_usage=False)
 
-    def _run_generation(self, *, with_usage):
+    def test_known_usage_survives_first_publication_failure_in_workspace_and_hold(self):
+        self._run_generation(with_usage=True, publication_collision=True)
+
+    def _run_generation(self, *, with_usage, publication_collision=False):
         import httpx
         from heritage_archive.composition_root.narrator_voice_live import build_live_narration
         from heritage_archive.platform.cartesia.transport import CartesiaSseTransport
@@ -63,6 +67,10 @@ class CartesiaCompositionTests(unittest.TestCase):
             studio.require_recipe(RequireRenderRecipeCommand(CommandId(uuid(25)), prepared.job_id, PassageId(uuid(11)), PassageRenderRecipeId(uuid(12)), 2))
             preview = replace(studio.estimate, clock=clock, identifiers=ids)(
                 EstimateGenerationCommand(CommandId(uuid(26)), prepared.job_id, PassageId(uuid(11)), PassageRenderRecipeId(uuid(12)), make_settings_intent(), 3)).preview
+            if publication_collision:
+                collision = root.artifacts / "evidence/cartesia" / uuid(13) / "sanitized.json"
+                collision.parent.mkdir(parents=True)
+                collision.write_bytes(b"fixture-existing-evidence")
             calls = []
             def respond(request):
                 job = FilesystemNarrationJobRepository(root).load(prepared.job_id)
@@ -80,6 +88,37 @@ class CartesiaCompositionTests(unittest.TestCase):
             stored = FilesystemNarrationJobRepository(root).load(prepared.job_id)
             attempt = stored.generation_attempt(GenerationAttemptId(uuid(13)))
             workspace = FilesystemAttemptWorkspaceStore(root).load(attempt.attempt_id)
+            if publication_collision:
+                self.assertEqual(workspace.submission, SubmissionEvidence.AMBIGUOUS)
+                self.assertEqual(result.state, AttemptState.UNKNOWN)
+                self.assertEqual(result.budget_disposition, "held")
+                self.assertEqual(studio.generate.budget.read(attempt.budget_reservation_id), BudgetRecoveryState.UNKNOWN)
+                self.assertEqual(workspace.events, ())
+                self.assertEqual(workspace.published_artifacts, ())
+                self.assertEqual(stored.takes, ())
+                self.assertFalse((root.artifacts / "takes/fixture.wav").exists())
+                self.assertEqual(workspace.recovery_evidence[0], "evidence_publication_failed")
+                self.assertEqual(len(workspace.recovery_evidence), 2, "durable workspace lost authoritative usage")
+                fact = workspace.recovery_evidence[1]
+                expected = {
+                    "schema": "narrator_voice.authoritative_usage_receipt", "schema_version": 1,
+                    "request_sha256": usage_record.request_body_digest.hex_digest,
+                    "response_evidence_sha256": usage_record.response_evidence_digest.hex_digest,
+                    "usage": "7", "reason_code": "evidence_publication_failed",
+                }
+                from heritage_archive.kernel import canonical_json
+                self.assertEqual(fact, canonical_json(expected).decode("utf-8"))
+                ledger_documents = [json.loads(path.read_bytes()) for path in root.operations.glob("*.json")
+                    if path.name != "studio-config.json"]
+                ledger = next(doc for doc in ledger_documents if doc.get("schema") == "narrator_voice.generation_budget_ledger")
+                self.assertEqual([entry["kind"] for entry in ledger["facts"]], ["reserve", "hold"])
+                self.assertIn(fact, ledger["facts"][-1].values())
+                self.assertEqual(collision.read_bytes(), b"fixture-existing-evidence")
+                for private in ("opaque-fake-voice", "fixture-private-word", "fixture-not-a-real-key", "ଓଡ଼ିଆ"):
+                    self.assertNotIn(private, fact)
+                with self.assertRaises(ValidationError):
+                    studio.generate(GenerateTakeCommand(CommandId(uuid(28)), prepared.job_id, preview.preview_id, stored.revision, SafeRelativeArtifactPath("takes/fixture.wav")))
+                return
             self.assertEqual(workspace.submission, SubmissionEvidence.COMPLETED)
             if with_usage:
                 self.assertEqual(result.state, AttemptState.COMPLETED)

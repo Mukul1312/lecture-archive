@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 from collections.abc import Callable, Iterator
 
 import httpx
@@ -32,18 +33,27 @@ class FixtureStream(httpx.SyncByteStream):
         *,
         failure: httpx.TransportError | None = None,
         close_failure: httpx.TransportError | None = None,
+        before_chunk: Callable[[], None] | None = None,
     ) -> None:
         self._chunks = chunks
         self._failure = failure
         self._close_failure = close_failure
+        self._before_chunk = before_chunk
+        self.chunks_read = 0
+        self.close_calls = 0
         self.closed = False
 
     def __iter__(self) -> Iterator[bytes]:
-        yield from self._chunks
+        for chunk in self._chunks:
+            if self._before_chunk is not None:
+                self._before_chunk()
+            self.chunks_read += 1
+            yield chunk
         if self._failure is not None:
             raise self._failure
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
         if self._close_failure is not None:
             raise self._close_failure
@@ -98,6 +108,12 @@ class ManualClock:
 
 
 class CartesiaSseTransportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        for target in ("socket.getaddrinfo", "socket.socket.connect", "socket.socket.connect_ex"):
+            guard = patch(target, side_effect=AssertionError("fixture must not access network"))
+            guard.start()
+            self.addCleanup(guard.stop)
+
     def make_transport(
         self,
         handler: Callable[[httpx.Request], httpx.Response],
@@ -205,6 +221,74 @@ class CartesiaSseTransportTests(unittest.TestCase):
 
         self.assertEqual(capped.reason_code, "response_too_large")
         self.assertEqual(capped.frames, ())
+
+    def test_gzip_header_ingress_is_capped_before_decoded_sse_is_available(self) -> None:
+        """Decoded-only accounting can consume an oversized gzip comment without limit."""
+        compressed = gzip.compress(b"data: fits\n\n")
+        wire = compressed[:3] + b"\x10" + compressed[4:10] + (b"x" * 256) + b"\x00" + compressed[10:]
+        chunks = tuple(wire[offset:offset + 16] for offset in range(0, len(wire), 16))
+        contract = replace(CARTESIA_TRANSPORT_CONTRACT, maximum_response_bytes=64)
+
+        for status, reason, certainty in (
+            (200, "response_too_large", TransportSubmissionCertainty.SENT),
+            (503, "http_server_error", TransportSubmissionCertainty.AMBIGUOUS),
+        ):
+            with self.subTest(status=status):
+                response_stream = FixtureStream(chunks)
+                transport = self.make_transport(
+                    lambda request: httpx.Response(
+                        status,
+                        headers={"Content-Encoding": "gzip", "Content-Type": "text/event-stream"},
+                        stream=response_stream,
+                    ),
+                    contract=contract,
+                )
+
+                outcome = transport.stream(request_body=b"body", credentials=CredentialSequence("secret"))
+
+                self.assertEqual(response_stream.chunks_read, 5)
+                self.assertEqual(outcome.reason_code, reason)
+                self.assertEqual(outcome.frames, ())
+                self.assertEqual(outcome.http_status, status)
+                self.assertEqual(outcome.submission, certainty)
+                self.assertFalse(outcome.stream_complete)
+                self.assertEqual(response_stream.close_calls, 1)
+
+    def test_gzip_header_reads_check_deadline_without_waiting_for_decoder_output(self) -> None:
+        """Hidden raw reads must stop at the first observable expired budget boundary."""
+        compressed = gzip.compress(b"data: fits\n\n")
+        wire = compressed[:3] + b"\x10" + compressed[4:10] + (b"x" * 256) + b"\x00" + compressed[10:]
+        chunks = tuple(wire[offset:offset + 16] for offset in range(0, len(wire), 16))
+        contract = replace(CARTESIA_TRANSPORT_CONTRACT, operation_timeout_seconds=3)
+
+        for status, reason, certainty in (
+            (200, "operation_timeout", TransportSubmissionCertainty.SENT),
+            (503, "http_server_error", TransportSubmissionCertainty.AMBIGUOUS),
+        ):
+            with self.subTest(status=status):
+                clock = ManualClock()
+                response_stream = FixtureStream(chunks, before_chunk=lambda: clock.advance(1))
+                transport = self.make_transport(
+                    lambda request: httpx.Response(
+                        status,
+                        headers={"Content-Encoding": "gzip", "Content-Type": "text/event-stream"},
+                        stream=response_stream,
+                    ),
+                    contract=contract,
+                    clock=clock,
+                    sleep=clock.sleep,
+                )
+
+                outcome = transport.stream(request_body=b"body", credentials=CredentialSequence("secret"))
+
+                self.assertEqual(clock.now, 3)
+                self.assertEqual(response_stream.chunks_read, 3)
+                self.assertEqual(outcome.reason_code, reason)
+                self.assertEqual(outcome.frames, ())
+                self.assertEqual(outcome.http_status, status)
+                self.assertEqual(outcome.submission, certainty)
+                self.assertFalse(outcome.stream_complete)
+                self.assertEqual(response_stream.close_calls, 1)
 
     def test_connect_failures_before_a_response_retry_with_fixed_backoff(self) -> None:
         """Removing the narrow retry would discard a request proven not to have been sent."""

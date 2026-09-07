@@ -35,6 +35,7 @@ from heritage_archive.contexts.narrator_voice.application.handlers import (
 )
 from heritage_archive.contexts.narrator_voice.application.ports import ReleasePolicyResolution, SynthesisResult
 from heritage_archive.contexts.narrator_voice.application.synthesis_failures import (
+    AuthoritativeUsageReceipt,
     SynthesisAmbiguousFailure,
     SynthesisFailureEvidence,
     SynthesisPreSendFailure,
@@ -463,7 +464,7 @@ class GenerationApplicationTests(unittest.TestCase):
                 SynthesisPreSendFailure,
                 SubmissionEvidence.DEFINITELY_NOT_SENT,
                 ProviderTerminalClass.DEFINITE_PRE_SEND_FAILURE,
-                NonNegativeDecimal("3"),
+                None,
                 AttemptState.BLOCKED,
                 "release",
             ),
@@ -487,11 +488,16 @@ class GenerationApplicationTests(unittest.TestCase):
         for failure_type, submission, terminal, usage, state, budget_action in cases:
             with self.subTest(failure_type=failure_type.__name__):
                 self.setUp()
-                event = replace(self.synthesis_result.events[0], terminal_classification=terminal)
+                event = replace(self.synthesis_result.events[0], terminal_classification=terminal,
+                    usage=None if usage is None else usage.value)
+                receipt = None if usage is None else AuthoritativeUsageReceipt(
+                    digest("fixture request"), digest("fixture response"), usage,
+                )
                 evidence = SynthesisFailureEvidence(
                     submission, (event,), self.evidence_publications,
                     self.synthesis_result.raw_timing_reference, usage,
                     "fixture_provider_failure",
+                    usage_receipt=receipt,
                 )
                 self.gateway.failure = failure_type(evidence)
 
@@ -501,13 +507,14 @@ class GenerationApplicationTests(unittest.TestCase):
                 self.assertEqual((result.state, workspace.state), (state, state))
                 self.assertEqual(
                     (workspace.events, workspace.published_artifacts, workspace.recovery_evidence),
-                    ((event,), self.evidence_publications, ("fixture_provider_failure",)),
+                    ((event,), self.evidence_publications, ("fixture_provider_failure",) +
+                     (() if receipt is None else (evidence.usage_recovery_fact,))),
                 )
                 self.assertEqual(self.budget.actions[-1][0], budget_action)
 
     def test_submitted_failure_without_authoritative_usage_holds_failed_attempt_for_reconciliation(self) -> None:
         event = replace(
-            self.synthesis_result.events[0], terminal_classification=ProviderTerminalClass.FAILURE
+            self.synthesis_result.events[0], terminal_classification=ProviderTerminalClass.FAILURE, usage=None
         )
         self.gateway.failure = SynthesisSubmittedFailure(SynthesisFailureEvidence(
             SubmissionEvidence.COMPLETED, (event,), self.evidence_publications,
@@ -599,6 +606,21 @@ class GenerationApplicationTests(unittest.TestCase):
         self.assertEqual((result.state, attempt.state, len(self.gateway.calls), len(self.store.calls)), (AttemptState.UNKNOWN, AttemptState.EXTERNAL_WORK_STARTED, 1, 1))
         self.assertEqual(self.budget.read(self.reservation_id).value, "unknown")
 
+    def test_known_usage_remains_in_hold_when_failure_workspace_cannot_save(self) -> None:
+        receipt = AuthoritativeUsageReceipt(digest("fixture request"), digest("fixture response"), NonNegativeDecimal("7"))
+        evidence = SynthesisFailureEvidence(
+            SubmissionEvidence.AMBIGUOUS, (), (), None, receipt.usage,
+            "evidence_publication_failed", usage_receipt=receipt,
+        )
+        self.gateway.failure = SynthesisAmbiguousFailure(evidence)
+        self.gateway.after_call = lambda: setattr(self.workspaces, "fail_next_save", True)
+        result = self.handler()(self.command())
+        self.assertEqual((result.state, result.budget_disposition), (AttemptState.UNKNOWN, "held"))
+        self.assertEqual([action[0] for action in self.budget.actions], ["reserve", "hold"])
+        self.assertEqual(self.budget.actions[-1][2], evidence.usage_recovery_fact)
+        self.assertEqual(len(self.gateway.calls), 1)
+        self.assertEqual(self.jobs.load(self.job_id).takes, ())
+
     def test_budget_settlement_failure_preserves_published_workspace_without_completion_CAS(self) -> None:
         self.budget.fail_next_finalization = True
         result = self.handler()(self.command())
@@ -612,6 +634,53 @@ class GenerationApplicationTests(unittest.TestCase):
 
 
 class SynthesisEvidenceContractTests(unittest.TestCase):
+    def test_presend_failure_cannot_claim_authoritative_usage(self):
+        receipt = AuthoritativeUsageReceipt(digest("fixture request"), digest("fixture response"), NonNegativeDecimal("7"))
+        with self.assertRaises(ValidationError):
+            SynthesisFailureEvidence(
+                SubmissionEvidence.DEFINITELY_NOT_SENT, (), (), None, receipt.usage,
+                "credential_unavailable", usage_receipt=receipt,
+            )
+        event, publications, timing = self.evidence()
+        event = replace(
+            event,
+            terminal_classification=ProviderTerminalClass.DEFINITE_PRE_SEND_FAILURE,
+        )
+        with self.assertRaises(ValidationError):
+            SynthesisFailureEvidence(
+                SubmissionEvidence.DEFINITELY_NOT_SENT, (event,), publications, timing,
+                None, "credential_unavailable",
+            )
+
+    def test_failure_rejects_unbound_usage(self):
+        with self.assertRaises(ValidationError):
+            SynthesisFailureEvidence(
+                SubmissionEvidence.AMBIGUOUS, (), (), None,
+                NonNegativeDecimal("7"), "evidence_publication_failed",
+            )
+
+    def test_usage_receipt_requires_exact_binding_and_matching_usage(self):
+        from dataclasses import FrozenInstanceError
+        from heritage_archive.contexts.narrator_voice.application.synthesis_failures import AuthoritativeUsageReceipt
+        receipt = AuthoritativeUsageReceipt(digest("request bytes"), digest("response frames"), NonNegativeDecimal("7"))
+        evidence = SynthesisFailureEvidence(
+            SubmissionEvidence.AMBIGUOUS, (), (), None, NonNegativeDecimal("7"),
+            "evidence_publication_failed", usage_receipt=receipt,
+        )
+        self.assertIs(evidence.usage_receipt, receipt)
+        with self.assertRaises(FrozenInstanceError):
+            receipt.usage = NonNegativeDecimal("8")
+        for changes in (
+            {"request_digest": None}, {"response_evidence_digest": None},
+            {"request_digest": "private-request-id"}, {"response_evidence_digest": "private-response-id"},
+            {"usage": "7"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                replace(receipt, **changes)
+        for changes in ({"usage": None}, {"usage": NonNegativeDecimal("8")}, {"usage_receipt": None}, {"usage_receipt": "untyped"}):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                replace(evidence, **changes)
+
     def evidence(self):
         raw = ArtifactRef(ArtifactId(uuid(940)), digest("raw provider event"), 18, "application/json")
         pcm = ArtifactRef(ArtifactId(uuid(941)), digest("partial pcm"), 10, "audio/pcm")
@@ -689,9 +758,14 @@ class SynthesisEvidenceContractTests(unittest.TestCase):
         )
         for failure_type, submission in cases:
             with self.subTest(failure_type=failure_type.__name__):
+                usage = None if submission is SubmissionEvidence.DEFINITELY_NOT_SENT else NonNegativeDecimal("7")
+                category_event = replace(event, usage=None if usage is None else usage.value)
                 evidence = SynthesisFailureEvidence(
-                    submission, (event,), publications, timing,
-                    NonNegativeDecimal("7"), "provider_terminal_failure",
+                    submission, (category_event,), publications, timing,
+                    usage, "provider_terminal_failure",
+                    usage_receipt=None if usage is None else AuthoritativeUsageReceipt(
+                        digest("fixture request"), digest("fixture response"), usage,
+                    ),
                 )
                 failure = failure_type(evidence)
                 self.assertIs(failure.evidence, evidence)

@@ -271,6 +271,30 @@ class CartesiaGatewayTests(unittest.TestCase):
                 self.assertEqual(refs, {p.reference for p in evidence.publications})
                 self.assertEqual(len(refs), len(evidence.publications))
 
+    def test_known_usage_retains_binding_when_first_publication_fails(self):
+        call = invocation()
+        body = sse(chunk(), DONE)
+        record = bound_usage(call, body)
+        class Usage:
+            def lookup(self, request_digest, response_digest):
+                return record
+        path = self.root.artifacts / "evidence/cartesia" / call.attempt_id.value / "sanitized.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"fixture-preexisting-evidence")
+        with self.assertRaises(SynthesisAmbiguousFailure) as caught:
+            self.gateway(body, usage_source=Usage()).synthesize(call)
+        evidence = caught.exception.evidence
+        self.assertEqual(evidence.submission, SubmissionEvidence.AMBIGUOUS)
+        self.assertEqual(evidence.usage, NonNegativeDecimal("7"))
+        self.assertEqual(evidence.events, ())
+        self.assertEqual(evidence.publications, ())
+        receipt = getattr(evidence, "usage_receipt", None)
+        self.assertIsNotNone(receipt, "known usage lost its request/response binding")
+        self.assertEqual(receipt.request_digest, record.request_body_digest)
+        self.assertEqual(receipt.response_evidence_digest, record.response_evidence_digest)
+        self.assertEqual(receipt.usage, evidence.usage)
+        self.assertEqual(path.read_bytes(), b"fixture-preexisting-evidence")
+
     def test_requested_off_phonemes_are_private_evidence_and_ambiguous(self):
         frame = {"type": "phoneme_timestamps", "done": False, "status_code": 206, "phoneme_timestamps": {"phonemes": ["fixture-private-phoneme"], "start": [0.0], "end": [0.1]}}
         with self.assertRaises(SynthesisAmbiguousFailure) as caught:
@@ -376,6 +400,13 @@ class CartesiaGatewayTests(unittest.TestCase):
         self.assertEqual(caught.exception.evidence.usage, NonNegativeDecimal("7"))
         self.assertEqual(caught.exception.evidence.reason_code, "provider_completion_encoding_failed")
         self.assertEqual(caught.exception.evidence.publications[-1].reference.byte_size, 4)
+        receipt = caught.exception.evidence.usage_receipt
+        self.assertEqual(receipt.request_digest, record.request_body_digest)
+        self.assertEqual(receipt.response_evidence_digest, record.response_evidence_digest)
+        self.assertTrue(caught.exception.evidence.events)
+        for event in caught.exception.evidence.events:
+            self.assertEqual(event.request_identity, receipt.request_digest.hex_digest)
+            self.assertEqual(event.response_identity, receipt.response_evidence_digest.hex_digest)
 
 
 def rebuild(effective, **changes):

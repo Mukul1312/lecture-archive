@@ -901,6 +901,12 @@ class GenerateTakeHandler:
         aggregate_reason: str,
     ) -> GenerationRunResult:
         budget_fact = evidence.usage if budget_action == "settle" else evidence.reason_code
+        recovery = (evidence.reason_code,)
+        usage_fact = evidence.usage_recovery_fact
+        if usage_fact is not None:
+            recovery += (usage_fact,)
+            if budget_action == "hold":
+                budget_fact = usage_fact
         disposition = self._persist_workspace_then_finalize_budget(
             command,
             job,
@@ -917,11 +923,12 @@ class GenerateTakeHandler:
                 effective_input=effective_input,
                 events=evidence.events,
                 publications=evidence.publications,
-                recovery=(evidence.reason_code,),
+                recovery=recovery,
                 raw_timing_reference=evidence.raw_timing_reference,
             ),
             budget_action,
             budget_fact,
+            usage_hold_fact=usage_fact,
         )
         budget_disposition = {
             "release": "released",
@@ -969,13 +976,17 @@ class GenerateTakeHandler:
         workspace: AttemptWorkspaceEvidence,
         action: str,
         evidence: object,
+        *,
+        usage_hold_fact: str | None = None,
     ) -> str | None:
         """The post-gateway durable boundary: workspace, budget, then aggregate CAS."""
         try:
             self.workspaces.save(workspace)
         except Exception:
             try:
-                self.budget.hold(reservation_id, "workspace persistence failed after external work")
+                self.budget.hold(
+                    reservation_id, usage_hold_fact or "workspace persistence failed after external work"
+                )
             except Exception:
                 return "unknown"
             return "held"

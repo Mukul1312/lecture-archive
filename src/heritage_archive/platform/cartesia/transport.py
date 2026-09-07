@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
@@ -17,6 +17,52 @@ from .sse import IncrementalSseParser, SseFrame, SseParseError
 
 
 _PROCESS_REQUEST_LOCK = Lock()
+
+
+class _ResponseIngressError(Exception):
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(reason_code)
+        self.reason_code = reason_code
+
+
+class _BoundedResponseStream(httpx.SyncByteStream):
+    """Guard every raw read, including reads HTTPX's decoder does not emit."""
+
+    def __init__(
+        self,
+        stream: httpx.SyncByteStream,
+        *,
+        maximum_bytes: int,
+        deadline: float,
+        clock: Callable[[], float],
+    ) -> None:
+        self._stream = stream
+        self._maximum_bytes = maximum_bytes
+        self._deadline = deadline
+        self._clock = clock
+
+    def __iter__(self) -> Iterator[bytes]:
+        chunks = iter(self._stream)
+        received_bytes = 0
+        while True:
+            self._check_deadline()
+            try:
+                chunk = next(chunks)
+            except StopIteration:
+                self._check_deadline()
+                return
+            self._check_deadline()
+            received_bytes += len(chunk)
+            if received_bytes > self._maximum_bytes:
+                raise _ResponseIngressError("response_too_large")
+            yield chunk
+
+    def _check_deadline(self) -> None:
+        if self._clock() >= self._deadline:
+            raise _ResponseIngressError("operation_timeout")
+
+    def close(self) -> None:
+        self._stream.close()
 
 
 class TransportSubmissionCertainty(str, Enum):
@@ -142,6 +188,13 @@ class CartesiaSseTransport:
                             http_status=http_status,
                             retry_after_seconds=retry_after,
                         )
+                    assert isinstance(response.stream, httpx.SyncByteStream)
+                    response.stream = _BoundedResponseStream(
+                        response.stream,
+                        maximum_bytes=self._contract.maximum_response_bytes,
+                        deadline=deadline,
+                        clock=self._clock,
+                    )
                     if not 200 <= http_status < 300:
                         frames = ()
                         if self._is_sse_response(response):
@@ -205,7 +258,7 @@ class CartesiaSseTransport:
                     except httpx.TransportError:
                         if http_status is None or 200 <= http_status < 300:
                             raise
-            except SseParseError as error:
+            except (SseParseError, _ResponseIngressError) as error:
                 return self._failure(
                     reason_code=error.reason_code,
                     submission=TransportSubmissionCertainty.SENT,
@@ -367,7 +420,7 @@ class CartesiaSseTransport:
                 if response_bytes > self._contract.maximum_response_bytes:
                     break
                 parser.feed(chunk)
-        except (SseParseError, httpx.RequestError):
+        except (SseParseError, httpx.RequestError, _ResponseIngressError):
             pass
         return parser.frames
 

@@ -18,7 +18,7 @@ from heritage_archive.platform.cartesia.transport import (
 
 from ..application.ports import Clock, IdentifierSource, SynthesisInvocation, SynthesisResult
 from ..application.synthesis_failures import (
-    SynthesisFailureEvidence, SynthesisPreSendFailure, SynthesisAmbiguousFailure,
+    AuthoritativeUsageReceipt, SynthesisFailureEvidence, SynthesisPreSendFailure, SynthesisAmbiguousFailure,
     SynthesisSubmittedFailure,
 )
 from ..domain.evidence import ProviderEventEvidence, ProviderEventKind, ProviderTerminalClass, SubmissionEvidence
@@ -228,7 +228,7 @@ class CartesiaSynthesisGateway:
         submission, reason = SubmissionEvidence.DEFINITELY_NOT_SENT, None
         bundle, response_digest, request_digest = {}, None, None
         event_kinds, summaries, timings, pcm = [], [], [], bytearray()
-        usage, wav = None, None
+        usage, usage_receipt, wav = None, None, None
         try:
             raw, bundle = self._request(invocation)
             request_digest = ContentDigest.from_bytes(raw)
@@ -302,6 +302,9 @@ class CartesiaSynthesisGateway:
                         if (type(record) is CartesiaAuthoritativeUsage and record.request_body_digest == request_digest and
                             record.response_evidence_digest == response_digest and type(record.usage) is NonNegativeDecimal):
                             usage = record.usage
+                            usage_receipt = AuthoritativeUsageReceipt(
+                                record.request_body_digest, record.response_evidence_digest, record.usage
+                            )
                         if usage is None:
                             reason = "authoritative_usage_unavailable"
                         else:
@@ -311,9 +314,9 @@ class CartesiaSynthesisGateway:
                         submission, reason = SubmissionEvidence.AMBIGUOUS, "provider_completion_encoding_failed"
         bundle["provider_frames"] = summaries
         return self._publish_outcome(invocation, bundle, event_kinds, timings, bytes(pcm),
-                                     submission, reason, usage, wav, request_digest, response_digest)
+                                     submission, reason, usage, wav, request_digest, response_digest, usage_receipt)
 
-    def _publish_outcome(self, invocation, bundle, kinds, timings, pcm, submission, reason, usage, wav, request_digest, response_digest):
+    def _publish_outcome(self, invocation, bundle, kinds, timings, pcm, submission, reason, usage, wav, request_digest, response_digest, usage_receipt):
         publications = []
         sanitized = timing = partial = None
         observed = self._clock.now()
@@ -354,4 +357,6 @@ class CartesiaSynthesisGateway:
             return SynthesisResult(tuple(events), wav, tuple(publications), timing_ref, usage)
         failure = (SynthesisPreSendFailure if submission is SubmissionEvidence.DEFINITELY_NOT_SENT else
                    SynthesisAmbiguousFailure if submission is SubmissionEvidence.AMBIGUOUS else SynthesisSubmittedFailure)
-        raise failure(SynthesisFailureEvidence(submission, tuple(events), tuple(publications), timing_ref, usage, reason)) from None
+        raise failure(SynthesisFailureEvidence(
+            submission, tuple(events), tuple(publications), timing_ref, usage, reason, usage_receipt
+        )) from None
