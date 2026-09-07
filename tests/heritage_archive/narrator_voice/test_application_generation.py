@@ -165,7 +165,7 @@ class GenerationApplicationTests(unittest.TestCase):
             )
         ).preview
         raw = ArtifactRef(ArtifactId(uuid(916)), digest("fake sanitized event"), 20, "application/json")
-        timing = ArtifactRef(ArtifactId(uuid(917)), digest("fake timing"), 12, "application/json")
+        timing = ArtifactRef(ArtifactId(uuid(917)), digest("fake timing"), len(b"fake timing"), "application/json")
         event = ProviderEventEvidence(
             ProviderEventId(uuid(918)), 0, ProviderEventKind.TERMINAL, raw, raw.content_digest, NOW,
             "fake-request", "fake-response", None, timing, "42", ProviderTerminalClass.SUCCESS,

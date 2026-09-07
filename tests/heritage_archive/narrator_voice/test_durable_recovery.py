@@ -230,8 +230,20 @@ class DurableAttemptEvidenceTests(unittest.TestCase):
         fixture.jobs.reject_on_save_calls.add(8)
         unknown = fixture.handler()(fixture.command())
         workspace = fixture.workspaces.load(fixture.attempt_id)
-        publication = workspace.published_artifacts[0]
+        audio_publications = tuple(
+            item for item in workspace.published_artifacts if item.reference.media_type == "audio/wav"
+        )
+        self.assertEqual(len(audio_publications), 1)
+        publication = audio_publications[0]
         with self._root() as root:
+            evidence_payloads = {
+                digest("fake sanitized event"): b"fake sanitized event",
+                digest("fake timing"): b"fake timing",
+            }
+            for evidence in fixture.evidence_publications:
+                evidence_path = root.artifacts / evidence.relative_location.value
+                evidence_path.parent.mkdir(parents=True, exist_ok=True)
+                evidence_path.write_bytes(evidence_payloads[evidence.reference.content_digest])
             artifact_path = root.artifacts / publication.relative_location.value
             artifact_path.parent.mkdir(parents=True)
             artifact_path.write_bytes(fixture.synthesis_result.canonical_wav_bytes)
