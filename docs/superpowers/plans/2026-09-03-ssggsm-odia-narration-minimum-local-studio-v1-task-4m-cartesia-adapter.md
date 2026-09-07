@@ -17,6 +17,35 @@
 
 **Prerequisite:** [Task 3M](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-3m-durable-filesystem-audio.md) is complete and smoke-verified through checkpoint `6ba05b0`; its deferred hardening gate remains open.
 
+## Smoke checkpoint status (2026-09-07)
+
+Task 4M is `implemented` and `smoke-verified`, not `hardened`. The local
+checkpoint contains Tasks 1-5 and the durable-recovery fixture correction through
+`c8a59c8`, plus this Task 6 verification/documentation checkpoint. It is local only;
+no push, merge, publication, live request, or private production-root access was
+performed. Checked steps below reflect the accepted implementation rulings and
+fixture-only evidence, not approval for paid/private generation.
+
+The final focused matrix passed all 211 tests with system Python 3.11.4 and the
+exact narrator dependency pins. Offline sdist packaging, source imports, CLI
+`--help`, and fixture construction passed; construction had zero stream calls
+with DNS/socket and credential-read guards. A wheel was not built because the
+offline environment lacks wheel tooling. README now installs `.[narrator]`;
+the operations CLI remains offline and does not read `CARTESIA_API_KEY`.
+The checkpoint adds no private credentials, provider identifiers, production
+authorization evidence, private narration text, raw provider captures, or media;
+legacy tracked media predates Task 4M.
+
+The deferred pre-live gate below remains required, including restart windows
+around send/evidence/finalization, retry fault injection, provider-contract
+revalidation, Plan 3 storage/budget/recovery/audio/backup checks, and separate
+operator approval for one capped live passage. Real SSE completion still lacks
+an authoritative usage source: fixture-bound usage can settle, while live
+completion without it holds the reservation and cannot complete a take. Also
+deferred are ERROR-plus-TERMINAL recovery sealing compatibility and exact
+wall-clock cancellation beyond HTTPX's bounded observable phases. These limits
+must be addressed or explicitly resolved at the pre-live gate.
+
 ## New-chat start protocol
 
 1. Work in `C:\Users\Mukul\code\personal-projects\voice-cloning\.worktrees\narrator-voice-production-v1` on `feature/narrator-voice-production-v1`. Do not implement on `main`.
@@ -89,12 +118,12 @@ class CartesiaTransportContract:
     maximum_decoded_pcm_bytes: int
 ```
 
-- [ ] Use official `docs.cartesia.ai` pages only to verify the current SSE endpoint, authentication header, dated API version, Sonic model ID, `language=or`, raw PCM format, sample rate, timestamps, dictionary request field, supported markup and usage/billing semantics. Record direct URLs, access date and the accepted values in `docs/cartesia-odia-tts-contract-snapshot.md`.
-- [ ] Retain the existing candidate values only when official documentation confirms them: `/tts/sse`, `Cartesia-Version: 2026-08-14`, `sonic-3.6-2026-08-27`, `language=or`, raw `pcm_s16le` at 44,100 Hz, timestamps enabled, phonemes disabled and normalization disabled. Stop for operator direction if any load-bearing value is unavailable or incompatible.
-- [ ] Add a pinned `narrator` optional dependency group containing exactly `httpx==0.28.1` and `defusedxml==0.7.1`; do not add an SDK or a second SSE library.
-- [ ] Add focused contract tests for HTTPS-only origin, relative SSE path, positive bounded limits, exactly three or fewer submissions, and redirects/proxy inheritance disabled by construction.
-- [ ] Extend the architecture characterization only as needed to prove third-party imports remain in `platform/cartesia` and the platform still cannot import `contexts`.
-- [ ] Run `tests.heritage_archive.platform.test_cartesia_contract` and `tests.heritage_archive.test_architecture`, then commit the exact Task 1 files locally.
+- [x] Use official `docs.cartesia.ai` pages only to verify the current SSE endpoint, authentication header, dated API version, Sonic model ID, `language=or`, raw PCM format, sample rate, timestamps, dictionary request field, supported markup and usage/billing semantics. Record direct URLs, access date and the accepted values in `docs/cartesia-odia-tts-contract-snapshot.md`.
+- [x] Retain the existing candidate values only when official documentation confirms them: `/tts/sse`, `Cartesia-Version: 2026-08-14`, `sonic-3.6-2026-08-27`, `language=or`, raw `pcm_s16le` at 44,100 Hz, timestamps enabled, phonemes disabled and normalization disabled. Stop for operator direction if any load-bearing value is unavailable or incompatible.
+- [x] Add a pinned `narrator` optional dependency group containing exactly `httpx==0.28.1` and `defusedxml==0.7.1`; do not add an SDK or a second SSE library.
+- [x] Add focused contract tests for HTTPS-only origin, relative SSE path, positive bounded limits, exactly three or fewer submissions, and redirects/proxy inheritance disabled by construction.
+- [x] Extend the architecture characterization only as needed to prove third-party imports remain in `platform/cartesia` and the platform still cannot import `contexts`.
+- [x] Run `tests.heritage_archive.platform.test_cartesia_contract` and `tests.heritage_archive.test_architecture`, then commit the exact Task 1 files locally.
 
 ### Task 2: Close the application invocation and evidence seam
 
@@ -145,18 +174,18 @@ class SynthesisGateway(Protocol):
 - Produces `SynthesisPreSendFailure`, `SynthesisAmbiguousFailure` and `SynthesisSubmittedFailure`, each carrying one immutable `SynthesisFailureEvidence` while retaining the existing application meanings: definitely not sent, ambiguous after possible send, and definitive submitted failure.
 - Produces `encode_canonical_pcm16_wav(raw_pcm: bytes, audio: CanonicalAudioFacts) -> bytes` in `pcm_audio.py`.
 
-- [ ] Add focused tests proving an invocation binds the attempt, complete release contract and effective input; contract digest mismatch is rejected before the gateway is called.
-- [ ] Add focused tests proving success and all three expected failure categories retain contiguous provider events, immutable evidence publications, one combined raw-timing reference when present, known usage and sanitized reason codes.
-- [ ] Require every `ProviderEventEvidence` raw/PCM/timing reference to resolve to exactly one returned immutable evidence publication with the same artifact identity, digest, byte length and media type.
-- [ ] Change `GenerateTakeHandler` to save an `INPUT_FROZEN` workspace after freezing the aggregate input, then an `EXTERNAL_WORK_STARTED` workspace immediately before calling the gateway. Keep `submission=NOT_STARTED` at this pre-call durability boundary; a crash after this boundary is conservatively reconciled, never treated as proof that nothing was sent.
-- [ ] Update and test `_workspace_evidence_stage()` so this pre-call workspace is derived as `EXTERNAL_WORK_STARTED` from its explicit workspace state even while `submission=NOT_STARTED`; do not let recovery misreport it as merely `INPUT_FROZEN`.
-- [ ] Pass `SynthesisInvocation(attempt_id, job.contract, effective_input)` to the gateway. Catch evidence-bearing failures, persist their publications/events before budget finalization, and preserve legacy empty-evidence behavior only for existing test doubles.
-- [ ] Make budget disposition explicit and test it at this boundary: a definitely-not-sent failure releases the reservation; an ambiguous or unexpected post-boundary failure holds it and leaves the attempt unknown; a definitive submitted failure with authoritative usage settles the reservation and fails the attempt; and a definitive submitted failure without authoritative usage holds the reservation while recording the failed attempt for reconciliation.
-- [ ] Add a final defensive catch for an unexpected exception escaping after the external-work boundary: persist an `UNKNOWN` workspace with a sanitized internal reason code, hold budget and never expose exception text as provider evidence.
-- [ ] Permit a generation workspace to contain provider evidence publications plus exactly one selected canonical audio publication. Update completion binding to require that the canonical audio publication occurs exactly once rather than requiring it to be the workspace's only publication.
-- [ ] Update `FilesystemArtifactEvidenceVerifier.verify()` and `recover_media()` for that multi-publication model. Recovery must resolve the requested canonical audio publication by exact identity, require it exactly once, verify all workspace publications and their staging bindings, and reject zero/multiple matching audio publications; it must not require `published_artifacts == (audio_artifact,)`.
-- [ ] Make the existing PCM encoder public and prove it writes the exact canonical RIFF/WAVE header and unmodified even-length PCM payload. Do not move HTTPX or Cartesia DTOs into this module.
-- [ ] Run the affected generation/recovery/audio tests and architecture guard, then commit the exact Task 2 files locally.
+- [x] Add focused tests proving an invocation binds the attempt, complete release contract and effective input; contract digest mismatch is rejected before the gateway is called.
+- [x] Add focused tests proving success and all three expected failure categories retain contiguous provider events, immutable evidence publications, one combined raw-timing reference when present, known usage and sanitized reason codes.
+- [x] Require every `ProviderEventEvidence` raw/PCM/timing reference to resolve to exactly one returned immutable evidence publication with the same artifact identity, digest, byte length and media type.
+- [x] Change `GenerateTakeHandler` to save an `INPUT_FROZEN` workspace after freezing the aggregate input, then an `EXTERNAL_WORK_STARTED` workspace immediately before calling the gateway. Keep `submission=NOT_STARTED` at this pre-call durability boundary; a crash after this boundary is conservatively reconciled, never treated as proof that nothing was sent.
+- [x] Update and test `_workspace_evidence_stage()` so this pre-call workspace is derived as `EXTERNAL_WORK_STARTED` from its explicit workspace state even while `submission=NOT_STARTED`; do not let recovery misreport it as merely `INPUT_FROZEN`.
+- [x] Pass `SynthesisInvocation(attempt_id, job.contract, effective_input)` to the gateway. Catch evidence-bearing failures, persist their publications/events before budget finalization, and preserve legacy empty-evidence behavior only for existing test doubles.
+- [x] Make budget disposition explicit and test it at this boundary: a definitely-not-sent failure releases the reservation; an ambiguous or unexpected post-boundary failure holds it and leaves the attempt unknown; a definitive submitted failure with authoritative usage settles the reservation and fails the attempt; and a definitive submitted failure without authoritative usage holds the reservation while recording the failed attempt for reconciliation.
+- [x] Add a final defensive catch for an unexpected exception escaping after the external-work boundary: persist an `UNKNOWN` workspace with a sanitized internal reason code, hold budget and never expose exception text as provider evidence.
+- [x] Permit a generation workspace to contain provider evidence publications plus exactly one selected canonical audio publication. Update completion binding to require that the canonical audio publication occurs exactly once rather than requiring it to be the workspace's only publication.
+- [x] Update `FilesystemArtifactEvidenceVerifier.verify()` and `recover_media()` for that multi-publication model. Recovery must resolve the requested canonical audio publication by exact identity, require it exactly once, verify all workspace publications and their staging bindings, and reject zero/multiple matching audio publications; it must not require `published_artifacts == (audio_artifact,)`.
+- [x] Make the existing PCM encoder public and prove it writes the exact canonical RIFF/WAVE header and unmodified even-length PCM payload. Do not move HTTPX or Cartesia DTOs into this module.
+- [x] Run the affected generation/recovery/audio tests and architecture guard, then commit the exact Task 2 files locally.
 
 ### Task 3: Implement the safe hybrid recipe compiler
 
@@ -204,16 +233,16 @@ class CartesiaRecipeCompiler(RecipeCompiler):
     def compile(self, request: RecipeCompileRequest) -> PreviewCompilerResult: ...
 ```
 
-- [ ] Use `defusedxml` by wrapping the advanced fragment in one internal root. Reject XML declarations, DTDs, entities, comments, processing instructions, unknown tags/attributes, unsupported nesting and invalid numeric values before creating a domain recipe.
-- [ ] Implement only the verified provider syntax corresponding to the existing domain controls: `BreakControl`, `SpeedControl`, `VolumeControl` and `SpellingControl`. Emotion remains request-level for the initial Odia workflow; reject inline emotion markup.
-- [ ] Enforce the existing limits: 16,384 advanced-source UTF-8 bytes, 64 controls total, 16 per family, 16 breaks of 10–5,000 ms with at most 20,000 ms total, and spelling spans of at most 64 Unicode scalar values without nested spelling.
-- [ ] Build a Unicode-scalar projection from parsed text nodes and require exact equality with `PassageText.value`, including punctuation and normalization. A lexical change must fail validation and be made as a passage text revision instead.
-- [ ] Compile structured controls and equivalent advanced source into the same sorted `PassageRenderRecipe`. Render deterministic provider markup from canonical text plus that recipe; the same input and capability snapshot must produce identical UTF-8 bytes and digest.
-- [ ] Reject crossing or overlapping inline spans across control families in v1 (breaks may occur only at unambiguous scalar boundaries). The domain can represent richer overlap, but the Cartesia compiler must not invent XML nesting or split controls unless the verified capability snapshot defines one deterministic equivalent.
-- [ ] Keep whole-request speed, volume, emotion and dictionary out of inline markup. Return them only through the frozen request configuration represented by `EffectiveTakeSettings` and `ReleaseSynthesisContract`.
-- [ ] Compute billable characters and estimated usage using the dated billing rule recorded by Task 1. Return the exact rendered transcript, canonical projection, endpoint, timestamp/normalization flags, compiler/capability identity and warnings through the existing preview result.
-- [ ] Smoke-test one plain Odia passage, one structured recipe, one equivalent advanced recipe, one lexical substitution rejection, one entity/DTD rejection, and deterministic exact UTF-8 output. Do not add a broad fuzz matrix.
-- [ ] Run the two Task 3 modules plus narration preview/recipe tests and architecture guard, then commit the exact Task 3 files locally.
+- [x] Use `defusedxml` by wrapping the advanced fragment in one internal root. Reject XML declarations, DTDs, entities, comments, processing instructions, unknown tags/attributes, unsupported nesting and invalid numeric values before creating a domain recipe.
+- [x] Implement only the verified provider syntax corresponding to the existing domain controls: `BreakControl`, `SpeedControl`, `VolumeControl` and `SpellingControl`. Emotion remains request-level for the initial Odia workflow; reject inline emotion markup.
+- [x] Enforce the existing limits: 16,384 advanced-source UTF-8 bytes, 64 controls total, 16 per family, 16 breaks of 10–5,000 ms with at most 20,000 ms total, and spelling spans of at most 64 Unicode scalar values without nested spelling.
+- [x] Build a Unicode-scalar projection from parsed text nodes and require exact equality with `PassageText.value`, including punctuation and normalization. A lexical change must fail validation and be made as a passage text revision instead.
+- [x] Compile structured controls and equivalent advanced source into the same sorted `PassageRenderRecipe`. Render deterministic provider markup from canonical text plus that recipe; the same input and capability snapshot must produce identical UTF-8 bytes and digest.
+- [x] Reject crossing or overlapping inline spans across control families in v1 (breaks may occur only at unambiguous scalar boundaries). The domain can represent richer overlap, but the Cartesia compiler must not invent XML nesting or split controls unless the verified capability snapshot defines one deterministic equivalent.
+- [x] Keep whole-request speed, volume, emotion and dictionary out of inline markup. Return them only through the frozen request configuration represented by `EffectiveTakeSettings` and `ReleaseSynthesisContract`.
+- [x] Compute billable characters and estimated usage using the dated billing rule recorded by Task 1. Return the exact rendered transcript, canonical projection, endpoint, timestamp/normalization flags, compiler/capability identity and warnings through the existing preview result.
+- [x] Smoke-test one plain Odia passage, one structured recipe, one equivalent advanced recipe, one lexical substitution rejection, one entity/DTD rejection, and deterministic exact UTF-8 output. Do not add a broad fuzz matrix.
+- [x] Run the two Task 3 modules plus narration preview/recipe tests and architecture guard, then commit the exact Task 3 files locally.
 
 ### Task 4: Implement bounded HTTPX SSE transport
 
@@ -258,15 +287,15 @@ class CartesiaSseTransport:
     ) -> CartesiaTransportOutcome: ...
 ```
 
-- [ ] Implement incremental SSE framing over byte chunks: support LF and CRLF, blank-line dispatch, multiple `data:` lines and comment lines. Decode each completed frame as strict UTF-8 so an Odia/multibyte code point split across HTTP chunks remains valid.
-- [ ] Reject invalid UTF-8, malformed fields, an unterminated final frame, events over 1 MiB and a total HTTP/SSE response beyond the verified bounded response limit. Preserve exact sanitized frame bytes for the context adapter; never retain the credential header. The JSON-agnostic transport does not attempt to count decoded audio bytes.
-- [ ] Construct one `httpx.Client` with `trust_env=False`, redirects disabled and the Task 1 timeout contract. Use the verified fixed HTTPS origin/path and ask the credential supplier for the environment API key immediately before each authorized transmission; neither the transport nor gateway retains it after the request.
-- [ ] Serialize no JSON in the transport. It accepts already-frozen request bytes and returns provider frames; it does not know Odia passages, lanes, jobs, voices, recipes or aggregates.
-- [ ] Return an evidence-bearing `CartesiaTransportOutcome` for every expected HTTP/stream result, including failure: preserve all completed sanitized frames, HTTP status, submission certainty, completion state, bounded `Retry-After` and a stable reason code. This gives the gateway enough evidence to classify partial streams and budget disposition without parsing exception text. Unexpected programming exceptions may still escape for the handler's defensive unknown path.
-- [ ] Serialize all calls through one process-local lock. A second caller waits; it does not create a second provider request.
-- [ ] Default to one submission. Permit up to three submissions with 1-second then 3-second backoff only for a connection failure proven to occur before any request bytes were sent. Retry HTTP 429 or HTTP 5xx only if Task 1 records an authoritative Cartesia guarantee that the request was not processed, or a documented idempotency mechanism that prevents duplicate synthesis and charging; otherwise classify it as sent/ambiguous and do not replay. Honor `Retry-After` only on a safely retryable outcome and cap it at 30 seconds. Never retry provider SSE errors, write/read timeouts, truncated responses, partial audio or any other ambiguous send.
-- [ ] Use HTTPX mock transport fixtures to prove normal split/multibyte SSE, definitely-pre-send retry then success, conservative 429/5xx classification under the verified contract, redirect rejection, timeout classification, truncation, partial-frame retention and absence of credentials from returned/debug evidence.
-- [ ] Run the two Task 4 test modules and architecture guard, then commit the exact Task 4 files locally.
+- [x] Implement incremental SSE framing over byte chunks: support LF and CRLF, blank-line dispatch, multiple `data:` lines and comment lines. Decode each completed frame as strict UTF-8 so an Odia/multibyte code point split across HTTP chunks remains valid.
+- [x] Reject invalid UTF-8, malformed fields, an unterminated final frame, events over 1 MiB and a total HTTP/SSE response beyond the verified bounded response limit. Preserve exact sanitized frame bytes for the context adapter; never retain the credential header. The JSON-agnostic transport does not attempt to count decoded audio bytes.
+- [x] Construct one `httpx.Client` with `trust_env=False`, redirects disabled and the Task 1 timeout contract. Use the verified fixed HTTPS origin/path and ask the credential supplier for the environment API key immediately before each authorized transmission; neither the transport nor gateway retains it after the request.
+- [x] Serialize no JSON in the transport. It accepts already-frozen request bytes and returns provider frames; it does not know Odia passages, lanes, jobs, voices, recipes or aggregates.
+- [x] Return an evidence-bearing `CartesiaTransportOutcome` for every expected HTTP/stream result, including failure: preserve all completed sanitized frames, HTTP status, submission certainty, completion state, bounded `Retry-After` and a stable reason code. This gives the gateway enough evidence to classify partial streams and budget disposition without parsing exception text. Unexpected programming exceptions may still escape for the handler's defensive unknown path.
+- [x] Serialize all calls through one process-local lock. A second caller waits; it does not create a second provider request.
+- [x] Default to one submission. Permit up to three submissions with 1-second then 3-second backoff only for a connection failure proven to occur before any request bytes were sent. Retry HTTP 429 or HTTP 5xx only if Task 1 records an authoritative Cartesia guarantee that the request was not processed, or a documented idempotency mechanism that prevents duplicate synthesis and charging; otherwise classify it as sent/ambiguous and do not replay. Honor `Retry-After` only on a safely retryable outcome and cap it at 30 seconds. Never retry provider SSE errors, write/read timeouts, truncated responses, partial audio or any other ambiguous send.
+- [x] Use HTTPX mock transport fixtures to prove normal split/multibyte SSE, definitely-pre-send retry then success, conservative 429/5xx classification under the verified contract, redirect rejection, timeout classification, truncation, partial-frame retention and absence of credentials from returned/debug evidence.
+- [x] Run the two Task 4 test modules and architecture guard, then commit the exact Task 4 files locally.
 
 ### Task 5: Implement the Narrator Voice gateway, fixed policies and evidence bundle
 
@@ -292,19 +321,19 @@ class ConfiguredNarrationReleasePolicyResolver(NarrationReleasePolicyResolver):
     def resolve_lane_c_intro(self, intended_episode_id: DiaryEpisodeId) -> ReleasePolicyResolution: ...
 ```
 
-- [ ] Extend private `LocalStudioVoiceProfile` schema with stable `voice_binding`, typed `authorization_record_id`, and explicit initial speed, volume and optional emotion. Preserve separate `opaque_provider_voice_reference` and dictionary binding. Do not store authorization status/evidence or the API key in this configuration.
-- [ ] Before changing the private configuration schema, run the report-only `doctor` against `CARTESIA_NARRATION_ROOT` when that variable is configured. If no production configuration exists, write the new strict schema directly and update focused fixtures. If an older real configuration exists, stop and request approval for an explicit migration; never silently reinterpret it.
-- [ ] Configure Lane B with the accepted editable starting defaults `speed=0.90`, `volume=1.00`, `emotion=calm`. Require Lane C defaults explicitly from private initialization rather than assuming they match Lane B.
-- [ ] Implement fixed release-policy resolution from the verified public Cartesia contract plus private lane configuration. Lane B must reject an episode binding; Lane C must bind exactly the intended episode. Neither resolver may query or copy mutable authorization status.
-- [ ] Validate every invocation before I/O: the complete contract digest equals `effective_input.contract_digest`; lane, provider, language, model, API/capability snapshot, canonical audio and voice match the fixed release contract; the frozen `EffectiveTakeSettings` dictionary binding/digest matches the configured lane policy; and `rendered_transcript.encode("utf-8")` matches its frozen byte length and digest.
-- [ ] Build one deterministic UTF-8 JSON body with `ensure_ascii=False` and compact separators. Convert validated decimal strings to JSON numbers only here. Use `attempt_id.value` as `context_id`; obtain the voice reference from the invocation's fixed contract and the dictionary reference from its frozen effective settings after the lane-policy validation above.
-- [ ] Hash the complete sanitized request body and headers after removing the credential and replacing private provider identifiers with their immutable bindings/digests. Publish one sanitized provider-evidence bundle at an attempt-addressed safe path through `FilesystemArtifactStore`.
-- [ ] Parse the fixture SSE vocabulary into contiguous `ProviderEventEvidence`. Normalize every completed stream to exactly one final `ProviderEventKind.TERMINAL` event; an SSE error event is evidence but never the final domain event by itself.
-- [ ] Decode and concatenate audio chunks without transformation while enforcing the contract's decoded-PCM byte limit, preserve partial PCM as evidence on ambiguous failure, and call `encode_canonical_pcm16_wav` exactly once only for terminal success. Combine all raw timestamp frames into one private JSON evidence artifact and expose one reference; do not normalize them.
-- [ ] Return actual provider usage when present. Map every HTTP, timeout, parse, encoding, storage and provider terminal outcome into success or one of the three evidence-bearing failure types. No unclassified provider exception may escape the adapter.
-- [ ] Add a separate live construction function for Task 5M that wires an environment-backed `CartesiaCredentialSupplier` and the existing durable adapters. The supplier reads `CARTESIA_API_KEY` only at the moment of an authorized transmission; construction must not read, retain or validate the secret. Do not modify `narrator_voice_cli.py` or add a generation CLI command.
-- [ ] Run gateway, policy, operations and generation-integration fixture tests plus affected application/recovery and architecture checks. The integration test must execute preview → reserve → fake SSE gateway → canonical WAV inspection → immutable publication → completed take without network.
-- [ ] Commit the exact Task 5 files locally after one focused review.
+- [x] Extend private `LocalStudioVoiceProfile` schema with stable `voice_binding`, typed `authorization_record_id`, and explicit initial speed, volume and optional emotion. Preserve separate `opaque_provider_voice_reference` and dictionary binding. Do not store authorization status/evidence or the API key in this configuration.
+- [x] Before changing the private configuration schema, run the report-only `doctor` against `CARTESIA_NARRATION_ROOT` when that variable is configured. If no production configuration exists, write the new strict schema directly and update focused fixtures. If an older real configuration exists, stop and request approval for an explicit migration; never silently reinterpret it.
+- [x] Configure Lane B with the accepted editable starting defaults `speed=0.90`, `volume=1.00`, `emotion=calm`. Require Lane C defaults explicitly from private initialization rather than assuming they match Lane B.
+- [x] Implement fixed release-policy resolution from the verified public Cartesia contract plus private lane configuration. Lane B must reject an episode binding; Lane C must bind exactly the intended episode. Neither resolver may query or copy mutable authorization status.
+- [x] Validate every invocation before I/O: the complete contract digest equals `effective_input.contract_digest`; lane, provider, language, model, API/capability snapshot, canonical audio and voice match the fixed release contract; the frozen `EffectiveTakeSettings` dictionary binding/digest matches the configured lane policy; and `rendered_transcript.encode("utf-8")` matches its frozen byte length and digest.
+- [x] Build one deterministic UTF-8 JSON body with `ensure_ascii=False` and compact separators. Convert validated decimal strings to JSON numbers only here. Use `attempt_id.value` as `context_id`; obtain the voice reference from the invocation's fixed contract and the dictionary reference from its frozen effective settings after the lane-policy validation above.
+- [x] Hash the complete sanitized request body and headers after removing the credential and replacing private provider identifiers with their immutable bindings/digests. Publish one sanitized provider-evidence bundle at an attempt-addressed safe path through `FilesystemArtifactStore`.
+- [x] Parse the fixture SSE vocabulary into contiguous `ProviderEventEvidence`. Normalize every completed stream to exactly one final `ProviderEventKind.TERMINAL` event; an SSE error event is evidence but never the final domain event by itself.
+- [x] Decode and concatenate audio chunks without transformation while enforcing the contract's decoded-PCM byte limit, preserve partial PCM as evidence on ambiguous failure, and call `encode_canonical_pcm16_wav` exactly once only for terminal success. Combine all raw timestamp frames into one private JSON evidence artifact and expose one reference; do not normalize them.
+- [x] Return actual provider usage when present. Map every HTTP, timeout, parse, encoding, storage and provider terminal outcome into success or one of the three evidence-bearing failure types. No unclassified provider exception may escape the adapter.
+- [x] Add a separate live construction function for Task 5M that wires an environment-backed `CartesiaCredentialSupplier` and the existing durable adapters. The supplier reads `CARTESIA_API_KEY` only at the moment of an authorized transmission; construction must not read, retain or validate the secret. Do not modify `narrator_voice_cli.py` or add a generation CLI command.
+- [x] Run gateway, policy, operations and generation-integration fixture tests plus affected application/recovery and architecture checks. The integration test must execute preview → reserve → fake SSE gateway → canonical WAV inspection → immutable publication → completed take without network.
+- [x] Commit the exact Task 5 files locally after one focused review.
 
 ### Task 6: Plan 4M smoke checkpoint and new-session handoff
 
@@ -313,11 +342,11 @@ class ConfiguredNarrationReleasePolicyResolver(NarrationReleasePolicyResolver):
 - Modify: this plan's checkboxes/status only after evidence exists
 - Modify: `README.md` only if the optional dependency or operator setup command changed
 
-- [ ] Run the new platform Cartesia contract/markup/SSE/transport modules, Cartesia recipe/gateway/policy/integration modules, affected narration preview/generation/recovery tests, Plan 3 durable evidence/audio tests and architecture guard once.
-- [ ] Run the package build/import check using the narrator optional dependencies and exercise only `--help`/construction with a fake key and mock transport. Do not contact the provider endpoint.
-- [ ] Run `git diff --check` and inspect the exact staged paths for API keys, private voice/dictionary IDs, authorization evidence, private Odia text, raw provider data and audio.
-- [ ] Record Task 4M as `implemented` and `smoke-verified`, not `hardened`. Preserve the deferred pre-live gate: restart windows around send/evidence/finalization, retry fault injection, provider contract revalidation and one explicitly approved capped live passage.
-- [ ] Make one local Task 4M checkpoint commit and do not push, merge, publish or perform a live request.
+- [x] Run the new platform Cartesia contract/markup/SSE/transport modules, Cartesia recipe/gateway/policy/integration modules, affected narration preview/generation/recovery tests, Plan 3 durable evidence/audio tests and architecture guard once.
+- [x] Run the package build/import check using the narrator optional dependencies and exercise only `--help`/construction with a fake key and mock transport. Do not contact the provider endpoint.
+- [x] Run `git diff --check` and inspect the exact staged paths for API keys, private voice/dictionary IDs, authorization evidence, private Odia text, raw provider data and audio.
+- [x] Record Task 4M as `implemented` and `smoke-verified`, not `hardened`. Preserve the deferred pre-live gate: restart windows around send/evidence/finalization, retry fault injection, provider contract revalidation and one explicitly approved capped live passage.
+- [x] Make one local Task 4M checkpoint commit and do not push, merge, publish or perform a live request.
 
 ## Focused completion criteria
 

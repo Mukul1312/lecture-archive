@@ -45,7 +45,7 @@ Install the repository into its virtual environment once before using the local
 operations command from a fresh checkout:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install --no-deps -e .
+.\.venv\Scripts\python.exe -m pip install -e ".[narrator]"
 .\.venv\Scripts\python.exe -m heritage_archive.composition_root.narrator_voice_cli --help
 ```
 
