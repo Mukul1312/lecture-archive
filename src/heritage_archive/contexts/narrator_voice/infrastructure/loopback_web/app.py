@@ -1,21 +1,26 @@
 """Secured Narrator application shell; workflow routes are injected."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from hashlib import sha256
 
-from heritage_archive.platform.web import WebApplication, WebRequest, WebResponse
+from heritage_archive.platform.web import WebRequest, WebResponse
 from .security import ASSET_TYPES, ProcessSecurity, WebInputError, json_error, secure_response
 
 
 class NarratorWebApplication:
-    def __init__(self, security: ProcessSecurity, *, dispatch: WebApplication | None = None,
+    def __init__(self, security: ProcessSecurity, *, dispatch: Callable[[WebRequest], WebResponse] | None = None,
                  assets: Mapping[str, bytes] | None = None):
         self._security = security
         self._dispatch = dispatch
         self._assets = dict(assets or {})
         if any(path not in ASSET_TYPES or type(body) is not bytes for path, body in self._assets.items()):
             raise ValueError("invalid fixed assets")
+
+    def error_response(self, status: int) -> WebResponse:
+        """Prebuilt generic errors for failures outside the Narrator request handler."""
+        codes = {400: "malformed_request", 500: "internal_error"}
+        return secure_response(json_error(status, codes[status]))
 
     def __call__(self, request: WebRequest) -> WebResponse:
         asset = False

@@ -8,6 +8,18 @@ from heritage_archive.platform.web import WebRequest, WebResponse
 from heritage_archive.platform.web.loopback import build_asgi
 
 
+class _Application:
+    """Neutral fixture boundary, including prebuilt transport fallback values."""
+    def __init__(self, dispatch):
+        self.dispatch = dispatch
+
+    def __call__(self, request):
+        return self.dispatch(request)
+
+    def error_response(self, status):
+        return WebResponse(status, b"fixture", ((b"content-length", b"7"),))
+
+
 class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
     async def test_lifespan_and_websockets_never_dispatch_http_work(self):
         def application(request):
@@ -19,7 +31,7 @@ class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
                 return next(incoming)
             async def send(message):
                 messages.append(message)
-            await build_asgi(application)({"type": kind}, receive, send)
+            await build_asgi(_Application(application))({"type": kind}, receive, send)
             self.assertEqual(messages, [{"type": "lifespan.startup.complete"}, {"type": "lifespan.shutdown.complete"}]
                              if kind == "lifespan" else [{"type": "websocket.close", "code": 1008}])
 
@@ -45,7 +57,7 @@ class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
                     calls.append(request)
                     return WebResponse(200)
 
-                await build_asgi(application)({"type": "http", "method": "POST", "path": "/", "headers": []}, receive, send)
+                await build_asgi(_Application(application))({"type": "http", "method": "POST", "path": "/", "headers": []}, receive, send)
                 self.assertEqual(consumed, 2)
                 self.assertEqual(calls[0].body_too_large, size > 262144)
                 self.assertEqual(calls[0].body, b"" if size > 262144 else b"x" * 262143 + b"y")
@@ -64,7 +76,7 @@ class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
                 calls.append(request)
                 return WebResponse(200, b"private", ((b"content-length", b"7"),))
 
-            await build_asgi(application)({"type": "http", "method": "HEAD", "path": "/", "headers": []}, receive, send)
+            await build_asgi(_Application(application))({"type": "http", "method": "HEAD", "path": "/", "headers": []}, receive, send)
             if disconnected:
                 self.assertEqual((calls, messages), ([], []))
             else:
@@ -74,8 +86,11 @@ class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
     def test_serve_has_only_fixed_safe_listener_configuration(self):
         from heritage_archive.platform.web.loopback import serve_loopback
         with patch("uvicorn.run") as run:
-            serve_loopback(lambda request: WebResponse(200))
-        self.assertEqual(run.call_args.kwargs, {
+            serve_loopback(_Application(lambda request: WebResponse(200)))
+        from uvicorn.protocols.http.h11_impl import H11Protocol
+        arguments = dict(run.call_args.kwargs)
+        self.assertTrue(issubclass(arguments.pop("http"), H11Protocol))
+        self.assertEqual(arguments, {
             "host": "127.0.0.1", "port": 8765, "workers": 1,
             "proxy_headers": False, "reload": False, "access_log": False,
         })
@@ -100,7 +115,7 @@ class LoopbackWebTests(unittest.IsolatedAsyncioTestCase):
         async def send(message):
             messages.append(message)
 
-        await build_asgi(application)(
+        await build_asgi(_Application(application))(
             {"type": "http", "method": "POST", "path": "/fixture",
              "headers": [(b"host", b"one"), (b"host", b"two")]}, receive, send)
         request, worker = received[0]

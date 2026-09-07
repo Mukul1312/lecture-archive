@@ -1,8 +1,10 @@
 """Fixture-only, framework-neutral Narrator HTTP security tests."""
 
 import json
+import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 import secrets
 import os
 from pathlib import Path
@@ -24,6 +26,10 @@ POST_HEADERS = (HOST, (b"origin", b"http://127.0.0.1:8765"),
 
 
 class WebSecurityTests(unittest.TestCase):
+    def test_deep_json_parser_recursion_is_a_generic_secured_400(self):
+        body = b'{"value":' + b"[" * 2000 + b"0" + b"]" * 2000 + b"}"
+        self.assert_rejected(WebRequest("POST", "/fixture", POST_HEADERS, body), 400, "invalid_json")
+
     def test_malformed_framing_and_nonfinite_numeric_json_fail_closed(self):
         for value in (b"-1", b"garbage", b"1, 1"):
             with self.subTest(value=value):
@@ -205,6 +211,34 @@ class WebSecurityTests(unittest.TestCase):
 
 
 class WebCompositionTests(unittest.TestCase):
+    def test_application_construction_failure_closes_studio_exactly_once(self):
+        from heritage_archive.composition_root import narrator_voice_web as web
+
+        studio = SimpleNamespace(close=Mock())
+        with (patch.object(web, "build_live_narration", return_value=studio),
+              patch.object(web, "NarratorWebApplication", side_effect=RuntimeError("SENTINEL-construction")),
+              patch.object(web, "serve_loopback") as serve):
+            with self.assertRaises(RuntimeError):
+                web.serve_narration(object())
+        studio.close.assert_called_once_with()
+        serve.assert_not_called()
+
+    def test_process_token_collisions_are_regenerated_before_graph_construction(self):
+        from heritage_archive.composition_root import narrator_voice_web as web
+
+        principal, session, csrf = "a" * 64, "b" * 64, "c" * 64
+        studio = SimpleNamespace(close=Mock())
+        with (patch.object(web, "token_hex", side_effect=[principal, principal, session, principal, session, csrf]) as generate,
+              patch.object(web, "build_live_narration", return_value=studio) as build,
+              patch.object(web, "serve_loopback") as serve):
+            web.serve_narration(object())
+        self.assertEqual(generate.call_count, 6)
+        self.assertTrue(all(call.args == (32,) for call in generate.call_args_list))
+        self.assertEqual(build.call_args.kwargs, {"process_principal": principal})
+        security = serve.call_args.args[0]._security
+        self.assertEqual((security.session_token, security.csrf_token), (session, csrf))
+        studio.close.assert_called_once_with()
+
     def test_real_fixture_graph_uses_three_distinct_tokens_and_closes_once_on_return_or_failure(self):
         from heritage_archive.composition_root import narrator_voice_web as web
         from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
@@ -265,6 +299,112 @@ class WebCompositionTests(unittest.TestCase):
 
 
 class WebAsgiSecurityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transport_worker_and_conversion_faults_use_prebuilt_secured_fallback(self):
+        from heritage_archive.platform.web import loopback
+
+        app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF))
+        for target in ("Response", "run_in_threadpool"):
+            with self.subTest(target=target):
+                asgi = loopback.build_asgi(app)
+                messages = []
+                async def receive():
+                    return {"type": "http.request", "body": b""}
+                async def send(message):
+                    messages.append(message)
+                with patch.object(loopback, target, side_effect=RuntimeError("SENTINEL-private-fault")):
+                    await asgi({"type": "http", "method": "GET", "path": "/", "headers": (HOST,)}, receive, send)
+                self.assertEqual(len(messages), 2)
+                self.assertEqual(messages[0]["status"], 500)
+                self.assertEqual(json.loads(messages[1]["body"]), {"ok": False, "error": {
+                    "code": "internal_error", "message": "The request could not be completed."}})
+                WebSecurityTests().assert_secured(WebResponse(500, messages[1]["body"], tuple(messages[0]["headers"])))
+                self.assertNotIn("SENTINEL", repr(messages))
+
+    async def test_initial_or_later_send_fault_never_starts_a_second_response(self):
+        from heritage_archive.platform.web.loopback import build_asgi
+
+        for failing_type in ("http.response.start", "http.response.body"):
+            with self.subTest(failing_type=failing_type):
+                sent = []
+                async def receive():
+                    return {"type": "http.request", "body": b""}
+                async def send(message):
+                    sent.append(message)
+                    if message["type"] == failing_type:
+                        raise RuntimeError("SENTINEL-send-failure")
+                await build_asgi(NarratorWebApplication(ProcessSecurity(SESSION, CSRF)))(
+                    {"type": "http", "method": "GET", "path": "/", "headers": (HOST,)}, receive, send)
+                self.assertEqual(sum(message["type"] == "http.response.start" for message in sent), 1)
+                self.assertNotIn("SENTINEL", repr(sent))
+
+    async def test_transport_preserves_cancellation_and_head_fallback_has_no_body(self):
+        from heritage_archive.platform.web import loopback
+
+        app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF))
+        messages = []
+        async def receive():
+            return {"type": "http.request", "body": b""}
+        async def send(message):
+            messages.append(message)
+        scope = {"type": "http", "method": "HEAD", "path": "/", "headers": (HOST,)}
+        with patch.object(loopback, "run_in_threadpool", side_effect=asyncio.CancelledError):
+            with self.assertRaises(asyncio.CancelledError):
+                await loopback.build_asgi(app)(scope, receive, send)
+        self.assertEqual(messages, [])
+        with patch.object(loopback, "Response", side_effect=RuntimeError("SENTINEL")):
+            await loopback.build_asgi(app)(scope, receive, send)
+        self.assertEqual((messages[0]["status"], messages[1]["body"]), (500, b""))
+        WebSecurityTests().assert_secured(WebResponse(500, b"", tuple(messages[0]["headers"])))
+
+    async def test_actual_pinned_h11_parser_failures_receive_secured_400_and_close(self):
+        from heritage_archive.platform.web.loopback import serve_loopback
+        from uvicorn import Config
+        from uvicorn.protocols.http.h11_impl import H11Protocol
+        from uvicorn.server import ServerState
+
+        app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF))
+        with patch("uvicorn.run") as run:
+            serve_loopback(app)
+        protocol_type = run.call_args.kwargs.get("http", H11Protocol)
+
+        class Transport:
+            def __init__(self):
+                self.written = bytearray()
+                self.closed = False
+            def get_extra_info(self, name):
+                return None
+            def write(self, data):
+                self.written.extend(data)
+            def close(self):
+                self.closed = True
+            def is_closing(self):
+                return self.closed
+
+        requests = (
+            b"GET /SENTINEL-private HTTP/1.1\r\n\r\n",
+            b"GET /SENTINEL-private HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nHost: evil.invalid\r\n\r\n",
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                config = Config(run.call_args.args[0], http=protocol_type, log_config=None, access_log=False, proxy_headers=False)
+                protocol = protocol_type(config, ServerState(), {}, _loop=asyncio.get_running_loop())
+                transport = Transport()
+                protocol.connection_made(transport)
+                with self.assertLogs("uvicorn.error", level="WARNING") as logs:
+                    protocol.data_received(request)
+                wire = bytes(transport.written)
+                self.assertTrue(transport.closed)
+                self.assertNotIn(b"SENTINEL", wire)
+                self.assertNotIn("SENTINEL", str(logs.output))
+                header_block, body = wire.split(b"\r\n\r\n", 1)
+                status, *pairs = header_block.split(b"\r\n")
+                self.assertEqual(status, b"HTTP/1.1 400 Bad Request")
+                headers = tuple((name.lower(), value) for name, value in (line.split(b": ", 1) for line in pairs))
+                self.assertEqual(dict(headers)[b"connection"], b"close")
+                WebSecurityTests().assert_secured(WebResponse(400, body, headers))
+                self.assertEqual(json.loads(body), {"ok": False, "error": {
+                    "code": "malformed_request", "message": "The request could not be completed."}})
+
     async def test_raw_chunks_preserve_split_utf8_and_enforce_cap_despite_missing_or_lying_length(self):
         from heritage_archive.platform.web.loopback import build_asgi
 

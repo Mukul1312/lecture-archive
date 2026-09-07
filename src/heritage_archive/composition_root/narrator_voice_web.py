@@ -11,7 +11,13 @@ from .narrator_voice_live import build_live_narration
 
 def serve_narration(root: LocalNarrationRoot) -> None:
     process_principal = token_hex(32)
-    security = ProcessSecurity(token_hex(32), token_hex(32))
+    session_token = token_hex(32)
+    while session_token == process_principal:
+        session_token = token_hex(32)
+    csrf_token = token_hex(32)
+    while csrf_token in (process_principal, session_token):
+        csrf_token = token_hex(32)
+    security = ProcessSecurity(session_token, csrf_token)
     studio = build_live_narration(root, process_principal=process_principal)
     try:
         application = NarratorWebApplication(security)
