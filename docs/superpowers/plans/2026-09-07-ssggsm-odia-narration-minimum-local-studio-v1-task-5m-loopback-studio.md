@@ -111,8 +111,12 @@ this surface:
 - `GET /`, `GET /assets/studio.css`, `GET /assets/studio.js`;
 - `POST /api/v1/episode`, `POST /api/v1/authority/{lane}`;
 - `POST /api/v1/jobs/diary`, `POST /api/v1/jobs/intro`;
-- `POST /api/v1/jobs/{job}/passages/{passage}/text`, `/order`, `/defaults`,
-  `/recipes/validate`, `/recipes/require`, and `/dictionary/require`;
+- `POST /api/v1/jobs/{job}/order` and
+  `POST /api/v1/jobs/{job}/defaults`;
+- `POST /api/v1/jobs/{job}/passages/{passage}/text`,
+  `POST /api/v1/jobs/{job}/passages/{passage}/recipes/validate`,
+  `POST /api/v1/jobs/{job}/passages/{passage}/recipes/require`, and
+  `POST /api/v1/jobs/{job}/passages/{passage}/dictionary/require`;
 - `POST /api/v1/jobs/{job}/estimate`, `/generate`, and
   `/generation-attempts/{attempt}/reconcile`;
 - `POST /api/v1/jobs/{job}/takes/{take}/review` and `/select`;
