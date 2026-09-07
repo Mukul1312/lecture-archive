@@ -457,11 +457,19 @@ class SingleOperatorActorResolver:
 
 **Files:**
 
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/app.py`
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/security.py`
 - Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/presenters.py`
 - Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/routes.py`
 - Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/assets/studio.css`
 - Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/assets/studio.js`
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/filesystem_repositories.py`
+- Modify: `src/heritage_archive/composition_root/narrator_voice_live.py`
+- Modify: `src/heritage_archive/composition_root/narrator_voice_web.py`
 - Create: `tests/heritage_archive/narrator_voice/test_web_authoring.py`
+- Modify: `tests/heritage_archive/narrator_voice/test_web_security.py`
+- Modify: `tests/heritage_archive/narrator_voice/test_live_studio.py`
+- Modify: `tests/heritage_archive/narrator_voice/test_filesystem_repositories.py`
 
 - [ ] Start with failing route/presenter tests for empty/fresh/restarted stores, HTML
   escaping, NFC Odia round-trip, explicit output allowlists, one-episode enforcement,
@@ -472,6 +480,10 @@ class SingleOperatorActorResolver:
   authority status, the single episode, discovered jobs, ordered passages, canonical
   text, delivery defaults and recipe-required state. Do not render hidden private
   values in HTML, comments, data attributes or JavaScript.
+- [ ] Keep a first request with no/currently invalid process cookie nonprivate: issue
+  the cookie and CSRF meta in a bootstrap shell, then let the local script reload the
+  same URL. Render private editor text only when that second `GET /` carries the
+  current session; do not add another page or authentication flow.
 - [ ] Implement episode creation first; bind Lane-C authorization to that episode.
   The authority route obtains the lane only from its allowlisted path segment; its
   JSON body accepts only evidence SHA-256 and explicit UTC validity bounds. Server
@@ -483,6 +495,12 @@ class SingleOperatorActorResolver:
   `stale_revision` and JavaScript asks the operator to reload/reapply without retry.
 - [ ] Keep advanced source inert text and rely on the existing recipe compiler
   allowlist/16,384-byte bound. Do not render it through `innerHTML`.
+- [ ] Inject one identifier source into both the complete live graph and the route
+  adapter. Introduce a compatible typed filesystem-repository failure distinction so
+  storage/rehydration/publication faults map to generic 500 while valid authoring
+  `ValidationError` remains 422; never classify by exception text.
+- [ ] Verify the installed-package resource API and an offline-built wheel/sdist both
+  contain the two real local assets. Do not download build dependencies or publish.
 - [ ] Run:
 
   ```powershell
