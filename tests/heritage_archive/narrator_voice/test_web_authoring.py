@@ -1,10 +1,11 @@
 """Persisted local authoring only: no key, network or listening socket."""
 from dataclasses import replace
 from importlib.util import find_spec
-from html import escape
+from html import escape, unescape
 import json
 import os
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -27,6 +28,20 @@ from tests.heritage_archive.narrator_voice.test_web_security import SESSION, CSR
 PRINCIPAL = "fixture-server-only-principal"
 TEXT = '\u0b13\u0b21\u0b3c\u0b3f\u0b06 & "fixture"\nAB CD'
 AUTHORITY = {"evidenceDigest": "d" * 64, "validFrom": "2020-01-01T00:00:00Z", "validUntil": "2099-01-01T00:00:00+00:00"}
+
+
+def textarea_value(markup, name):
+    """Model only textarea RCDATA decoding and HTML's one-initial-LF removal.
+
+    This focused extractor is not a browser parser. It accepts the presenter's
+    escaped textarea content, decodes character references, and explicitly applies
+    the browser rule that ignores one LF immediately after an opening textarea.
+    """
+    match = re.search(r'<textarea name="' + re.escape(name) + r'">(.*?)</textarea>', markup, re.DOTALL)
+    if match is None:
+        raise AssertionError("expected textarea was not rendered")
+    value = unescape(match[1].replace("\r\n", "\n").replace("\r", "\n"))
+    return value[1:] if value.startswith("\n") else value
 
 
 class WebAuthoringTests(unittest.TestCase):
@@ -83,6 +98,67 @@ class WebAuthoringTests(unittest.TestCase):
     def diary(self, passages=None):
         self.post("/api/v1/authority/lane_b", AUTHORITY)
         return self.post("/api/v1/jobs/diary", {"passages": passages or [{"text": TEXT}]})
+
+    def test_leading_lf_in_stored_passage_survives_textarea_and_unchanged_submission(self):
+        text = '\nAB & "fixture"\n'
+        job = self.diary([{"text": text}])["jobId"]
+        current = self.editor(job)
+        submitted = textarea_value(self.page(), "text")
+        self.assertEqual(submitted, text)
+        self.post("/api/v1/jobs/" + job + "/passages/" + current.passages[0].passage_id.value + "/text",
+                  {"expectedRevision": 1, "text": submitted}, 422, "validation_failed")
+        self.assertEqual(self.editor(job).revision, 1)
+        self.assertEqual(self.editor(job).passages[0].text, text)
+
+    def test_shared_textarea_renderer_preserves_canonical_values_after_html_lf_rule(self):
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web import presenters
+        # Literal independent examples make the extractor's narrow standards rule
+        # explicit; it must remove exactly one LF, never strip all whitespace.
+        self.assertEqual(textarea_value('<textarea name="text">\nAB</textarea>', "text"), "AB")
+        self.assertEqual(textarea_value('<textarea name="text">\n\nAB</textarea>', "text"), "\nAB")
+        for name in ("text", "passages", "advancedSource", "structuredControls", "orderedPassageIds"):
+            for value in ("", "AB \ufffd \u0b06", "\nAB", '\n\n<spell>AB & "fixture"</spell>\n'):
+                with self.subTest(name=name, value=value):
+                    rendered = presenters.field(name, "Fixture", value, textarea=True)
+                    self.assertEqual(textarea_value(rendered, name), value)
+
+    def test_nul_input_is_rejected_before_textarea_backed_authoring_handlers(self):
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.routes import NarrationAuthoringRoutes
+        job = self.diary()["jobId"]
+        passage = self.editor(job).passages[0].passage_id.value
+        def forbidden(command):
+            self.fail("NUL input reached an authoring handler")
+        handlers = replace(self.studio.handlers, prepare_diary=forbidden, revise_passage_text=forbidden, validate_recipe=forbidden)
+        routes = NarrationAuthoringRoutes(handlers, self.bindings, self.ids)
+        self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=routes)
+        path = "/api/v1/jobs/" + job + "/passages/" + passage
+        cases = (("/api/v1/jobs/diary", {"passages": [{"text": "AB\0CD"}]}),
+                 (path + "/text", {"expectedRevision": 1, "text": "AB\0CD"}),
+                 (path + "/recipes/validate", {"expectedRevision": 1, "mode": "advanced",
+                                               "structuredControls": [], "advancedSource": "AB\0CD"}))
+        for url, body in cases:
+            with self.subTest(url=url):
+                self.post(url, body, 400, "invalid_input")
+        self.assertEqual(self.editor(job).revision, 1)
+
+    def test_existing_nul_passage_fails_closed_in_editor_and_shared_textarea_helper(self):
+        from heritage_archive.contexts.narrator_voice.application.commands import RevisePassageTextCommand
+        from heritage_archive.contexts.narrator_voice.domain.values import PassageText
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web import presenters
+        job = self.diary()["jobId"]
+        current = self.editor(job)
+        # Seed legacy data through the existing application; the web boundary must
+        # not silently display HTML's U+FFFD replacement as the stored text.
+        self.studio.handlers.revise_passage_text(RevisePassageTextCommand(
+            self.ids.new_id(CommandId), current.job_id, current.passages[0].passage_id,
+            PassageText("NUL-fixture\0AB"), 1))
+        page = self.page()
+        self.assertIn("Authoring is disabled", page)
+        self.assertNotIn("NUL-fixture", page)
+        self.assertNotIn("<textarea", page)
+        for name in ("text", "passages", "advancedSource"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                presenters.field(name, "Fixture", "AB\0CD", textarea=True)
 
     def test_empty_page_episode_and_configured_authorities_use_exact_private_bindings(self):
         page = self.page()

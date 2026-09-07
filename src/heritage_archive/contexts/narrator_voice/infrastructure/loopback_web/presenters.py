@@ -82,7 +82,12 @@ def form(path, kind, content, label):
 
 
 def field(name, label, value="", *, textarea=False):
-    control = ('<textarea name="' + e(name) + '">' + e(value) + '</textarea>') if textarea else (
+    if textarea and "\0" in str(value):
+        # HTML replaces NUL with U+FFFD; fail closed instead of editing altered text.
+        raise ValueError("textarea value cannot be represented faithfully")
+    # HTML parsing discards one LF immediately after a textarea start tag.
+    # Supply that sentinel separately so every canonical leading LF survives.
+    control = ('<textarea name="' + e(name) + '">\n' + e(value) + '</textarea>') if textarea else (
         '<input name="' + e(name) + '" value="' + e(value) + '" required>')
     return '<label>' + e(label) + control + '</label>'
 

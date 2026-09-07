@@ -61,7 +61,7 @@ def integer(value, minimum=1):
 
 
 def canonical_text(value, *, scalars=8000, byte_limit=32000):
-    if (type(value) is not str or not value or len(value) > scalars or "\r" in value
+    if (type(value) is not str or not value or len(value) > scalars or "\r" in value or "\0" in value
             or unicodedata.normalize("NFC", value) != value):
         invalid_input()
     try:
