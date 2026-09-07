@@ -149,7 +149,8 @@ stale/already-existing/busy state to 409, oversized bodies to 413, wrong content
 to 415, domain validation to 422 and unexpected faults to a generic 500.
 
 All `expectedRevision` values are positive JSON integers. All IDs are lowercase UUIDv4
-text. All operator text is NFC, LF-only UTF-8. Passage text retains the domain's
+text. All operator text is NFC, LF-only UTF-8 and excludes U+0000, which HTML
+cannot round-trip without replacement. Passage text retains the domain's
 8,000-scalar bound; advanced recipe source retains the compiler's 16,384-byte bound;
 review/listening notes and selection reasons are nonempty and limited by the web
 adapter to 2,000 scalars and 8,192 UTF-8 bytes. Job creation accepts 1–128 passage
@@ -514,34 +515,67 @@ class SingleOperatorActorResolver:
 **Files:**
 
 - Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/generation.py`
+- Modify: `src/heritage_archive/composition_root/narrator_voice_web.py`
 - Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/routes.py`
 - Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/presenters.py`
 - Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/loopback_web/assets/studio.js`
+- Create: `src/heritage_archive/contexts/narrator_voice/infrastructure/filesystem_failures.py`
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/filesystem_repositories.py`
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/budget_ledger.py`
+- Modify: `src/heritage_archive/contexts/narrator_voice/infrastructure/filesystem_evidence.py`
 - Create: `tests/heritage_archive/narrator_voice/test_web_generation.py`
+- Modify: affected authoring, web-composition, repository, budget-ledger and
+  filesystem-evidence tests under `tests/heritage_archive/narrator_voice/`
 
 - [ ] Write failing tests proving the displayed canonical projection, billable
-  characters and estimate come from `GenerationEstimateResult`; sensitive preview
-  fields remain absent.
-- [ ] Implement a bounded one-shot confirmation store with cryptographically random
-  tokens, monotonic expiry, maximum entries, atomic consume and exact
-  job/preview/post-estimate-current-revision/digest/estimate binding. Fix the TTL at
-  600 seconds and live-entry cap at 128. Test generation immediately after estimate,
-  staleness after an intervening job mutation, wrong session/job, tampering, expiry,
-  capacity, double submit and restart invalidation.
-- [ ] Derive a fresh command ID and safe take location server-side, acquire the
-  nonblocking generation lock, atomically consume the token, and run exactly one
-  `GenerateTakeHandler` call in a worker thread with `finally`-based lock release.
-  Concurrent calls return 409 `generation_busy` without consuming their token; no
-  branch automatically retries a failed, unknown or lost-response generation.
-- [ ] Present completed/failed/blocked/unknown results explicitly. Expose the existing
-  evidence-driven reconciliation handler for unknown attempts with current
-  `expectedRevision`. After a process restart, also offer reconciliation for any
-  persisted nonterminal orphan (`reserved`, `input_frozen`,
-  `external_work_started`, `artifacts_staged`, or `artifacts_published`); do not turn
-  refresh into reconciliation and never auto-replay.
-- [ ] Use a fake gateway and credential/socket guards for every route test. Cover
-  success, definitive failure, ambiguous unknown, stale revision, busy gate and
-  double-submit.
+  characters and estimate come directly from `GenerationEstimateResult`; generation
+  binds `result.revision`, never preview base revision, and sensitive preview,
+  provider and storage fields remain absent.
+- [ ] Inject one process-lifetime generation control built from the exact
+  `ProcessSecurity` session. Its private immutable confirmations bind session,
+  job/preview/post-estimate revision/digest/estimate. Use cryptographic 256-bit tokens,
+  injected monotonic expiry, atomic issue/consume, a 600-second TTL and 128-live cap.
+  Prune before capacity checks and never evict live entries. Capacity rejection occurs
+  only after the estimate has truthfully persisted. Prove bounded collision failure,
+  constant-time token/session comparison, wrong-owner preservation, tampering, expiry,
+  double submit and restart invalidation.
+- [ ] Map exact estimate override modes and inject only the configured lane dictionary.
+  Render a successful estimate through `textContent` into an ephemeral sibling
+  confirmation form without reloading or browser storage; every other successful
+  mutation reloads. No failure path automatically re-estimates or generates.
+- [ ] Derive a fresh command ID and
+  `studio/takes/<job UUID>/<command UUID>.wav` server-side. Acquire the shared
+  nonblocking generation gate before token lookup/consume, invoke the synchronous
+  `GenerateTakeHandler` exactly once, and release in `finally`. The platform already
+  runs the whole application in an AnyIO worker thread, so add no nested executor or
+  framework import. A busy request returns 409 `generation_busy` without consuming
+  its token. Preserve the handler/transport's existing bounded retry only for proved
+  pre-send failures; never replay failed, unknown or lost-response work at the web
+  layer.
+- [ ] Present completed/failed/blocked/unknown/**quarantined** results explicitly.
+  Add `show_narration_status` to the structural route dependency and derive a web-only
+  recovery action for unknown plus inactive persisted `reserved`, `input_frozen`,
+  `external_work_started`, `artifacts_staged`, or `artifacts_published` attempts.
+  Under the acquired gate, verify current status owns the path attempt and is in that
+  set: missing is 404 and present-but-ineligible is 409
+  `reconciliation_unavailable`. Reconcile with current `expectedRevision`; do not
+  turn GET/refresh into reconciliation, race an active worker, invoke the gateway or
+  infer that reconciliation repaired anything.
+- [ ] Add a shared `FilesystemOperationalFailure(ValidationError)` and retain
+  `FilesystemRepositoryFailure` as its compatible subtype. After validating public
+  argument types, translate stored-ledger parse/replay/configuration and atomic-
+  replacement failures, workspace topology/read/decode/stored-binding/storage
+  failures, and
+  artifact-publication failures to the shared type. Preserve caller validation,
+  candidate-progression validation, `BudgetDenied` and `WriterLockUnavailable`.
+  Catch the shared type before domain validation. Within only the trusted generate
+  and reconcile dispatches, map any remaining handler `ValidationError` to generic
+  500 after all request values are converted; authoring and estimate domain
+  validation remain 422. Never classify by exception text.
+- [ ] Use a fake gateway, fixture roots, deterministic clocks/events and credential,
+  DNS, socket and HTTP guards for every route test. Prove success, definitive failure,
+  ambiguous unknown, stale consumed token, responsive busy refusal with token
+  preservation, shared-gate reconciliation exclusion and double-submit behavior.
 - [ ] Run:
 
   ```powershell
