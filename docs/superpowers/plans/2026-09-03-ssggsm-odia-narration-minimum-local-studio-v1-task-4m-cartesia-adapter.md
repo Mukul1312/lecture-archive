@@ -33,7 +33,7 @@ evidence-publication failure while keeping the reservation held.
 The Task 6 focused matrix passed all 211 tests with system Python 3.11.4 and the
 exact narrator dependency pins. After the final whole-branch review found and
 fixed raw compressed-ingress bounding and durable authoritative-usage receipt
-gaps, the expanded focused matrix passed all 218 tests. Offline sdist packaging,
+gaps, the final focused matrix passed all 219 tests. Offline sdist packaging,
 source imports, CLI
 `--help`, and fixture construction passed; construction had zero stream calls
 with DNS/socket and credential-read guards. A wheel was not built because the
