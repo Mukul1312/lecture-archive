@@ -98,25 +98,33 @@ application port, with sanitized evidence and no automated live calls.
 **Detailed executable plan:**
 [Task 4M Cartesia Adapter](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md).
 
-Task 4M is intentionally handed to a new Codex chat. That chat starts with the
-protocol in the detailed plan; this documentation handoff does not begin implementation.
+Task 4M is implemented and smoke-verified, not hardened. Its fixture-only result was
+merged locally into `main` through checkpoint `3f6b00b`; the detailed plan retains
+the implementation evidence and unresolved pre-live limitations.
 
-- [ ] Confirm the smallest current supported HTTP/parser dependency set immediately
+- [x] Confirm the smallest current supported HTTP/parser dependency set immediately
   before implementation; do not add a provider-generic transport framework.
-- [ ] Support the one fixed Odia synthesis route and only the structured/advanced
+- [x] Support the one fixed Odia synthesis route and only the structured/advanced
   markup controls used by the initial workflow.
-- [ ] Preserve exact UTF-8 preview-to-transmission bytes, fixed contract fields,
+- [x] Preserve exact UTF-8 preview-to-transmission bytes, fixed contract fields,
   private dictionary binding, canonical raw PCM wrapping and sanitized evidence.
-- [ ] Use bounded timeouts and conservative retry classification. Any ambiguous
+- [x] Use bounded timeouts and conservative retry classification. Any ambiguous
   post-send/audio outcome becomes `unknown` and is never automatically repeated.
-- [ ] Preserve raw timestamps if returned, but do not normalize or claim word timing.
-- [ ] Smoke-verify exact request bytes, one multibyte SSE stream, terminal success,
+- [x] Preserve raw timestamps if returned, but do not normalize or claim word timing.
+- [x] Smoke-verify exact request bytes, one multibyte SSE stream, terminal success,
   terminal failure, truncation and retry ambiguity using sanitized fixtures only.
 
 ## Task 5M — minimum loopback studio
 
 **Produces:** one local website and `serve` composition root over the persisted
 application handlers.
+
+**Detailed executable plan:**
+[Task 5M Loopback Studio](2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md).
+
+The detailed plan selects a server-rendered Starlette boundary with minimal local
+JavaScript, records the fresh-store authorization/discovery/playback seams, fixes the
+single-episode v1 constraint, and is the authoritative Task 5M execution basis.
 
 - [ ] Choose the smallest frontend only after Task 3M works. React/OpenAPI generation
   is optional rather than preselected.

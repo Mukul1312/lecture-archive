@@ -53,6 +53,11 @@ deferred are ERROR-plus-TERMINAL recovery sealing compatibility and exact
 wall-clock cancellation beyond HTTPX's bounded observable phases. These limits
 must be addressed or explicitly resolved at the pre-live gate.
 
+Integration update: this fixture-only Task 4M checkpoint was subsequently merged
+locally into `main` through `3f6b00b`. No push, publication, private-root access or
+live Cartesia request occurred. Remaining v1 implementation continues in the
+[Task 5M loopback studio plan](2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md).
+
 ## New-chat start protocol
 
 1. Work in `C:\Users\Mukul\code\personal-projects\voice-cloning\.worktrees\narrator-voice-production-v1` on `feature/narrator-voice-production-v1`. Do not implement on `main`.

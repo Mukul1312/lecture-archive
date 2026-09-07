@@ -41,11 +41,12 @@
 
 ## Current execution handoff
 
-- Task 3M is complete and smoke-verified, not hardened.
-- Task 4M implementation must begin in a fresh Codex chat. Start by reading
-  `docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md`
-  and follow its new-chat protocol on `feature/narrator-voice-production-v1`.
-- The chat that created the Task 4M plan performs documentation only; it must not
-  start source implementation.
-- Task 4M tests remain fixture-only. No live, paid or private Cartesia request is
-  authorized, and the existing offline operations CLI must remain offline.
+- Tasks 3M and 4M are complete and smoke-verified, not hardened. Task 4M was
+  merged locally into `main` through checkpoint `3f6b00b` without a live request.
+- Task 5M is the current implementation task. Read and execute
+  `docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md`
+  on `feature/narrator-voice-production-v1` in its isolated worktree.
+- Task 5M tests remain fixture-only. Do not read a private production root or API
+  key, bind a test server socket, or make a live, paid or private Cartesia request.
+- The pre-live storage/budget/recovery/audio/backup and provider-usage gates remain
+  open. Task 5M completion does not itself authorize a production call.

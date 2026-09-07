@@ -31,13 +31,15 @@ records that the original operational plan was overbuilt for one local operator.
 [v4 minimum local-studio design](docs/superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
 and [minimum implementation plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
 govern remaining v1 work.
-The next implementation entry point is the
-[Task 4M Cartesia adapter plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md),
-which is explicitly prepared for a fresh Codex chat.
+Tasks 3M and 4M are implemented and smoke-verified with fixture-only tests. The
+current implementation entry point is the
+[Task 5M loopback studio plan](docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md).
+No live Cartesia request is authorized until the separate pre-live hardening gate
+passes and the operator explicitly approves one capped passage.
 The [codebase-wide capability audit](docs/narrator-voice-shared-capability-audit-2026-09-02.md)
 supports accepted [ADR-0009](docs/decisions/0009-share-narration-mechanics-not-policy.md),
 which permits provider-neutral narration mechanics while keeping lane policy isolated.
-No production implementation or private audio is added by those documents.
+No private audio, provider identifiers or credentials belong in this repository.
 
 ### Offline Narrator Voice operations
 
