@@ -85,9 +85,17 @@ def generation_estimate(value, confirmation_token):
 def generation_run(value):
     states = frozenset({"completed", "blocked", "failed", "unknown", "quarantined"})
     dispositions = frozenset({"denied", "released", "held", "settled", "unknown"})
+    reachable_dispositions = {
+        "completed": frozenset({"settled"}),
+        "quarantined": frozenset({"settled"}),
+        "blocked": frozenset({"denied", "released"}),
+        "failed": frozenset({"held", "settled"}),
+        "unknown": frozenset({"held", "unknown", "released", "settled"}),
+    }
     state = getattr(value.state, "value", None)
     if (state not in states or value.budget_disposition not in dispositions
-            or (state != "completed" and value.take_id is not None)):
+            or value.budget_disposition not in reachable_dispositions.get(state, ())
+            or ((state == "completed") != (value.take_id is not None))):
         raise ValueError("unsupported generation result")
     return {
         "jobId": value.job_id.value,
@@ -221,6 +229,11 @@ def page(csrf_token, health, current_episode, authorities, jobs):
             if required_recipe is not None:
                 dictionary_options = ('<option value="inherit">Inherit</option><option value="set">Use configured</option>'
                                       if defaults['dictionaryConfigured'] else '')
+                emotion_options = (
+                    '<option value="inherit" selected>Inherit</option><option value="set">Set</option><option value="omit">Omit</option>'
+                    if defaults['emotion'] is not None else
+                    '<option value="inherit">Inherit</option><option value="set">Set</option><option value="omit" selected>Omit</option>'
+                )
                 estimate_fields = (
                     expected
                     + '<input type="hidden" name="passageId" value="' + e(passage['passageId']) + '">'
@@ -229,7 +242,7 @@ def page(csrf_token, health, current_episode, authorities, jobs):
                     + field('speed', 'Speed', defaults['speed'])
                     + '<label>Volume mode<select name="volumeMode"><option value="inherit">Inherit</option><option value="set">Set</option><option value="omit">Omit</option></select></label>'
                     + field('volume', 'Volume', defaults['volume'])
-                    + '<label>Emotion mode<select name="emotionMode"><option value="inherit">Inherit</option><option value="set">Set</option><option value="omit">Omit</option></select></label>'
+                    + '<label>Emotion mode<select name="emotionMode">' + emotion_options + '</select></label>'
                     + '<label>Emotion<input name="emotion" value="' + e(defaults['emotion'] or '') + '"></label>'
                     + '<label>Dictionary mode<select name="dictionaryMode">' + dictionary_options
                     + '<option value="omit">Omit</option></select></label>'

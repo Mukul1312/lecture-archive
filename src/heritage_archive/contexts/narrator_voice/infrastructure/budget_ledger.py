@@ -19,6 +19,7 @@ from heritage_archive.kernel import (
 from heritage_archive.platform.storage.local_files import (
     PublicationEvidenceMismatch,
     SingleWriterFileLock,
+    WriterLockUnavailable,
     replace_bytes_atomically,
 )
 
@@ -189,21 +190,26 @@ class FilesystemGenerationBudgetLedger:
             path = self._ledger_path()
         except (OSError, ValidationError, TypeError, ValueError) as error:
             raise FilesystemOperationalFailure("budget ledger topology is unavailable") from error
-        with SingleWriterFileLock(self._root.writer_lock):
-            document = self._load_document(allow_missing=True)
-            if document is None:
-                document = self._empty_document()
-            reservations = self._replay_stored(document)
-            facts = document["facts"]
-            if type(facts) is not list:
-                raise FilesystemOperationalFailure("stored budget ledger facts are invalid")
-            if not append(facts, reservations):
-                return
-            try:
-                payload = canonical_json(document)
-                replace_bytes_atomically(self._root.staging, path, payload)
-            except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
-                raise FilesystemOperationalFailure("budget ledger could not be atomically replaced") from error
+        try:
+            with SingleWriterFileLock(self._root.writer_lock):
+                document = self._load_document(allow_missing=True)
+                if document is None:
+                    document = self._empty_document()
+                reservations = self._replay_stored(document)
+                facts = document["facts"]
+                if type(facts) is not list:
+                    raise FilesystemOperationalFailure("stored budget ledger facts are invalid")
+                if not append(facts, reservations):
+                    return
+                try:
+                    payload = canonical_json(document)
+                    replace_bytes_atomically(self._root.staging, path, payload)
+                except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
+                    raise FilesystemOperationalFailure("budget ledger could not be atomically replaced") from error
+        except WriterLockUnavailable:
+            raise
+        except OSError as error:
+            raise FilesystemOperationalFailure("budget ledger writer lock operation failed") from error
 
     def _load_document(self, *, allow_missing: bool) -> dict[str, JsonValue] | None:
         try:

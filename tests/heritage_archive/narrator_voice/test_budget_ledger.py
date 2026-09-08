@@ -14,6 +14,7 @@ if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
 from heritage_archive.kernel import ValidationError, canonical_json, parse_strict_json
+from heritage_archive.platform.storage.local_files import WriterLockUnavailable
 from heritage_archive.contexts.narrator_voice.application.recovery import BudgetRecoveryState
 from heritage_archive.contexts.narrator_voice.domain.errors import BudgetDenied
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -33,6 +34,53 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemGenerationBudgetLedgerTests(unittest.TestCase):
+    def test_writer_lock_io_faults_are_operational_and_contention_is_preserved(self) -> None:
+        from heritage_archive.contexts.narrator_voice.infrastructure import budget_ledger as adapter
+
+        class FaultingLock:
+            def __init__(self, phase, error):
+                self.phase = phase
+                self.error = error
+
+            def __enter__(self):
+                if self.phase == "enter":
+                    raise self.error
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                if self.phase == "exit":
+                    raise self.error
+                return False
+
+        for phase in ("enter", "exit"):
+            with self.subTest(phase=phase), self._storage_root() as root:
+                ledger = self._ledger(root)
+                error = PermissionError(f"private budget lock {phase}")
+                with patch.object(
+                    adapter, "SingleWriterFileLock", return_value=FaultingLock(phase, error)
+                ), self.assertRaises(FilesystemOperationalFailure) as caught:
+                    ledger.reserve(
+                        BudgetReservationId(uuid(1040)),
+                        CommandId(uuid(1041)),
+                        NonNegativeDecimal("1"),
+                    )
+                self.assertIs(caught.exception.__cause__, error)
+
+        with self._storage_root() as root:
+            ledger = self._ledger(root)
+            contention = WriterLockUnavailable("fixture contention")
+            with patch.object(
+                adapter,
+                "SingleWriterFileLock",
+                return_value=FaultingLock("enter", contention),
+            ), self.assertRaises(WriterLockUnavailable) as caught:
+                ledger.reserve(
+                    BudgetReservationId(uuid(1050)),
+                    CommandId(uuid(1051)),
+                    NonNegativeDecimal("1"),
+                )
+            self.assertIs(caught.exception, contention)
+
     def test_reserve_enforces_each_configured_ceiling(self) -> None:
         """Removing any one cap check would authorize an over-budget provider request."""
         cases = (

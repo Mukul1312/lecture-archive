@@ -306,16 +306,21 @@ class FilesystemAttemptWorkspaceStore:
             path = _workspace_path(self._root, workspace.attempt_kind, workspace.attempt_id.value, create_directory=True)
         except (OSError, ValidationError, TypeError, ValueError) as error:
             raise FilesystemOperationalFailure("attempt workspace topology is unavailable") from error
-        with SingleWriterFileLock(self._root.writer_lock):
-            existing = self.load(workspace.attempt_id)
-            if existing == workspace:
-                return
-            if existing is not None:
-                _validate_workspace_progression(existing, workspace)
-            try:
-                replace_bytes_atomically(self._root.staging, path, encode_schema_v1(workspace))
-            except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
-                raise FilesystemOperationalFailure("attempt workspace evidence cannot be durably replaced") from error
+        try:
+            with SingleWriterFileLock(self._root.writer_lock):
+                existing = self.load(workspace.attempt_id)
+                if existing == workspace:
+                    return
+                if existing is not None:
+                    _validate_workspace_progression(existing, workspace)
+                try:
+                    replace_bytes_atomically(self._root.staging, path, encode_schema_v1(workspace))
+                except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
+                    raise FilesystemOperationalFailure("attempt workspace evidence cannot be durably replaced") from error
+        except WriterLockUnavailable:
+            raise
+        except OSError as error:
+            raise FilesystemOperationalFailure("attempt workspace writer lock operation failed") from error
 
 
 class FilesystemAttemptWorkspaceVerifier:

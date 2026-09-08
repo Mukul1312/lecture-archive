@@ -60,6 +60,7 @@ from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence
     FilesystemAttemptWorkspaceVerifier,
     FilesystemProviderEventVerifier,
 )
+from heritage_archive.platform.storage.local_files import WriterLockUnavailable
 from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_failures import FilesystemOperationalFailure
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import (
@@ -74,6 +75,50 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemEvidenceContracts(unittest.TestCase):
+    def test_workspace_writer_lock_io_faults_are_operational_and_contention_is_preserved(self) -> None:
+        from heritage_archive.contexts.narrator_voice.infrastructure import filesystem_evidence as adapter
+
+        class FaultingLock:
+            def __init__(self, phase, error):
+                self.phase = phase
+                self.error = error
+
+            def __enter__(self):
+                if self.phase == "enter":
+                    raise self.error
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                if self.phase == "exit":
+                    raise self.error
+                return False
+
+        publication = PublishedArtifact(
+            ArtifactRef(ArtifactId(uuid(343)), digest("workspace lock audio"), 10, "audio/wav"),
+            SafeRelativeArtifactPath("takes/workspace-lock.wav"), NOW,
+        )
+        workspace = self._published_workspace(publication)
+        for phase in ("enter", "exit"):
+            with self.subTest(phase=phase), self._storage_root() as root:
+                store = FilesystemAttemptWorkspaceStore(root)
+                error = PermissionError(f"private workspace lock {phase}")
+                with patch.object(
+                    adapter, "SingleWriterFileLock", return_value=FaultingLock(phase, error)
+                ), self.assertRaises(FilesystemOperationalFailure) as caught:
+                    store.save(workspace)
+                self.assertIs(caught.exception.__cause__, error)
+
+        with self._storage_root() as root:
+            store = FilesystemAttemptWorkspaceStore(root)
+            contention = WriterLockUnavailable("fixture contention")
+            with patch.object(
+                adapter,
+                "SingleWriterFileLock",
+                return_value=FaultingLock("enter", contention),
+            ), self.assertRaises(WriterLockUnavailable) as caught:
+                store.save(workspace)
+            self.assertIs(caught.exception, contention)
+
     def test_workspace_stored_facts_and_storage_faults_are_operational_but_candidate_validation_is_not(self) -> None:
         with self._storage_root() as root:
             publication = PublishedArtifact(

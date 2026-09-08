@@ -604,10 +604,15 @@ class WebGenerationPresenterTests(unittest.TestCase):
         attempt_id = GenerationAttemptId(uuid(701))
         for state, disposition in (
             (AttemptState.COMPLETED, "settled"),
+            (AttemptState.BLOCKED, "denied"),
             (AttemptState.BLOCKED, "released"),
             (AttemptState.FAILED, "held"),
+            (AttemptState.FAILED, "settled"),
+            (AttemptState.UNKNOWN, "held"),
             (AttemptState.UNKNOWN, "unknown"),
-            (AttemptState.QUARANTINED, "denied"),
+            (AttemptState.UNKNOWN, "released"),
+            (AttemptState.UNKNOWN, "settled"),
+            (AttemptState.QUARANTINED, "settled"),
         ):
             with self.subTest(state=state):
                 result = GenerationRunResult(
@@ -647,6 +652,27 @@ class WebGenerationPresenterTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             presenters.generation_run(impossible)
+
+    def test_generation_result_rejects_unreachable_take_and_budget_combinations(self):
+        job_id = NarrationJobId(uuid(707))
+        attempt_id = GenerationAttemptId(uuid(708))
+        take_id = TakeId(uuid(709))
+        impossible = (
+            (AttemptState.COMPLETED, None, "settled"),
+            (AttemptState.COMPLETED, take_id, "denied"),
+            (AttemptState.QUARANTINED, None, "denied"),
+            (AttemptState.BLOCKED, None, "held"),
+            (AttemptState.FAILED, None, "released"),
+            (AttemptState.UNKNOWN, None, "denied"),
+        )
+
+        for state, take, disposition in impossible:
+            with self.subTest(state=state, disposition=disposition):
+                result = GenerationRunResult(
+                    CommandId(uuid(710)), job_id, 8, attempt_id, state, take, disposition,
+                )
+                with self.assertRaises(ValueError):
+                    presenters.generation_run(result)
 
     def test_page_offers_estimate_ephemeral_generate_and_explicit_recovery_without_private_fields(self):
         job_id = NarrationJobId(uuid(710))
@@ -701,8 +727,29 @@ class WebGenerationPresenterTests(unittest.TestCase):
             markup,
         )
         self.assertIn("state unknown", markup)
+        self.assertIn(
+            '<select name="emotionMode"><option value="inherit" selected>Inherit</option>',
+            markup,
+        )
         for private in ("preview_digest", "authority_record_id", "artifactLocation", "renderedTranscript", "workspacePath"):
             self.assertNotIn(private, markup)
+
+        no_emotion_job = {
+            **job,
+            "defaults": {**job["defaults"], "emotion": None},
+        }
+        no_emotion_markup = presenters.page(
+            CSRF,
+            {"healthy": True, "checkedFileCount": 0, "issueCodes": [], "backupGuidance": "fixture"},
+            None,
+            [],
+            [(no_emotion_job, status)],
+        ).decode("utf-8")
+        self.assertIn(
+            '<select name="emotionMode"><option value="inherit">Inherit</option>'
+            '<option value="set">Set</option><option value="omit" selected>Omit</option>',
+            no_emotion_markup,
+        )
 
 
 class StudioJavascriptTests(unittest.TestCase):
