@@ -119,6 +119,54 @@ class FilesystemEvidenceContracts(unittest.TestCase):
                 store.save(workspace)
             self.assertIs(caught.exception, contention)
 
+    def test_workspace_lock_exit_io_does_not_mask_candidate_or_typed_body_failures(self) -> None:
+        from heritage_archive.contexts.narrator_voice.infrastructure import filesystem_evidence as adapter
+
+        class ExitFailingLock:
+            def __init__(self, error):
+                self.error = error
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                raise self.error
+
+        publication = PublishedArtifact(
+            ArtifactRef(ArtifactId(uuid(344)), digest("workspace combined failure"), 10, "audio/wav"),
+            SafeRelativeArtifactPath("takes/workspace-combined.wav"), NOW,
+        )
+        existing = self._published_workspace(publication)
+        candidate = replace(existing, state=AttemptState.EXTERNAL_WORK_STARTED)
+        with self.subTest(body="ValidationError"), self._storage_root() as root:
+            store = FilesystemAttemptWorkspaceStore(root)
+            store.save(existing)
+            exit_error = PermissionError("private workspace lock exit")
+            with patch.object(
+                adapter,
+                "SingleWriterFileLock",
+                return_value=ExitFailingLock(exit_error),
+            ), self.assertRaises(ValidationError) as caught:
+                store.save(candidate)
+            self.assertNotIsInstance(caught.exception, FilesystemOperationalFailure)
+
+        for body_error in (
+            FilesystemOperationalFailure("pre-existing workspace operational failure"),
+            WriterLockUnavailable("workspace body contention"),
+        ):
+            with self.subTest(body=type(body_error).__name__), self._storage_root() as root:
+                store = FilesystemAttemptWorkspaceStore(root)
+                exit_error = PermissionError("private workspace lock exit")
+                with patch.object(
+                    adapter,
+                    "SingleWriterFileLock",
+                    return_value=ExitFailingLock(exit_error),
+                ), patch.object(
+                    store, "load", side_effect=body_error,
+                ), self.assertRaises(type(body_error)) as caught:
+                    store.save(existing)
+                self.assertIs(caught.exception, body_error)
+
     def test_workspace_stored_facts_and_storage_faults_are_operational_but_candidate_validation_is_not(self) -> None:
         with self._storage_root() as root:
             publication = PublishedArtifact(

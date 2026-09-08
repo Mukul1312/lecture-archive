@@ -81,6 +81,55 @@ class FilesystemGenerationBudgetLedgerTests(unittest.TestCase):
                 )
             self.assertIs(caught.exception, contention)
 
+    def test_writer_lock_exit_io_does_not_mask_budget_or_typed_body_failures(self) -> None:
+        from heritage_archive.contexts.narrator_voice.infrastructure import budget_ledger as adapter
+
+        class ExitFailingLock:
+            def __init__(self, error):
+                self.error = error
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                raise self.error
+
+        with self.subTest(body="BudgetDenied"), self._storage_root() as root:
+            ledger = self._ledger(root, per_take="0")
+            exit_error = PermissionError("private budget lock exit")
+            with patch.object(
+                adapter,
+                "SingleWriterFileLock",
+                return_value=ExitFailingLock(exit_error),
+            ), self.assertRaises(BudgetDenied) as caught:
+                ledger.reserve(
+                    BudgetReservationId(uuid(1060)),
+                    CommandId(uuid(1061)),
+                    NonNegativeDecimal("1"),
+                )
+            self.assertNotIsInstance(caught.exception, FilesystemOperationalFailure)
+
+        for body_error in (
+            FilesystemOperationalFailure("pre-existing budget operational failure"),
+            WriterLockUnavailable("budget body contention"),
+        ):
+            with self.subTest(body=type(body_error).__name__), self._storage_root() as root:
+                ledger = self._ledger(root)
+                exit_error = PermissionError("private budget lock exit")
+                with patch.object(
+                    adapter,
+                    "SingleWriterFileLock",
+                    return_value=ExitFailingLock(exit_error),
+                ), patch.object(
+                    ledger, "_load_document", side_effect=body_error,
+                ), self.assertRaises(type(body_error)) as caught:
+                    ledger.reserve(
+                        BudgetReservationId(uuid(1070)),
+                        CommandId(uuid(1071)),
+                        NonNegativeDecimal("1"),
+                    )
+                self.assertIs(caught.exception, body_error)
+
     def test_reserve_enforces_each_configured_ceiling(self) -> None:
         """Removing any one cap check would authorize an over-budget provider request."""
         cases = (
