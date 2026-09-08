@@ -21,6 +21,7 @@ from heritage_archive.kernel import (
 from heritage_archive.platform.storage.local_files import (
     PublicationEvidenceMismatch,
     SingleWriterFileLock,
+    WriterLockUnavailable,
     publish_bytes_no_clobber,
     replace_bytes_atomically,
 )
@@ -55,6 +56,7 @@ from ..domain.ids import (
     NarrationAssemblyAttemptId,
 )
 from ..domain.values import SafeRelativeArtifactPath
+from .filesystem_failures import FilesystemOperationalFailure
 from .local_root import LocalNarrationRoot
 
 
@@ -86,34 +88,41 @@ class FilesystemArtifactStore:
             raise ValidationError("artifact publication payload must be bytes")
         _validate_media_type(media_type)
         _validate_publication_time(published_at)
-        with SingleWriterFileLock(self._root.writer_lock):
-            destination = _prepare_publish_destination(self._root, location)
-            if os.path.lexists(destination):
-                raise ValidationError("immutable artifact destination is already occupied")
-            artifact_id = self._identifiers.new_id(ArtifactId)
-            if type(artifact_id) is not ArtifactId:
-                raise ValidationError("identifier source did not return an ArtifactId")
-            try:
+        try:
+            with SingleWriterFileLock(self._root.writer_lock):
+                destination = _prepare_publish_destination(self._root, location)
+                if os.path.lexists(destination):
+                    raise FilesystemOperationalFailure("immutable artifact destination is already occupied")
+                artifact_id = self._identifiers.new_id(ArtifactId)
+                if type(artifact_id) is not ArtifactId:
+                    raise ValidationError("identifier source did not return an ArtifactId")
                 evidence = publish_bytes_no_clobber(
                     self._root.staging,
                     destination,
                     payload,
                     staging_suffix=".artifact",
                 )
-            except FileExistsError as error:
-                raise ValidationError("immutable artifact destination is already occupied") from error
-            except (OSError, PublicationEvidenceMismatch) as error:
-                raise ValidationError("immutable artifact publication failed") from error
-        return PublishedArtifact(
-            ArtifactRef(
-                artifact_id,
-                ContentDigest("sha256", evidence.sha256_hex),
-                evidence.byte_length,
-                media_type,
-            ),
-            location,
-            published_at,
-        )
+        except WriterLockUnavailable:
+            raise
+        except FilesystemOperationalFailure:
+            raise
+        except FileExistsError as error:
+            raise FilesystemOperationalFailure("immutable artifact destination is already occupied") from error
+        except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("immutable artifact publication failed") from error
+        try:
+            return PublishedArtifact(
+                ArtifactRef(
+                    artifact_id,
+                    ContentDigest("sha256", evidence.sha256_hex),
+                    evidence.byte_length,
+                    media_type,
+                ),
+                location,
+                published_at,
+            )
+        except (ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("published artifact evidence could not be bound") from error
 
 
 class FilesystemArtifactEvidenceVerifier:
@@ -274,24 +283,29 @@ class FilesystemAttemptWorkspaceStore:
         attempt_id: GenerationAttemptId | NarrationAssemblyAttemptId | EpisodeAssemblyAttemptId,
     ) -> AttemptWorkspaceEvidence | None:
         kind = _attempt_kind_for_id(attempt_id)
-        path = _workspace_path(self._root, kind, attempt_id.value, create_directory=False)
-        if not os.path.lexists(path):
-            return None
-        _reject_existing_reparse_point(path)
         try:
+            path = _workspace_path(self._root, kind, attempt_id.value, create_directory=False)
+            if not os.path.lexists(path):
+                return None
+            _reject_existing_reparse_point(path)
             if not path.is_file():
                 raise ValidationError("attempt workspace evidence must be a regular file")
             workspace = _decode_workspace_schema_v1(path.read_bytes())
-        except (OSError, TypeError, ValueError) as error:
-            raise ValidationError("attempt workspace evidence is unreadable or noncanonical") from error
-        if workspace.attempt_kind is not kind or workspace.attempt_id != attempt_id:
-            raise ValidationError("attempt workspace filename and typed evidence do not match")
-        return workspace
+            if workspace.attempt_kind is not kind or workspace.attempt_id != attempt_id:
+                raise ValidationError("attempt workspace filename and typed evidence do not match")
+            return workspace
+        except FilesystemOperationalFailure:
+            raise
+        except (OSError, ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("attempt workspace evidence is unavailable or invalid") from error
 
     def save(self, workspace: AttemptWorkspaceEvidence) -> None:
         if type(workspace) is not AttemptWorkspaceEvidence:
             raise ValidationError("workspace store requires AttemptWorkspaceEvidence")
-        path = _workspace_path(self._root, workspace.attempt_kind, workspace.attempt_id.value, create_directory=True)
+        try:
+            path = _workspace_path(self._root, workspace.attempt_kind, workspace.attempt_id.value, create_directory=True)
+        except (OSError, ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("attempt workspace topology is unavailable") from error
         with SingleWriterFileLock(self._root.writer_lock):
             existing = self.load(workspace.attempt_id)
             if existing == workspace:
@@ -300,8 +314,8 @@ class FilesystemAttemptWorkspaceStore:
                 _validate_workspace_progression(existing, workspace)
             try:
                 replace_bytes_atomically(self._root.staging, path, encode_schema_v1(workspace))
-            except (OSError, PublicationEvidenceMismatch) as error:
-                raise ValidationError("attempt workspace evidence cannot be durably replaced") from error
+            except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
+                raise FilesystemOperationalFailure("attempt workspace evidence cannot be durably replaced") from error
 
 
 class FilesystemAttemptWorkspaceVerifier:

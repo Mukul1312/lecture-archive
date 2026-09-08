@@ -2,7 +2,9 @@
 from html import escape
 import json
 
+from ...domain.evidence import AttemptState
 from ...domain.values import BreakControl, SpeedControl, VolumeControl, SpellingControl
+from .generation import RECONCILABLE_GENERATION_STATES
 
 BACKUP_GUIDANCE = "backup history is not persisted; use CLI backup and verify-backup"
 _ISSUE_CODES = frozenset({"layout_missing", "path_reparse", "path_nonregular", "path_unreadable",
@@ -61,6 +63,60 @@ def preview(value):
     return {"previewId": value.preview_id.value, "baseJobRevision": value.base_job_revision,
             "canonicalProjection": value.canonical_projection, "billableCharacters": value.billable_characters,
             "estimatedUsage": value.estimated_usage, "issuedAt": value.issued_at.isoformat()}
+
+
+def generation_estimate(value, confirmation_token):
+    preview_value = value.preview
+    return {
+        "jobId": value.job_id.value,
+        "revision": value.revision,
+        "previewId": preview_value.preview_id.value,
+        "baseJobRevision": preview_value.base_job_revision,
+        "passageId": preview_value.passage_id.value,
+        "recipeId": preview_value.recipe_id.value,
+        "canonicalProjection": preview_value.canonical_projection,
+        "billableCharacters": preview_value.billable_characters,
+        "estimatedUsage": preview_value.estimated_usage,
+        "issuedAt": preview_value.issued_at.isoformat(),
+        "confirmationToken": confirmation_token,
+    }
+
+
+def generation_run(value):
+    states = frozenset({"completed", "blocked", "failed", "unknown", "quarantined"})
+    dispositions = frozenset({"denied", "released", "held", "settled", "unknown"})
+    state = getattr(value.state, "value", None)
+    if (state not in states or value.budget_disposition not in dispositions
+            or (state != "completed" and value.take_id is not None)):
+        raise ValueError("unsupported generation result")
+    return {
+        "jobId": value.job_id.value,
+        "revision": value.revision,
+        "attemptId": value.attempt_id.value,
+        "state": state,
+        "takeId": None if value.take_id is None else value.take_id.value,
+        "budgetDisposition": value.budget_disposition,
+    }
+
+
+def generation_status(value, *, busy):
+    if type(busy) is not bool:
+        raise ValueError("generation busy snapshot must be boolean")
+    attempts = []
+    for attempt in value.generation_attempts:
+        if type(attempt.state) is not AttemptState:
+            raise ValueError("unsupported generation attempt state")
+        attempts.append({
+            "attemptId": attempt.attempt_id.value,
+            "passageId": attempt.passage_id.value,
+            "state": attempt.state.value,
+            "submission": attempt.submission.value,
+            "terminal": attempt.terminal,
+            "needsReconciliation": attempt.needs_reconciliation,
+            "outputReady": attempt.output_ready,
+            "reconciliationAvailable": attempt.state in RECONCILABLE_GENERATION_STATES and not busy,
+        })
+    return {"jobId": value.job_id.value, "revision": value.revision, "attempts": attempts}
 
 
 def e(value):
@@ -123,7 +179,7 @@ def page(csrf_token, health, current_episode, authorities, jobs):
     if current_episode is not None:
         parts.append(form('/api/v1/jobs/intro', 'intro', '<input type="hidden" name="expectedEpisodeRevision" value="' + e(current_episode['revision']) + '">' + field('passages', 'Intro passages (separate with a blank line)', textarea=True), 'Prepare intro'))
     parts.append('</section>')
-    for job in jobs:
+    for job, generation in jobs:
         parts.append('<section><h2>' + e(job['lane']) + ' job ' + e(job['jobId']) + '</h2><p>Revision ' + e(job['revision']) + '</p>')
         base = '/api/v1/jobs/' + job['jobId']
         expected = revision(job['revision'])
@@ -158,6 +214,48 @@ def page(csrf_token, health, current_episode, authorities, jobs):
                 parts.append('<p>Historical preview ' + e(latest['previewId']) + '; base revision ' + e(latest['baseJobRevision'])
                     + '; billable characters ' + e(latest['billableCharacters']) + '; estimated usage ' + e(latest['estimatedUsage'])
                     + '; issued ' + e(latest['issuedAt']) + '. A fresh estimate is required before generation.</p><pre>' + e(latest['canonicalProjection']) + '</pre>')
+            required_recipe = next(
+                (recipe for recipe in passage['recipes'] if recipe['current'] and recipe['required']),
+                None,
+            )
+            if required_recipe is not None:
+                dictionary_options = ('<option value="inherit">Inherit</option><option value="set">Use configured</option>'
+                                      if defaults['dictionaryConfigured'] else '')
+                estimate_fields = (
+                    expected
+                    + '<input type="hidden" name="passageId" value="' + e(passage['passageId']) + '">'
+                    + '<input type="hidden" name="recipeId" value="' + e(required_recipe['recipeId']) + '">'
+                    + '<label>Speed mode<select name="speedMode"><option value="inherit">Inherit</option><option value="set">Set</option><option value="omit">Omit</option></select></label>'
+                    + field('speed', 'Speed', defaults['speed'])
+                    + '<label>Volume mode<select name="volumeMode"><option value="inherit">Inherit</option><option value="set">Set</option><option value="omit">Omit</option></select></label>'
+                    + field('volume', 'Volume', defaults['volume'])
+                    + '<label>Emotion mode<select name="emotionMode"><option value="inherit">Inherit</option><option value="set">Set</option><option value="omit">Omit</option></select></label>'
+                    + '<label>Emotion<input name="emotion" value="' + e(defaults['emotion'] or '') + '"></label>'
+                    + '<label>Dictionary mode<select name="dictionaryMode">' + dictionary_options
+                    + '<option value="omit">Omit</option></select></label>'
+                )
+                parts.append('<div data-generation-panel>'
+                    + form(base + '/estimate', 'estimate', estimate_fields, 'Estimate generation')
+                    + '<div data-estimate-result hidden><p>Canonical provider projection:</p><pre data-estimate-projection></pre>'
+                    + '<p>Billable characters: <span data-estimate-billable></span>; estimated usage: '
+                    + '<span data-estimate-usage></span>.</p></div>'
+                    + '<form method="post" action="' + e(base + '/generate')
+                    + '" data-kind="generate" hidden><input type="hidden" name="confirmationToken" value="">'
+                    + '<button type="submit">Generate this confirmed take once</button></form></div>')
             parts.append('</article>')
+        parts.append('<section><h3>Generation attempts</h3>')
+        if not generation['attempts']:
+            parts.append('<p>No generation attempts.</p>')
+        for attempt in generation['attempts']:
+            parts.append('<article><p>Attempt ' + e(attempt['attemptId']) + '; passage ' + e(attempt['passageId'])
+                + '; state ' + e(attempt['state']) + '; submission ' + e(attempt['submission'])
+                + '; terminal ' + e(attempt['terminal']) + '; needs reconciliation '
+                + e(attempt['needsReconciliation']) + '; output ready ' + e(attempt['outputReady']) + '.</p>')
+            if attempt['reconciliationAvailable']:
+                parts.append(form(base + '/generation-attempts/' + attempt['attemptId'] + '/reconcile',
+                                  'reconcile', revision(generation['revision']),
+                                  'Reconcile from durable evidence'))
+            parts.append('</article>')
+        parts.append('</section>')
         parts.append('</section>')
     return document(csrf_token, ''.join(parts))

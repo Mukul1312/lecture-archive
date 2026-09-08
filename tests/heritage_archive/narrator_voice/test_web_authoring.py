@@ -19,6 +19,7 @@ from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_reposito
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.infrastructure.operations import initialize_local_studio
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.app import NarratorWebApplication
+from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.generation import ProcessGenerationControl
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.security import ProcessSecurity
 from heritage_archive.platform.web import WebRequest
 from tests.heritage_archive.narrator_voice.test_cartesia_gateway import Identifiers
@@ -65,7 +66,8 @@ class WebAuthoringTests(unittest.TestCase):
         self.studio = live.build_live_narration(self.root, process_principal=PRINCIPAL, identifiers=self.ids)
         self.addCleanup(self.studio.close)
         self.bindings = web.build_authoring_bindings(self.studio.policies, PRINCIPAL)
-        self.routes = NarrationAuthoringRoutes(self.studio.handlers, self.bindings, self.ids)
+        self.generation = ProcessGenerationControl(SESSION)
+        self.routes = NarrationAuthoringRoutes(self.studio.handlers, self.bindings, self.ids, self.generation)
         self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=self.routes, render_root=self.routes.render_root)
 
     def post(self, path, body, status=200, code=None):
@@ -129,7 +131,7 @@ class WebAuthoringTests(unittest.TestCase):
         def forbidden(command):
             self.fail("NUL input reached an authoring handler")
         handlers = replace(self.studio.handlers, prepare_diary=forbidden, revise_passage_text=forbidden, validate_recipe=forbidden)
-        routes = NarrationAuthoringRoutes(handlers, self.bindings, self.ids)
+        routes = NarrationAuthoringRoutes(handlers, self.bindings, self.ids, self.generation)
         self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=routes)
         path = "/api/v1/jobs/" + job + "/passages/" + passage
         cases = (("/api/v1/jobs/diary", {"passages": [{"text": "AB\0CD"}]}),
@@ -201,7 +203,7 @@ class WebAuthoringTests(unittest.TestCase):
         from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.routes import NarrationAuthoringRoutes
         restarted = live.build_live_narration(self.root, process_principal="new-fixture-principal", identifiers=Identifiers())
         self.addCleanup(restarted.close)
-        routes = NarrationAuthoringRoutes(restarted.handlers, web.build_authoring_bindings(restarted.policies, "new-fixture-principal"), Identifiers())
+        routes = NarrationAuthoringRoutes(restarted.handlers, web.build_authoring_bindings(restarted.policies, "new-fixture-principal"), Identifiers(), ProcessGenerationControl("c" * 64))
         app = NarratorWebApplication(ProcessSecurity("c" * 64, "e" * 64), dispatch=routes, render_root=routes.render_root)
         self.assertNotIn(escape(TEXT, quote=True).encode(), app(WebRequest("GET", "/", (HOST, POST_HEADERS[3]))).body)
         current = app(WebRequest("GET", "/", (HOST, (b"cookie", b"narrator_session=" + b"c" * 64))))
@@ -284,7 +286,7 @@ class WebAuthoringTests(unittest.TestCase):
             self.post("/api/v1/authority/lane_b", {**AUTHORITY, key: "private"}, 400, "invalid_json")
         for value in ("2020-01-01", "2020-01-01T00:00Z", "2020-01-01T00:00:00+01:00", "2020-01-01T00:00:00.1234567Z"):
             self.post("/api/v1/authority/lane_c", {**AUTHORITY, "validFrom": value}, 400, "invalid_input")
-        for path in ("/api/v1/authority/lane_a", base + "/passages/" + passage + "/defaults", base + "/estimate", base + "/generate"):
+        for path in ("/api/v1/authority/lane_a", base + "/passages/" + passage + "/defaults"):
             self.post(path, {}, 404, "not_found")
         self.assertEqual(self.editor(job).revision, 1)
 
@@ -300,7 +302,7 @@ class WebAuthoringTests(unittest.TestCase):
                 raise AssertionError("fixture release missing")
             return real(command)
         handlers = replace(self.studio.handlers, prepare_episode=held)
-        routes = NarrationAuthoringRoutes(handlers, self.bindings, self.ids)
+        routes = NarrationAuthoringRoutes(handlers, self.bindings, self.ids, self.generation)
         self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=routes)
         with ThreadPoolExecutor(max_workers=2) as executor:
             first = executor.submit(self.post, "/api/v1/episode", {})
@@ -389,10 +391,10 @@ class WebAuthoringTests(unittest.TestCase):
                                      (KeyError("private"), 500, "internal_error")):
             def fail(command):
                 raise error
-            routes = NarrationAuthoringRoutes(replace(self.studio.handlers, revise_passage_text=fail), self.bindings, self.ids)
+            routes = NarrationAuthoringRoutes(replace(self.studio.handlers, revise_passage_text=fail), self.bindings, self.ids, self.generation)
             self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=routes)
             self.post(path + "/text", {"expectedRevision": 1, "text": "Changed fixture"}, status, code)
-        routes = NarrationAuthoringRoutes(self.studio.handlers, replace(self.bindings, dictionary=lambda lane: None), self.ids)
+        routes = NarrationAuthoringRoutes(self.studio.handlers, replace(self.bindings, dictionary=lambda lane: None), self.ids, self.generation)
         self.app = NarratorWebApplication(ProcessSecurity(SESSION, CSRF), dispatch=routes)
         self.post(path + "/dictionary/require", {"expectedRevision": 1}, 422, "dictionary_unavailable")
 

@@ -32,7 +32,9 @@ from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_reposito
     FilesystemAuthorizationRecordRepository,
     FilesystemDiaryEpisodeRepository,
     FilesystemNarrationJobRepository,
+    FilesystemRepositoryFailure,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_failures import FilesystemOperationalFailure
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from tests.heritage_archive.narrator_voice.fixtures import (
     NOW,
@@ -54,6 +56,7 @@ class FilesystemRepositoryContracts(unittest.TestCase):
         self.assertTrue(hasattr(fs, "FilesystemRepositoryFailure"))
         failure = fs.FilesystemRepositoryFailure
         self.assertTrue(issubclass(failure, ValidationError))
+        self.assertTrue(issubclass(failure, FilesystemOperationalFailure))
         with self._storage_root() as root:
             repository = FilesystemDiaryEpisodeRepository(root)
             episode = DiaryEpisode.prepare(DiaryEpisodeId(uuid(1280)), NOW)
@@ -131,7 +134,7 @@ class FilesystemRepositoryContracts(unittest.TestCase):
                     else:
                         first.unlink()
                         first.mkdir()
-                    with self.assertRaises(ValidationError):
+                    with self.assertRaises(FilesystemRepositoryFailure):
                         repository.list_ids()
 
     def test_discovery_rejects_reparse_entries_without_following_them(self) -> None:
@@ -152,7 +155,7 @@ class FilesystemRepositoryContracts(unittest.TestCase):
                 else:
                     link.symlink_to(target, target_is_directory=True)
                 try:
-                    with self.assertRaises(ValidationError):
+                    with self.assertRaises(FilesystemRepositoryFailure):
                         repository.list_ids()
                 finally:
                     if os.name == "nt":

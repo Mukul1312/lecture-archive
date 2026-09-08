@@ -13,7 +13,7 @@ SOURCE_ROOT = Path(__file__).resolve().parents[3] / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from heritage_archive.kernel import ValidationError, parse_strict_json
+from heritage_archive.kernel import ValidationError, canonical_json, parse_strict_json
 from heritage_archive.contexts.narrator_voice.application.recovery import BudgetRecoveryState
 from heritage_archive.contexts.narrator_voice.domain.errors import BudgetDenied
 from heritage_archive.contexts.narrator_voice.domain.ids import (
@@ -24,6 +24,7 @@ from heritage_archive.contexts.narrator_voice.domain.values import NonNegativeDe
 from heritage_archive.contexts.narrator_voice.infrastructure.budget_ledger import (
     FilesystemGenerationBudgetLedger,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_failures import FilesystemOperationalFailure
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from tests.heritage_archive.narrator_voice.fixtures import uuid
 
@@ -167,9 +168,9 @@ class FilesystemGenerationBudgetLedgerTests(unittest.TestCase):
             path = root.operations / "budget-ledger.json"
             path.write_bytes(b'{"schema_version":1,"facts":[')
             corrupt = path.read_bytes()
-            with self.assertRaises(ValidationError):
+            with self.assertRaises(FilesystemOperationalFailure):
                 ledger.read(BudgetReservationId(uuid(901)))
-            with self.assertRaises(ValidationError):
+            with self.assertRaises(FilesystemOperationalFailure):
                 ledger.reserve(
                     BudgetReservationId(uuid(902)),
                     CommandId(uuid(903)),
@@ -183,7 +184,7 @@ class FilesystemGenerationBudgetLedgerTests(unittest.TestCase):
                 CommandId(uuid(905)),
                 NonNegativeDecimal("1"),
             )
-            with self.assertRaises(ValidationError):
+            with self.assertRaises(FilesystemOperationalFailure):
                 self._ledger(root, project_id="different-project").read(
                     BudgetReservationId(uuid(904))
                 )
@@ -200,11 +201,32 @@ class FilesystemGenerationBudgetLedgerTests(unittest.TestCase):
                 "heritage_archive.contexts.narrator_voice.infrastructure.budget_ledger.replace_bytes_atomically",
                 side_effect=OSError("simulated replacement failure"),
             ):
-                with self.assertRaises(ValidationError):
+                with self.assertRaises(FilesystemOperationalFailure):
                     ledger.settle(reservation, NonNegativeDecimal("2"))
 
             self.assertEqual(self._ledger_bytes(root), previous)
             self.assertEqual(ledger.read(reservation), BudgetRecoveryState.RESERVED)
+
+    def test_stored_replay_denial_is_operational_but_new_denial_and_caller_validation_are_not(self) -> None:
+        with self._storage_root() as root:
+            ledger = self._ledger(root, per_take="5")
+            path = root.operations / "budget-ledger.json"
+            ledger.reserve(BudgetReservationId(uuid(1010)), CommandId(uuid(1011)), NonNegativeDecimal("1"))
+            document = parse_strict_json(path.read_bytes())
+            document["facts"][0]["usage"] = "6"
+            path.write_bytes(canonical_json(document))
+
+            with self.assertRaises(FilesystemOperationalFailure):
+                ledger.read(BudgetReservationId(uuid(1010)))
+
+        with self._storage_root() as root:
+            ledger = self._ledger(root, per_take="5")
+            with self.assertRaises(BudgetDenied) as denied:
+                ledger.reserve(BudgetReservationId(uuid(1020)), CommandId(uuid(1021)), NonNegativeDecimal("6"))
+            self.assertNotIsInstance(denied.exception, FilesystemOperationalFailure)
+            with self.assertRaises(ValidationError) as invalid:
+                ledger.reserve("not-an-id", CommandId(uuid(1022)), NonNegativeDecimal("1"))
+            self.assertNotIsInstance(invalid.exception, FilesystemOperationalFailure)
 
     @staticmethod
     def _ledger(

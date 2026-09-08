@@ -19,10 +19,11 @@ from ..domain.diary_episode import DiaryEpisode, DiaryEpisodeSnapshot
 from ..domain.errors import DomainInvariantError
 from ..domain.ids import AuthorizationRecordId, DiaryEpisodeId, NarrationJobId
 from ..domain.narration_job import NarrationJob, NarrationJobSnapshot
+from .filesystem_failures import FilesystemOperationalFailure
 from .local_root import LocalNarrationRoot, _is_reparse_point
 
 
-class FilesystemRepositoryFailure(ValidationError):
+class FilesystemRepositoryFailure(FilesystemOperationalFailure):
     """Stored evidence or publication failed; not caller authoring validation."""
 
 

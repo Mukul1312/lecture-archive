@@ -6,6 +6,7 @@ from importlib.resources import files
 from heritage_archive.platform.web.loopback import serve_loopback
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.app import NarratorWebApplication
+from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.generation import ProcessGenerationControl
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.security import ProcessSecurity
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.routes import AuthoringBindings, NarrationAuthoringRoutes
 from heritage_archive.contexts.narrator_voice.domain.values import AuthorityScope, AuthorityOperation, Lane
@@ -35,10 +36,16 @@ def serve_narration(root: LocalNarrationRoot) -> None:
     while csrf_token in (process_principal, session_token):
         csrf_token = token_hex(32)
     security = ProcessSecurity(session_token, csrf_token)
+    generation = ProcessGenerationControl(session_token)
     identifiers = _Identifiers()
     studio = build_live_narration(root, process_principal=process_principal, identifiers=identifiers)
     try:
-        routes = NarrationAuthoringRoutes(studio.handlers, build_authoring_bindings(studio.policies, process_principal), identifiers)
+        routes = NarrationAuthoringRoutes(
+            studio.handlers,
+            build_authoring_bindings(studio.policies, process_principal),
+            identifiers,
+            generation,
+        )
         package = files("heritage_archive.contexts.narrator_voice.infrastructure.loopback_web")
         assets = {"/assets/studio.css": package.joinpath("assets", "studio.css").read_bytes(),
                   "/assets/studio.js": package.joinpath("assets", "studio.js").read_bytes()}

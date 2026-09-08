@@ -14,13 +14,17 @@ from heritage_archive.platform.web import WebRequest, WebResponse
 from ...application import commands as c, results as r
 from ...application.ports import IdentifierSource
 from ...domain.errors import AuthorizationDenied, DomainInvariantError, NotFound, RevisionConflict
-from ...domain.ids import AuthorizationRecordId, CommandId, DiaryEpisodeId, NarrationJobId, PassageId, PassageRenderRecipeId
+from ...domain.ids import (AuthorizationRecordId, CommandId, DiaryEpisodeId, GenerationAttemptId,
+                          NarrationJobId, PassageId, PassageRenderRecipeId)
 from ...domain.narration_job import PassageDraft
 from ...domain.values import (AuthorityScope, BreakControl, DeliveryControlDefaults, DictionaryBinding,
-                             FixedTwoDecimal, Lane, PassageText, SpeedControl, SpellingControl, TextSpan, VolumeControl)
-from ..filesystem_repositories import FilesystemRepositoryFailure
+                             FixedTwoDecimal, Lane, PassageText, SafeRelativeArtifactPath, SpeedControl,
+                             SpellingControl, TextSpan, VolumeControl)
+from ..filesystem_failures import FilesystemOperationalFailure
 from ..operations import DoctorResult
 from . import presenters
+from .generation import (ConfirmationCapacityReached, ConfirmationUnavailable,
+                         ProcessGenerationControl, RECONCILABLE_GENERATION_STATES)
 from .security import WebInputError, json_error, json_success, parse_json_object
 
 
@@ -40,6 +44,10 @@ class AuthoringHandlers(Protocol):
     validate_recipe: Callable[[c.ValidateRenderRecipeCommand], r.RenderRecipeValidatedResult]
     require_recipe: Callable[[c.RequireRenderRecipeCommand], r.NarrationMutationResult]
     require_dictionary: Callable[[c.RequireDictionaryCommand], r.NarrationMutationResult]
+    show_narration_status: Callable[[c.ShowNarrationStatusCommand], r.NarrationStatusResult]
+    estimate: Callable[[c.EstimateGenerationCommand], r.GenerationEstimateResult]
+    generate: Callable[[c.GenerateTakeCommand], r.GenerationRunResult]
+    reconcile_generation: Callable[[c.ReconcileGenerationAttemptCommand], r.NarrationMutationResult]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,10 +112,12 @@ def control(value):
 
 
 class NarrationAuthoringRoutes:
-    def __init__(self, handlers: AuthoringHandlers, bindings: AuthoringBindings, identifiers: IdentifierSource):
+    def __init__(self, handlers: AuthoringHandlers, bindings: AuthoringBindings, identifiers: IdentifierSource,
+                 generation: ProcessGenerationControl):
         self._handlers = handlers
         self._bindings = bindings
         self._identifiers = identifiers
+        self._generation = generation
         self._episode_lock = Lock()
 
     def _command_id(self):
@@ -133,8 +143,14 @@ class NarrationAuthoringRoutes:
                 except NotFound:
                     status = None
                 authorities.append(presenters.authority(lane, status))
-            jobs = [presenters.editor(self._handlers.show_editor(c.ShowNarrationEditorCommand(self._command_id(), job)))
-                    for job in discovery.job_ids]
+            jobs = []
+            for job_id in discovery.job_ids:
+                editor_result = self._handlers.show_editor(c.ShowNarrationEditorCommand(self._command_id(), job_id))
+                status_result = self._handlers.show_narration_status(c.ShowNarrationStatusCommand(self._command_id(), job_id))
+                if editor_result.job_id != job_id or status_result.job_id != job_id:
+                    raise ValueError("narration read model identity mismatch")
+                jobs.append((presenters.editor(editor_result),
+                             presenters.generation_status(status_result, busy=self._generation.busy)))
             return presenters.page(csrf_token, readiness, episode, authorities, jobs)
         except Exception:
             return presenters.unavailable_page(csrf_token)
@@ -142,7 +158,7 @@ class NarrationAuthoringRoutes:
     def __call__(self, request: WebRequest) -> WebResponse:
         try:
             return self._dispatch(request)
-        except FilesystemRepositoryFailure:
+        except FilesystemOperationalFailure:
             return json_error(500, "internal_error")
         except AuthorizationDenied:
             return json_error(403, "authority_denied")
@@ -225,7 +241,144 @@ class NarrationAuthoringRoutes:
                     pass
                 raise
             return json_success({"jobId": result.job_id.value, "revision": result.revision, "lane": result.lane.value})
+        generation = self._generation_route(request)
+        if generation is not None:
+            return generation
         return self._edit(request)
+
+    def _generation_route(self, request):
+        estimate_route = re.fullmatch(r"/api/v1/jobs/([^/]+)/estimate", request.path)
+        generate_route = re.fullmatch(r"/api/v1/jobs/([^/]+)/generate", request.path)
+        reconcile_route = re.fullmatch(
+            r"/api/v1/jobs/([^/]+)/generation-attempts/([^/]+)/reconcile", request.path
+        )
+        if estimate_route:
+            return self._estimate(convert(NarrationJobId, estimate_route[1]), request)
+        if generate_route:
+            return self._generate(convert(NarrationJobId, generate_route[1]), request)
+        if reconcile_route:
+            return self._reconcile(
+                convert(NarrationJobId, reconcile_route[1]),
+                convert(GenerationAttemptId, reconcile_route[2]),
+                request,
+            )
+        return None
+
+    @staticmethod
+    def _text_override(mode_value, value, *, fixed_decimal: bool):
+        mode = convert(c.OverrideMode, mode_value)
+        if mode in {c.OverrideMode.INHERIT, c.OverrideMode.OMIT}:
+            if value is not None:
+                invalid_input()
+            return c.TextControlOverride(mode)
+        if fixed_decimal:
+            return c.TextControlOverride(mode, convert(FixedTwoDecimal, value).value)
+        return c.TextControlOverride(mode, canonical_text(value, scalars=64, byte_limit=256))
+
+    def _estimate(self, job_id, request):
+        keys = frozenset({
+            "expectedRevision", "passageId", "recipeId", "speedMode", "speed",
+            "volumeMode", "volume", "emotionMode", "emotion", "dictionaryMode",
+        })
+        body = parse_json_object(request, keys)
+        expected = integer(body["expectedRevision"])
+        passage_id = convert(PassageId, body["passageId"])
+        recipe_id = convert(PassageRenderRecipeId, body["recipeId"])
+        speed = self._text_override(body["speedMode"], body["speed"], fixed_decimal=True)
+        volume = self._text_override(body["volumeMode"], body["volume"], fixed_decimal=True)
+        emotion = self._text_override(body["emotionMode"], body["emotion"], fixed_decimal=False)
+        dictionary_mode = convert(c.OverrideMode, body["dictionaryMode"])
+
+        self._discover()
+        editor = self._handlers.show_editor(c.ShowNarrationEditorCommand(self._command_id(), job_id))
+        if editor.job_id != job_id:
+            raise ValueError("narration editor identity mismatch")
+        if editor.revision != expected:
+            raise RevisionConflict()
+        passage = next((item for item in editor.passages if item.passage_id == passage_id), None)
+        if passage is None:
+            raise NotFound()
+        recipe = next((item for item in passage.recipes if item.recipe_id == recipe_id), None)
+        if recipe is None or not recipe.current:
+            raise NotFound()
+        dictionary = None
+        if dictionary_mode is c.OverrideMode.SET:
+            dictionary = self._bindings.dictionary(editor.lane)
+            if dictionary is None:
+                raise WebInputError(422, "dictionary_unavailable")
+        settings = c.TakeSettingsIntent(speed, volume, emotion, c.DictionaryOverride(dictionary_mode, dictionary))
+        result = self._handlers.estimate(c.EstimateGenerationCommand(
+            self._command_id(), job_id, passage_id, recipe_id, settings, expected
+        ))
+        if result.job_id != job_id:
+            raise ValueError("generation estimate identity mismatch")
+        try:
+            token = self._generation.issue(result)
+        except ConfirmationCapacityReached:
+            raise WebInputError(409, "confirmation_capacity") from None
+        return json_success(presenters.generation_estimate(result, token))
+
+    def _generate(self, job_id, request):
+        body = parse_json_object(request, frozenset({"confirmationToken"}))
+        token = body["confirmationToken"]
+        if type(token) is not str or re.fullmatch(r"[0-9a-f]{64}", token) is None:
+            invalid_input()
+        command_id = self._command_id()
+        location = SafeRelativeArtifactPath(f"studio/takes/{job_id.value}/{command_id.value}.wav")
+        if not self._generation.acquire():
+            raise WebInputError(409, "generation_busy")
+        try:
+            try:
+                confirmation = self._generation.consume(token, job_id)
+            except ConfirmationUnavailable:
+                raise WebInputError(409, "confirmation_unavailable") from None
+            try:
+                result = self._handlers.generate(c.GenerateTakeCommand(
+                    command_id, confirmation.job_id, confirmation.preview_id,
+                    confirmation.expected_revision, location,
+                ))
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            if result.job_id != confirmation.job_id:
+                raise ValueError("generation result identity mismatch")
+            return json_success(presenters.generation_run(result))
+        finally:
+            self._generation.release()
+
+    def _reconcile(self, job_id, attempt_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision"}))
+        expected = integer(body["expectedRevision"])
+        command_id = self._command_id()
+        if not self._generation.acquire():
+            raise WebInputError(409, "generation_busy")
+        try:
+            try:
+                status = self._handlers.show_narration_status(
+                    c.ShowNarrationStatusCommand(self._command_id(), job_id)
+                )
+                if status.job_id != job_id:
+                    raise ValueError("narration status identity mismatch")
+                if status.revision != expected:
+                    raise RevisionConflict()
+                attempt = next((item for item in status.generation_attempts if item.attempt_id == attempt_id), None)
+                if attempt is None:
+                    raise NotFound()
+                if attempt.state not in RECONCILABLE_GENERATION_STATES:
+                    raise WebInputError(409, "reconciliation_unavailable")
+                result = self._handlers.reconcile_generation(c.ReconcileGenerationAttemptCommand(
+                    command_id, job_id, attempt_id, expected
+                ))
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            if result.job_id != job_id:
+                raise ValueError("generation reconciliation identity mismatch")
+            return json_success({"jobId": result.job_id.value, "revision": result.revision})
+        finally:
+            self._generation.release()
 
     def _edit(self, request):
         job_route = re.fullmatch(r"/api/v1/jobs/([^/]+)/(order|defaults)", request.path)

@@ -282,6 +282,7 @@ class WebCompositionTests(unittest.TestCase):
         self.assertIs(build.call_args.kwargs["identifiers"], serve.call_args.args[0]._dispatch._identifiers)
         security = serve.call_args.args[0]._security
         self.assertEqual((security.session_token, security.csrf_token), (session, csrf))
+        self.assertEqual(serve.call_args.args[0]._dispatch._generation._session_identity, session)
         studio.close.assert_called_once_with()
 
     def test_real_fixture_graph_uses_three_distinct_tokens_and_closes_once_on_return_or_failure(self):
@@ -334,6 +335,7 @@ class WebCompositionTests(unittest.TestCase):
                 self.assertEqual(closes[0].call_count, 1)
                 self.assertEqual(len(applications), 1)
                 security = applications[0]._security
+                self.assertEqual(applications[0]._dispatch._generation._session_identity, security.session_token)
                 tokens = {principals[0], security.session_token, security.csrf_token}
                 self.assertEqual(len(tokens), 3)
                 for token in tokens:

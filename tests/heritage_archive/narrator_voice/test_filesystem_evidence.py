@@ -60,6 +60,7 @@ from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence
     FilesystemAttemptWorkspaceVerifier,
     FilesystemProviderEventVerifier,
 )
+from heritage_archive.contexts.narrator_voice.infrastructure.filesystem_failures import FilesystemOperationalFailure
 from heritage_archive.contexts.narrator_voice.infrastructure.local_root import LocalNarrationRoot
 from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import (
     CanonicalWavInspector,
@@ -73,6 +74,60 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FilesystemEvidenceContracts(unittest.TestCase):
+    def test_workspace_stored_facts_and_storage_faults_are_operational_but_candidate_validation_is_not(self) -> None:
+        with self._storage_root() as root:
+            publication = PublishedArtifact(
+                ArtifactRef(ArtifactId(uuid(340)), digest("workspace failure audio"), 10, "audio/wav"),
+                SafeRelativeArtifactPath("takes/workspace-failure.wav"), NOW,
+            )
+            workspace = self._published_workspace(publication)
+            store = FilesystemAttemptWorkspaceStore(root)
+            store.save(workspace)
+            path = root.attempts / "generation" / f"{workspace.attempt_id.value}.json"
+            path.write_bytes(b"corrupt workspace fixture")
+            with self.assertRaises(FilesystemOperationalFailure):
+                store.load(workspace.attempt_id)
+
+        with self._storage_root() as root:
+            workspace = self._published_workspace(publication)
+            store = FilesystemAttemptWorkspaceStore(root)
+            with patch(
+                "heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence.replace_bytes_atomically",
+                side_effect=OSError("private workspace replacement"),
+            ), self.assertRaises(FilesystemOperationalFailure):
+                store.save(workspace)
+            with self.assertRaises(ValidationError) as invalid:
+                store.save("not-workspace")
+            self.assertNotIsInstance(invalid.exception, FilesystemOperationalFailure)
+
+        with self._storage_root() as root:
+            store = FilesystemAttemptWorkspaceStore(root)
+            workspace = self._published_workspace(publication)
+            store.save(workspace)
+            with self.assertRaises(ValidationError) as progression:
+                store.save(replace(workspace, state=AttemptState.EXTERNAL_WORK_STARTED))
+            self.assertNotIsInstance(progression.exception, FilesystemOperationalFailure)
+
+    def test_artifact_publication_fault_is_operational_after_public_argument_validation(self) -> None:
+        with self._storage_root() as root:
+            store = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(341))]))
+            with patch(
+                "heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence.publish_bytes_no_clobber",
+                side_effect=OSError("private artifact publication"),
+            ), self.assertRaises(FilesystemOperationalFailure):
+                store.publish(SafeRelativeArtifactPath("takes/failure.wav"), b"payload", "audio/wav", NOW)
+            with self.assertRaises(ValidationError) as invalid:
+                store.publish("not-a-path", b"payload", "audio/wav", NOW)
+            self.assertNotIsInstance(invalid.exception, FilesystemOperationalFailure)
+
+        with self._storage_root() as root:
+            store = FilesystemArtifactStore(root, _IdentifierSource([ArtifactId(uuid(342))]))
+            with patch(
+                "heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence.PublishedArtifact",
+                side_effect=ValidationError("private published binding"),
+            ), self.assertRaises(FilesystemOperationalFailure):
+                store.publish(SafeRelativeArtifactPath("takes/binding-failure.wav"), b"payload", "audio/wav", NOW)
+
     def test_workspace_store_loads_legacy_record_missing_only_raw_timing_reference(self) -> None:
         with self._storage_root() as root:
             workspace = self._published_workspace(
@@ -363,7 +418,7 @@ class FilesystemEvidenceContracts(unittest.TestCase):
                 "heritage_archive.contexts.narrator_voice.infrastructure.filesystem_evidence._is_reparse_point",
                 side_effect=lambda path: path == root.artifacts / "linked",
             ):
-                with self.assertRaisesRegex(ValidationError, "reparse"):
+                with self.assertRaises(FilesystemOperationalFailure):
                     store.publish(SafeRelativeArtifactPath("linked/escape.wav"), b"payload", "audio/wav", NOW)
 
             self.assertEqual(identifier.calls, [])

@@ -38,6 +38,7 @@
     const value = name => form.elements.namedItem(name).value;
     const expected = () => integer(value("expectedRevision"));
     const passages = () => text(value("passages")).split(/\n\n+/).map(passage => ({text: passage}));
+    const overrideValue = (modeName, valueName) => value(modeName) === "set" ? value(valueName) : null;
     switch (form.dataset.kind) {
       case "episode": return {};
       case "authority": return {evidenceDigest: value("evidenceDigest"), validFrom: value("validFrom"), validUntil: value("validUntil")};
@@ -54,6 +55,13 @@
       }
       case "require-recipe": return {expectedRevision: expected(), recipeId: value("recipeId")};
       case "dictionary": return {expectedRevision: expected()};
+      case "estimate": return {expectedRevision: expected(), passageId: value("passageId"), recipeId: value("recipeId"),
+        speedMode: value("speedMode"), speed: overrideValue("speedMode", "speed"),
+        volumeMode: value("volumeMode"), volume: overrideValue("volumeMode", "volume"),
+        emotionMode: value("emotionMode"), emotion: overrideValue("emotionMode", "emotion"),
+        dictionaryMode: value("dictionaryMode")};
+      case "generate": return {confirmationToken: value("confirmationToken")};
+      case "reconcile": return {expectedRevision: expected()};
       default: throw new Error();
     }
   };
@@ -70,7 +78,11 @@
     invalid_input: "Check the field formats and values.",
     invalid_json: "Check the field formats and values.",
     session_required: "The studio session changed. Reload the page.",
-    not_found: "The requested resource is unavailable. Reload the page."
+    not_found: "The requested resource is unavailable. Reload the page.",
+    generation_busy: "Generation or reconciliation is already active. Try this confirmation again after it finishes.",
+    confirmation_capacity: "Confirmation capacity is full after saving the estimate. Reload before estimating again.",
+    confirmation_unavailable: "This confirmation is unavailable. Reload and create a fresh estimate.",
+    reconciliation_unavailable: "This generation attempt is not eligible for reconciliation. Reload the page."
   };
 
   document.querySelectorAll("form[data-kind]").forEach(form => {
@@ -91,6 +103,20 @@
         });
         const result = await response.json();
         if (response.ok && result.ok === true) {
+          if (form.dataset.kind === "estimate") {
+            const panel = form.closest("[data-generation-panel]");
+            const estimateResult = panel.querySelector("[data-estimate-result]");
+            estimateResult.querySelector("[data-estimate-projection]").textContent = result.result.canonicalProjection;
+            estimateResult.querySelector("[data-estimate-billable]").textContent = String(result.result.billableCharacters);
+            estimateResult.querySelector("[data-estimate-usage]").textContent = result.result.estimatedUsage;
+            estimateResult.hidden = false;
+            const generate = panel.querySelector('form[data-kind="generate"]');
+            generate.elements.namedItem("confirmationToken").value = result.result.confirmationToken;
+            generate.hidden = false;
+            message.textContent = "Estimate saved. Review it, then confirm this take once.";
+            buttons.forEach(button => { button.disabled = false; });
+            return;
+          }
           window.location.reload();
           return;
         }

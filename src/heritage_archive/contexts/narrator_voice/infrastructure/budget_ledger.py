@@ -26,6 +26,7 @@ from ..application.recovery import BudgetRecoveryState
 from ..domain.errors import BudgetDenied
 from ..domain.ids import BudgetReservationId, CommandId
 from ..domain.values import NonNegativeDecimal
+from .filesystem_failures import FilesystemOperationalFailure
 from .local_root import LocalNarrationRoot
 
 
@@ -153,7 +154,7 @@ class FilesystemGenerationBudgetLedger:
         document = self._load_document(allow_missing=True)
         if document is None:
             return BudgetRecoveryState.UNKNOWN
-        reservations = self._replay(document)
+        reservations = self._replay_stored(document)
         found = reservations.get(reservation_id)
         return BudgetRecoveryState.UNKNOWN if found is None else found.state
 
@@ -184,43 +185,59 @@ class FilesystemGenerationBudgetLedger:
         self,
         append: Callable[[list[JsonValue], dict[BudgetReservationId, _Reservation]], bool],
     ) -> None:
-        path = self._ledger_path()
+        try:
+            path = self._ledger_path()
+        except (OSError, ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("budget ledger topology is unavailable") from error
         with SingleWriterFileLock(self._root.writer_lock):
             document = self._load_document(allow_missing=True)
             if document is None:
                 document = self._empty_document()
-            reservations = self._replay(document)
+            reservations = self._replay_stored(document)
             facts = document["facts"]
             if type(facts) is not list:
-                raise ValidationError("budget ledger facts must be an array")
+                raise FilesystemOperationalFailure("stored budget ledger facts are invalid")
             if not append(facts, reservations):
                 return
-            payload = canonical_json(document)
             try:
+                payload = canonical_json(document)
                 replace_bytes_atomically(self._root.staging, path, payload)
-            except (OSError, PublicationEvidenceMismatch) as error:
-                raise ValidationError("budget ledger could not be atomically replaced") from error
+            except (OSError, PublicationEvidenceMismatch, ValidationError, TypeError, ValueError) as error:
+                raise FilesystemOperationalFailure("budget ledger could not be atomically replaced") from error
 
     def _load_document(self, *, allow_missing: bool) -> dict[str, JsonValue] | None:
-        path = self._ledger_path()
-        if not os.path.lexists(path):
-            if allow_missing:
-                return None
-            raise ValidationError("budget ledger evidence is missing")
-        _reject_reparse_point(path)
         try:
+            path = self._ledger_path()
+            if not os.path.lexists(path):
+                if allow_missing:
+                    return None
+                raise ValidationError("budget ledger evidence is missing")
+            _reject_reparse_point(path)
             if not path.is_file():
                 raise ValidationError("budget ledger must be a regular file")
             raw = path.read_bytes()
             parsed = parse_strict_json(raw)
-        except OSError as error:
-            raise ValidationError("budget ledger evidence cannot be read") from error
-        if canonical_json(parsed) != raw:
-            raise ValidationError("budget ledger bytes are not canonical JSON")
-        if type(parsed) is not dict:
-            raise ValidationError("budget ledger must be a JSON object")
-        self._validate_header(parsed)
-        return parsed
+            if canonical_json(parsed) != raw:
+                raise ValidationError("budget ledger bytes are not canonical JSON")
+            if type(parsed) is not dict:
+                raise ValidationError("budget ledger must be a JSON object")
+            self._validate_header(parsed)
+            return parsed
+        except FilesystemOperationalFailure:
+            raise
+        except (OSError, ValidationError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("stored budget ledger evidence is unavailable or invalid") from error
+
+    def _replay_stored(
+        self,
+        document: dict[str, JsonValue],
+    ) -> dict[BudgetReservationId, _Reservation]:
+        try:
+            return self._replay(document)
+        except FilesystemOperationalFailure:
+            raise
+        except (BudgetDenied, ValidationError, ArithmeticError, TypeError, ValueError) as error:
+            raise FilesystemOperationalFailure("stored budget ledger facts cannot be replayed") from error
 
     def _validate_header(self, document: dict[str, JsonValue]) -> None:
         if set(document) != _DOCUMENT_FIELDS:
