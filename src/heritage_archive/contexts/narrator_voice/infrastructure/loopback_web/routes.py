@@ -14,18 +14,32 @@ from heritage_archive.platform.web import WebRequest, WebResponse
 from ...application import commands as c, results as r
 from ...application.ports import IdentifierSource
 from ...domain.errors import AuthorizationDenied, DomainInvariantError, NotFound, RevisionConflict
-from ...domain.ids import (AuthorizationRecordId, CommandId, DiaryEpisodeId, GenerationAttemptId,
-                          NarrationJobId, PassageId, PassageRenderRecipeId)
+from ...domain.evidence import AttemptState, ListeningOutcome, NarrationMasterSnapshot, ReviewOutcome
+from ...domain.ids import (AuthorizationRecordId, CommandId, DiaryEpisodeId, EpisodeAssemblyAttemptId,
+                          EpisodeSpeechMasterId, GenerationAttemptId, NarrationAssemblyAttemptId,
+                          NarrationJobId, NarrationMasterId, PassageId, PassageRenderRecipeId, TakeId)
 from ...domain.narration_job import PassageDraft
-from ...domain.values import (AuthorityScope, BreakControl, DeliveryControlDefaults, DictionaryBinding,
-                             FixedTwoDecimal, Lane, PassageText, SafeRelativeArtifactPath, SpeedControl,
-                             SpellingControl, TextSpan, VolumeControl)
+from ...domain.values import (AuthorityScope, BreakControl, ComponentRole, DeliveryControlDefaults,
+                             DictionaryBinding, FixedTwoDecimal, Lane, PassageText,
+                             SafeRelativeArtifactPath, SpeedControl, SpellingControl, TextSpan,
+                             VolumeControl)
 from ..filesystem_failures import FilesystemOperationalFailure
 from ..operations import DoctorResult
 from . import presenters
 from .generation import (ConfirmationCapacityReached, ConfirmationUnavailable,
                          ProcessGenerationControl, RECONCILABLE_GENERATION_STATES)
 from .security import WebInputError, json_error, json_success, parse_json_object
+
+
+MAX_GAP_SAMPLES = 220_500
+RECONCILABLE_ASSEMBLY_STATES = frozenset({
+    AttemptState.UNKNOWN,
+    AttemptState.RESERVED,
+    AttemptState.INPUT_FROZEN,
+    AttemptState.EXTERNAL_WORK_STARTED,
+    AttemptState.ARTIFACTS_STAGED,
+    AttemptState.ARTIFACTS_PUBLISHED,
+})
 
 
 class AuthoringHandlers(Protocol):
@@ -48,6 +62,21 @@ class AuthoringHandlers(Protocol):
     estimate: Callable[[c.EstimateGenerationCommand], r.GenerationEstimateResult]
     generate: Callable[[c.GenerateTakeCommand], r.GenerationRunResult]
     reconcile_generation: Callable[[c.ReconcileGenerationAttemptCommand], r.NarrationMutationResult]
+    record_review: Callable[[c.RecordReviewDecisionCommand], r.NarrationMutationResult]
+    select_take: Callable[[c.SelectWorkingTakeCommand], r.NarrationMutationResult]
+    assemble_narration: Callable[[c.AssembleNarrationMasterCommand], r.NarrationAssemblyResult]
+    record_narration_listening: Callable[[c.RecordNarrationMasterListeningCommand], r.NarrationMutationResult]
+    issue_narration_snapshot: Callable[[c.IssueNarrationMasterSnapshotCommand], r.SnapshotIssuedResult]
+    reconcile_narration_assembly: Callable[[c.ReconcileNarrationAssemblyAttemptCommand], r.NarrationMutationResult]
+    attach_intro: Callable[[c.AttachIntroMasterCommand], r.EpisodeMutationResult]
+    attach_diary: Callable[[c.AttachDiaryMasterCommand], r.EpisodeMutationResult]
+    set_intro_diary_gap: Callable[[c.SetIntroDiaryGapCommand], r.EpisodeMutationResult]
+    assemble_episode: Callable[[c.AssembleEpisodeSpeechMasterCommand], r.EpisodeAssemblyResult]
+    record_episode_listening: Callable[[c.RecordEpisodeListeningCommand], r.EpisodeMutationResult]
+    reconcile_episode_assembly: Callable[[c.ReconcileEpisodeAssemblyAttemptCommand], r.EpisodeMutationResult]
+    read_take_audio: Callable[[c.ReadTakeAudioCommand], r.AudioPlaybackResult]
+    read_narration_master_audio: Callable[[c.ReadNarrationMasterAudioCommand], r.AudioPlaybackResult]
+    read_episode_master_audio: Callable[[c.ReadEpisodeMasterAudioCommand], r.AudioPlaybackResult]
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +162,9 @@ class NarrationAuthoringRoutes:
         try:
             readiness = presenters.readiness(self._handlers.readiness())
             discovery = self._discover()
-            episode = None if not discovery.episode_ids else presenters.episode(self._handlers.show_episode_status(
-                c.ShowEpisodeStatusCommand(self._command_id(), discovery.episode_ids[0])))
+            episode = None if not discovery.episode_ids else presenters.episode(
+                self._show_episode_status(discovery.episode_ids[0]), busy=self._generation.busy,
+            )
             authorities = []
             for lane in Lane:
                 try:
@@ -147,10 +177,12 @@ class NarrationAuthoringRoutes:
             for job_id in discovery.job_ids:
                 editor_result = self._handlers.show_editor(c.ShowNarrationEditorCommand(self._command_id(), job_id))
                 status_result = self._handlers.show_narration_status(c.ShowNarrationStatusCommand(self._command_id(), job_id))
-                if editor_result.job_id != job_id or status_result.job_id != job_id:
+                if (editor_result.job_id != job_id or status_result.job_id != job_id
+                        or editor_result.revision != status_result.revision):
                     raise ValueError("narration read model identity mismatch")
                 jobs.append((presenters.editor(editor_result),
-                             presenters.generation_status(status_result, busy=self._generation.busy)))
+                             presenters.generation_status(status_result, busy=self._generation.busy),
+                             presenters.narration_status(status_result, busy=self._generation.busy)))
             return presenters.page(csrf_token, readiness, episode, authorities, jobs)
         except Exception:
             return presenters.unavailable_page(csrf_token)
@@ -183,6 +215,9 @@ class NarrationAuthoringRoutes:
         return tuple(drafts)
 
     def _dispatch(self, request):
+        media = self._media(request)
+        if media is not None:
+            return media
         if request.method != "POST":
             raise NotFound()
         if request.path == "/api/v1/episode":
@@ -244,7 +279,428 @@ class NarrationAuthoringRoutes:
         generation = self._generation_route(request)
         if generation is not None:
             return generation
+        mastering = self._mastering_route(request)
+        if mastering is not None:
+            return mastering
         return self._edit(request)
+
+    def _media(self, request):
+        if request.method != "GET":
+            return None
+        routes = (
+            (
+                re.fullmatch(r"/audio/jobs/([^/]+)/takes/([^/]+)\.wav", request.path),
+                NarrationJobId,
+                TakeId,
+                c.ReadTakeAudioCommand,
+                "read_take_audio",
+            ),
+            (
+                re.fullmatch(r"/audio/jobs/([^/]+)/masters/([^/]+)\.wav", request.path),
+                NarrationJobId,
+                NarrationMasterId,
+                c.ReadNarrationMasterAudioCommand,
+                "read_narration_master_audio",
+            ),
+            (
+                re.fullmatch(r"/audio/episodes/([^/]+)/masters/([^/]+)\.wav", request.path),
+                DiaryEpisodeId,
+                EpisodeSpeechMasterId,
+                c.ReadEpisodeMasterAudioCommand,
+                "read_episode_master_audio",
+            ),
+        )
+        selected = next((route for route in routes if route[0] is not None), None)
+        if selected is None:
+            return None
+        matched, parent_type, child_type, command_type, handler_name = selected
+        parent_id = convert(parent_type, matched[1])
+        child_id = convert(child_type, matched[2])
+        command_id = self._command_id()
+        command = command_type(
+            command_id,
+            parent_id,
+            child_id,
+        )
+        try:
+            result = getattr(self._handlers, handler_name)(command)
+        except (FilesystemOperationalFailure, NotFound):
+            raise
+        except ValidationError:
+            raise WebInputError(500, "internal_error") from None
+        if (
+            type(result) is not r.AudioPlaybackResult
+            or result.command_id != command_id
+            or result.media_type != "audio/wav"
+            or type(result.payload) is not bytes
+            or type(result.byte_size) is not int
+            or result.byte_size != len(result.payload)
+            or ContentDigest.from_bytes(result.payload) != result.content_digest
+        ):
+            raise ValueError("invalid audio playback result")
+        return WebResponse(
+            200,
+            result.payload,
+            (
+                (b"content-type", b"audio/wav"),
+                (b"content-length", str(result.byte_size).encode()),
+                (b"etag", ('"' + result.content_digest.hex_digest + '"').encode()),
+            ),
+        )
+
+    def _show_narration_status(self, job_id):
+        status = self._handlers.show_narration_status(
+            c.ShowNarrationStatusCommand(self._command_id(), job_id)
+        )
+        if status.job_id != job_id:
+            raise ValueError("narration status identity mismatch")
+        return status
+
+    def _show_episode_status(self, episode_id):
+        status = self._handlers.show_episode_status(
+            c.ShowEpisodeStatusCommand(self._command_id(), episode_id)
+        )
+        if status.episode_id != episode_id:
+            raise ValueError("episode status identity mismatch")
+        return status
+
+    @staticmethod
+    def _narration_mutation(result, command_id, job_id):
+        if (
+            type(result) is not r.NarrationMutationResult
+            or result.command_id != command_id
+            or result.job_id != job_id
+            or type(result.revision) is not int
+            or result.revision < 1
+        ):
+            raise ValueError("narration mutation result mismatch")
+        return {"jobId": result.job_id.value, "revision": result.revision}
+
+    @staticmethod
+    def _episode_mutation(result, command_id, episode_id):
+        if (
+            type(result) is not r.EpisodeMutationResult
+            or result.command_id != command_id
+            or result.episode_id != episode_id
+            or type(result.revision) is not int
+            or result.revision < 1
+        ):
+            raise ValueError("episode mutation result mismatch")
+        return {"episodeId": result.episode_id.value, "revision": result.revision}
+
+    def _mastering_route(self, request):
+        review = re.fullmatch(r"/api/v1/jobs/([^/]+)/takes/([^/]+)/review", request.path)
+        select = re.fullmatch(r"/api/v1/jobs/([^/]+)/takes/([^/]+)/select", request.path)
+        narration_assemble = re.fullmatch(r"/api/v1/jobs/([^/]+)/narration-masters", request.path)
+        narration_listen = re.fullmatch(
+            r"/api/v1/jobs/([^/]+)/narration-masters/([^/]+)/listen", request.path
+        )
+        attach = re.fullmatch(
+            r"/api/v1/jobs/([^/]+)/narration-masters/([^/]+)/attach/([^/]+)", request.path
+        )
+        narration_reconcile = re.fullmatch(
+            r"/api/v1/jobs/([^/]+)/narration-assembly-attempts/([^/]+)/reconcile", request.path
+        )
+        episode_gap = re.fullmatch(r"/api/v1/episodes/([^/]+)/gap", request.path)
+        episode_assemble = re.fullmatch(r"/api/v1/episodes/([^/]+)/speech-masters", request.path)
+        episode_listen = re.fullmatch(
+            r"/api/v1/episodes/([^/]+)/speech-masters/([^/]+)/listen", request.path
+        )
+        episode_reconcile = re.fullmatch(
+            r"/api/v1/episodes/([^/]+)/assembly-attempts/([^/]+)/reconcile", request.path
+        )
+        if review:
+            return self._review(convert(NarrationJobId, review[1]), convert(TakeId, review[2]), request)
+        if select:
+            return self._select(convert(NarrationJobId, select[1]), convert(TakeId, select[2]), request)
+        if narration_assemble:
+            return self._assemble_narration(convert(NarrationJobId, narration_assemble[1]), request)
+        if narration_listen:
+            return self._listen_narration(
+                convert(NarrationJobId, narration_listen[1]),
+                convert(NarrationMasterId, narration_listen[2]),
+                request,
+            )
+        if attach:
+            if attach[3] not in {"intro", "diary"}:
+                invalid_input()
+            return self._attach(
+                convert(NarrationJobId, attach[1]),
+                convert(NarrationMasterId, attach[2]),
+                ComponentRole(attach[3]),
+                request,
+            )
+        if narration_reconcile:
+            return self._reconcile_narration_assembly(
+                convert(NarrationJobId, narration_reconcile[1]),
+                convert(NarrationAssemblyAttemptId, narration_reconcile[2]),
+                request,
+            )
+        if episode_gap:
+            return self._set_gap(convert(DiaryEpisodeId, episode_gap[1]), request)
+        if episode_assemble:
+            return self._assemble_episode(convert(DiaryEpisodeId, episode_assemble[1]), request)
+        if episode_listen:
+            return self._listen_episode(
+                convert(DiaryEpisodeId, episode_listen[1]),
+                convert(EpisodeSpeechMasterId, episode_listen[2]),
+                request,
+            )
+        if episode_reconcile:
+            return self._reconcile_episode_assembly(
+                convert(DiaryEpisodeId, episode_reconcile[1]),
+                convert(EpisodeAssemblyAttemptId, episode_reconcile[2]),
+                request,
+            )
+        return None
+
+    def _review(self, job_id, take_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "outcome", "notes"}))
+        expected = integer(body["expectedRevision"])
+        outcome = convert(ReviewOutcome, body["outcome"])
+        notes = canonical_text(body["notes"], scalars=2_000, byte_limit=8_192)
+        command_id = self._command_id()
+        result = self._handlers.record_review(c.RecordReviewDecisionCommand(
+            command_id, self._bindings.principal, job_id, take_id, outcome, notes, expected,
+        ))
+        return json_success(self._narration_mutation(result, command_id, job_id))
+
+    def _select(self, job_id, take_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "passageId", "reason"}))
+        expected = integer(body["expectedRevision"])
+        passage_id = convert(PassageId, body["passageId"])
+        reason = canonical_text(body["reason"], scalars=2_000, byte_limit=8_192)
+        command_id = self._command_id()
+        result = self._handlers.select_take(c.SelectWorkingTakeCommand(
+            command_id, self._bindings.principal, job_id, passage_id, take_id, reason, expected,
+        ))
+        return json_success(self._narration_mutation(result, command_id, job_id))
+
+    def _listen_narration(self, job_id, master_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "outcome", "notes"}))
+        expected = integer(body["expectedRevision"])
+        outcome = convert(ListeningOutcome, body["outcome"])
+        notes = canonical_text(body["notes"], scalars=2_000, byte_limit=8_192)
+        command_id = self._command_id()
+        result = self._handlers.record_narration_listening(c.RecordNarrationMasterListeningCommand(
+            command_id, self._bindings.principal, job_id, master_id, outcome, notes, expected,
+        ))
+        return json_success(self._narration_mutation(result, command_id, job_id))
+
+    def _listen_episode(self, episode_id, master_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "outcome", "notes"}))
+        expected = integer(body["expectedRevision"])
+        outcome = convert(ListeningOutcome, body["outcome"])
+        notes = canonical_text(body["notes"], scalars=2_000, byte_limit=8_192)
+        command_id = self._command_id()
+        result = self._handlers.record_episode_listening(c.RecordEpisodeListeningCommand(
+            command_id, self._bindings.principal, episode_id, master_id, outcome, notes, expected,
+        ))
+        return json_success(self._episode_mutation(result, command_id, episode_id))
+
+    def _set_gap(self, episode_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "gapSamples"}))
+        expected = integer(body["expectedRevision"])
+        gap = integer(body["gapSamples"], 0)
+        if gap > MAX_GAP_SAMPLES:
+            raise WebInputError(422, "validation_failed")
+        command_id = self._command_id()
+        result = self._handlers.set_intro_diary_gap(c.SetIntroDiaryGapCommand(
+            command_id, episode_id, gap, expected,
+        ))
+        return json_success(self._episode_mutation(result, command_id, episode_id))
+
+    def _assemble_narration(self, job_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision", "gapsSamples"}))
+        expected = integer(body["expectedRevision"])
+        if type(body["gapsSamples"]) is not list:
+            invalid_input()
+        gaps = tuple(integer(value, 0) for value in body["gapsSamples"])
+        if any(value > MAX_GAP_SAMPLES for value in gaps):
+            raise WebInputError(422, "validation_failed")
+        command_id = self._command_id()
+        location = SafeRelativeArtifactPath(
+            f"studio/narration-masters/{job_id.value}/{command_id.value}.wav"
+        )
+        if not self._generation.acquire():
+            raise WebInputError(409, "assembly_busy")
+        try:
+            status = self._show_narration_status(job_id)
+            if status.revision != expected:
+                raise RevisionConflict()
+            if len(gaps) != max(0, len(status.passages) - 1) or status.assembly_ready is not True:
+                raise WebInputError(422, "validation_failed")
+            try:
+                result = self._handlers.assemble_narration(c.AssembleNarrationMasterCommand(
+                    command_id, job_id, gaps, expected, location,
+                ))
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            if (
+                type(result) is not r.NarrationAssemblyResult
+                or result.command_id != command_id
+                or result.job_id != job_id
+                or type(result.revision) is not int
+                or result.revision < 1
+            ):
+                raise ValueError("narration assembly result identity mismatch")
+            return json_success(presenters.narration_assembly(result))
+        finally:
+            self._generation.release()
+
+    def _assemble_episode(self, episode_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision"}))
+        expected = integer(body["expectedRevision"])
+        command_id = self._command_id()
+        location = SafeRelativeArtifactPath(
+            f"studio/episode-masters/{episode_id.value}/{command_id.value}.wav"
+        )
+        if not self._generation.acquire():
+            raise WebInputError(409, "assembly_busy")
+        try:
+            status = self._show_episode_status(episode_id)
+            if status.revision != expected:
+                raise RevisionConflict()
+            if status.assembly_ready is not True:
+                raise WebInputError(422, "validation_failed")
+            try:
+                result = self._handlers.assemble_episode(c.AssembleEpisodeSpeechMasterCommand(
+                    command_id, episode_id, expected, location,
+                ))
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            if (
+                type(result) is not r.EpisodeAssemblyResult
+                or result.command_id != command_id
+                or result.episode_id != episode_id
+                or type(result.revision) is not int
+                or result.revision < 1
+            ):
+                raise ValueError("episode assembly result identity mismatch")
+            return json_success(presenters.episode_assembly(result))
+        finally:
+            self._generation.release()
+
+    def _reconcile_narration_assembly(self, job_id, attempt_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision"}))
+        expected = integer(body["expectedRevision"])
+        command_id = self._command_id()
+        if not self._generation.acquire():
+            raise WebInputError(409, "assembly_busy")
+        try:
+            status = self._show_narration_status(job_id)
+            if status.revision != expected:
+                raise RevisionConflict()
+            attempt = next((value for value in status.assembly_attempts if value.attempt_id == attempt_id), None)
+            if attempt is None:
+                raise NotFound()
+            if attempt.state not in RECONCILABLE_ASSEMBLY_STATES:
+                raise WebInputError(409, "reconciliation_unavailable")
+            try:
+                result = self._handlers.reconcile_narration_assembly(
+                    c.ReconcileNarrationAssemblyAttemptCommand(
+                        command_id, job_id, attempt_id, expected,
+                    )
+                )
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            return json_success(self._narration_mutation(result, command_id, job_id))
+        finally:
+            self._generation.release()
+
+    def _reconcile_episode_assembly(self, episode_id, attempt_id, request):
+        body = parse_json_object(request, frozenset({"expectedRevision"}))
+        expected = integer(body["expectedRevision"])
+        command_id = self._command_id()
+        if not self._generation.acquire():
+            raise WebInputError(409, "assembly_busy")
+        try:
+            status = self._show_episode_status(episode_id)
+            if status.revision != expected:
+                raise RevisionConflict()
+            attempt = next((value for value in status.assembly_attempts if value.attempt_id == attempt_id), None)
+            if attempt is None:
+                raise NotFound()
+            if attempt.state not in RECONCILABLE_ASSEMBLY_STATES:
+                raise WebInputError(409, "reconciliation_unavailable")
+            try:
+                result = self._handlers.reconcile_episode_assembly(
+                    c.ReconcileEpisodeAssemblyAttemptCommand(
+                        command_id, episode_id, attempt_id, expected,
+                    )
+                )
+            except FilesystemOperationalFailure:
+                raise
+            except ValidationError:
+                raise WebInputError(500, "internal_error") from None
+            return json_success(self._episode_mutation(result, command_id, episode_id))
+        finally:
+            self._generation.release()
+
+    def _attach(self, job_id, master_id, role, request):
+        body = parse_json_object(
+            request,
+            frozenset({"sourceExpectedRevision", "episodeId", "episodeExpectedRevision"}),
+        )
+        source_expected = integer(body["sourceExpectedRevision"])
+        episode_id = convert(DiaryEpisodeId, body["episodeId"])
+        episode_expected = integer(body["episodeExpectedRevision"])
+        discovery = self._discover()
+        if discovery.episode_ids != (episode_id,) or job_id not in discovery.job_ids:
+            raise NotFound()
+        source_status = self._show_narration_status(job_id)
+        episode_status = self._show_episode_status(episode_id)
+        if source_status.revision != source_expected or episode_status.revision != episode_expected:
+            raise RevisionConflict()
+        master = next((value for value in source_status.masters if value.master_id == master_id), None)
+        if master is None:
+            raise NotFound()
+        expected_lane = Lane.C if role is ComponentRole.INTRO else Lane.B
+        if master.attach_ready is not True or source_status.lane is not expected_lane:
+            raise WebInputError(422, "validation_failed")
+
+        issue_command_id = self._command_id()
+        issued = self._handlers.issue_narration_snapshot(c.IssueNarrationMasterSnapshotCommand(
+            issue_command_id, job_id, master_id, source_expected,
+        ))
+        snapshot = getattr(issued, "snapshot", None)
+        expected_episode = episode_id if role is ComponentRole.INTRO else None
+        if (
+            type(issued) is not r.SnapshotIssuedResult
+            or issued.command_id != issue_command_id
+            or issued.job_id != job_id
+            or type(issued.revision) is not int
+            or issued.revision < 1
+            or type(snapshot) is not NarrationMasterSnapshot
+            or snapshot.issuing_job_id != job_id
+            or snapshot.source_master_id != master_id
+            or snapshot.role is not role
+            or snapshot.lane is not expected_lane
+            or snapshot.intended_episode_id != expected_episode
+        ):
+            raise ValueError("snapshot issuance result identity mismatch")
+
+        attach_command_id = self._command_id()
+        command_type = c.AttachIntroMasterCommand if role is ComponentRole.INTRO else c.AttachDiaryMasterCommand
+        handler = self._handlers.attach_intro if role is ComponentRole.INTRO else self._handlers.attach_diary
+        attached = handler(command_type(
+            attach_command_id, episode_id, snapshot, episode_expected,
+        ))
+        self._episode_mutation(attached, attach_command_id, episode_id)
+        return json_success({
+            "jobId": issued.job_id.value,
+            "sourceRevision": issued.revision,
+            "episodeId": attached.episode_id.value,
+            "episodeRevision": attached.revision,
+            "masterId": master_id.value,
+            "role": role.value,
+        })
 
     def _generation_route(self, request):
         estimate_route = re.fullmatch(r"/api/v1/jobs/([^/]+)/estimate", request.path)

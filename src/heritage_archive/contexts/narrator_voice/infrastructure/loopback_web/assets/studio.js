@@ -62,6 +62,20 @@
         dictionaryMode: value("dictionaryMode")};
       case "generate": return {confirmationToken: value("confirmationToken")};
       case "reconcile": return {expectedRevision: expected()};
+      case "review": return {expectedRevision: expected(), outcome: value("outcome"), notes: text(value("notes"))};
+      case "select": return {expectedRevision: expected(), passageId: value("passageId"), reason: text(value("reason"))};
+      case "narration-assembly": {
+        const source = text(value("gapsSamples"));
+        return {expectedRevision: expected(), gapsSamples: source === "" ? [] : source.split("\n").map(integer)};
+      }
+      case "narration-listen": return {expectedRevision: expected(), outcome: value("outcome"), notes: text(value("notes"))};
+      case "attach": return {sourceExpectedRevision: integer(value("sourceExpectedRevision")),
+        episodeId: value("episodeId"), episodeExpectedRevision: integer(value("episodeExpectedRevision"))};
+      case "narration-reconcile": return {expectedRevision: expected()};
+      case "episode-gap": return {expectedRevision: expected(), gapSamples: integer(value("gapSamples"))};
+      case "episode-assembly": return {expectedRevision: expected()};
+      case "episode-listen": return {expectedRevision: expected(), outcome: value("outcome"), notes: text(value("notes"))};
+      case "episode-reconcile": return {expectedRevision: expected()};
       default: throw new Error();
     }
   };
@@ -84,6 +98,7 @@
     confirmation_unavailable: "This confirmation is unavailable. Reload and create a fresh estimate.",
     reconciliation_unavailable: "This generation attempt is not eligible for reconciliation. Reload the page."
   };
+  const attachGuidance = "A source snapshot may have been issued even though attachment did not complete. Reload and inspect both source and episode state before retrying.";
 
   document.querySelectorAll("form[data-kind]").forEach(form => {
     form.addEventListener("submit", async event => {
@@ -121,8 +136,10 @@
           return;
         }
         message.textContent = guidance[result.error?.code] || "The request could not be completed. Check the studio state before submitting again.";
+        if (form.dataset.kind === "attach") message.textContent += ` ${attachGuidance}`;
       } catch {
         message.textContent = "The response was lost. Reload and inspect the current state before submitting again.";
+        if (form.dataset.kind === "attach") message.textContent += ` ${attachGuidance}`;
       }
       buttons.forEach(button => { button.disabled = false; });
     });

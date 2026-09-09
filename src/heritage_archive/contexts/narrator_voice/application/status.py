@@ -311,6 +311,7 @@ class EpisodeStatusProjection:
     revision: int
     status: EpisodeStatus
     assembly_ready: bool
+    gap_samples: int | None
     components: tuple[EpisodeComponentProjection, ...]
     assembly_attempts: tuple[EpisodeAssemblyAttemptProjection, ...]
     masters: tuple[EpisodeMasterProjection, ...]
@@ -791,6 +792,7 @@ def project_episode_status(
         episode.revision,
         episode.status,
         episode.assembly_ready and every_source_current and every_source_can_assemble,
+        episode.gap_samples,
         tuple(components),
         assembly_attempts,
         tuple(masters),

@@ -3,7 +3,7 @@ from html import escape
 import json
 
 from ...domain.evidence import AttemptState
-from ...domain.values import BreakControl, SpeedControl, VolumeControl, SpellingControl
+from ...domain.values import BreakControl, ComponentRole, SpeedControl, VolumeControl, SpellingControl
 from .generation import RECONCILABLE_GENERATION_STATES
 
 BACKUP_GUIDANCE = "backup history is not persisted; use CLI backup and verify-backup"
@@ -28,9 +28,64 @@ def authority(lane, value):
             "coveredOperations": [] if value is None else [op.value for op in value.covered_operations]}
 
 
-def episode(value):
-    return {"episodeId": value.episode_id.value, "revision": value.revision,
-            "status": value.status.value, "assemblyReady": value.assembly_ready}
+def episode(value, *, busy=False):
+    if type(busy) is not bool:
+        raise ValueError("assembly busy snapshot must be boolean")
+    components_by_role = {component.role: component for component in value.components}
+    components = []
+    for role in (ComponentRole.INTRO, ComponentRole.DIARY):
+        component = components_by_role.get(role)
+        if component is None:
+            raise ValueError("episode component projection is incomplete")
+        authority = component.source_authority
+        components.append({
+            "role": role.value,
+            "attached": component.attached,
+            "sourceJobId": None if component.source_job_id is None else component.source_job_id.value,
+            "sourceMasterId": None if component.source_master_id is None else component.source_master_id.value,
+            "attachedRevision": component.attached_revision,
+            "passageCount": component.passage_count,
+            "sourceCurrent": component.source_current,
+            "eligibleOperations": [operation.value for operation in component.eligible_operations],
+            "sourceAuthority": None if authority is None else {
+                "status": None if authority.status is None else authority.status.value,
+                "active": authority.active_for_contract,
+                "coveredOperations": [operation.value for operation in authority.covered_operations],
+            },
+        })
+    attempts = []
+    for attempt in value.assembly_attempts:
+        if type(attempt.state) is not AttemptState:
+            raise ValueError("unsupported episode assembly attempt state")
+        attempts.append({
+            "attemptId": attempt.attempt_id.value,
+            "state": attempt.state.value,
+            "terminal": attempt.terminal,
+            "needsReconciliation": attempt.needs_reconciliation,
+            "componentCount": attempt.component_count,
+            "gapConfigured": attempt.gap_configured,
+            "outputReady": attempt.output_ready,
+            "reconciliationAvailable": attempt.state in RECONCILABLE_GENERATION_STATES and not busy,
+        })
+    masters = [{
+        "masterId": master.master_id.value,
+        "componentCount": master.component_count,
+        "current": master.current,
+        "gapConfigured": master.gap_configured,
+        "latestListening": None if master.latest_listening is None else master.latest_listening.value,
+        "audioUrl": f"/audio/episodes/{value.episode_id.value}/masters/{master.master_id.value}.wav",
+    } for master in value.masters]
+    return {
+        "episodeId": value.episode_id.value,
+        "revision": value.revision,
+        "status": value.status.value,
+        "assemblyReady": value.assembly_ready,
+        "gapSamples": value.gap_samples,
+        "gapConfigured": value.gap_samples is not None,
+        "components": components,
+        "masters": masters,
+        "assemblyAttempts": attempts,
+    }
 
 
 def editor(value):
@@ -107,6 +162,38 @@ def generation_run(value):
     }
 
 
+def narration_assembly(value):
+    state = getattr(value.state, "value", None)
+    if (
+        state not in {"completed", "blocked", "quarantined", "unknown"}
+        or ((state == "completed") != (value.master_id is not None))
+    ):
+        raise ValueError("unsupported narration assembly result")
+    return {
+        "jobId": value.job_id.value,
+        "revision": value.revision,
+        "attemptId": value.attempt_id.value,
+        "state": state,
+        "masterId": None if value.master_id is None else value.master_id.value,
+    }
+
+
+def episode_assembly(value):
+    state = getattr(value.state, "value", None)
+    if (
+        state not in {"completed", "blocked", "quarantined", "unknown"}
+        or ((state == "completed") != (value.master_id is not None))
+    ):
+        raise ValueError("unsupported episode assembly result")
+    return {
+        "episodeId": value.episode_id.value,
+        "revision": value.revision,
+        "attemptId": value.attempt_id.value,
+        "state": state,
+        "masterId": None if value.master_id is None else value.master_id.value,
+    }
+
+
 def generation_status(value, *, busy):
     if type(busy) is not bool:
         raise ValueError("generation busy snapshot must be boolean")
@@ -125,6 +212,63 @@ def generation_status(value, *, busy):
             "reconciliationAvailable": attempt.state in RECONCILABLE_GENERATION_STATES and not busy,
         })
     return {"jobId": value.job_id.value, "revision": value.revision, "attempts": attempts}
+
+
+def narration_status(value, *, busy):
+    if type(busy) is not bool:
+        raise ValueError("assembly busy snapshot must be boolean")
+    passages = []
+    for passage in value.passages:
+        passages.append({
+            "passageId": passage.passage_id.value,
+            "order": passage.order,
+            "currentTextRevision": passage.current_text_revision,
+            "selectedTakeId": None if passage.selected_take_id is None else passage.selected_take_id.value,
+            "readyForAssembly": passage.ready_for_assembly,
+            "takes": [{
+                "takeId": take.take_id.value,
+                "attemptId": take.attempt_id.value,
+                "textRevision": take.text_revision,
+                "eligible": take.eligible,
+                "ineligibilityReasons": list(take.ineligibility_reasons),
+                "latestOperationalReview": (
+                    None if take.latest_operational_review is None else take.latest_operational_review.value
+                ),
+                "selected": take.selected,
+                "audioUrl": f"/audio/jobs/{value.job_id.value}/takes/{take.take_id.value}.wav",
+            } for take in passage.takes],
+        })
+    attempts = []
+    for attempt in value.assembly_attempts:
+        if type(attempt.state) is not AttemptState:
+            raise ValueError("unsupported narration assembly attempt state")
+        attempts.append({
+            "attemptId": attempt.attempt_id.value,
+            "state": attempt.state.value,
+            "terminal": attempt.terminal,
+            "needsReconciliation": attempt.needs_reconciliation,
+            "selectedTakeCount": attempt.selected_take_count,
+            "outputReady": attempt.output_ready,
+            "reconciliationAvailable": attempt.state in RECONCILABLE_GENERATION_STATES and not busy,
+        })
+    masters = [{
+        "masterId": master.master_id.value,
+        "selectedTakeCount": master.selected_take_count,
+        "current": master.current,
+        "attachReady": master.attach_ready,
+        "latestListening": None if master.latest_listening is None else master.latest_listening.value,
+        "issuedSnapshotCount": master.issued_snapshot_count,
+        "audioUrl": f"/audio/jobs/{value.job_id.value}/masters/{master.master_id.value}.wav",
+    } for master in value.masters]
+    return {
+        "jobId": value.job_id.value,
+        "revision": value.revision,
+        "lane": value.lane.value,
+        "assemblyReady": value.assembly_ready,
+        "passages": passages,
+        "masters": masters,
+        "assemblyAttempts": attempts,
+    }
 
 
 def e(value):
@@ -160,6 +304,179 @@ def revision(value):
     return '<input type="hidden" name="expectedRevision" value="' + e(value) + '">'
 
 
+def hidden(name, value):
+    return '<input type="hidden" name="' + e(name) + '" value="' + e(value) + '">'
+
+
+def decision(name, values):
+    return '<label>' + e(name.capitalize()) + '<select name="' + e(name) + '">' + ''.join(
+        '<option value="' + e(value) + '">' + e(value.capitalize()) + '</option>'
+        for value in values
+    ) + '</select></label>'
+
+
+def _episode_mastering_parts(current_episode):
+    parts = [
+        '<p>Gap configured: ' + e(current_episode['gapConfigured']) + '; current samples: '
+        + e(current_episode['gapSamples'] if current_episode['gapSamples'] is not None else 'not configured')
+        + '.</p>',
+        form(
+            '/api/v1/episodes/' + current_episode['episodeId'] + '/gap',
+            'episode-gap',
+            revision(current_episode['revision']) + field('gapSamples', 'New intro-to-diary gap samples'),
+            'Save explicit gap',
+        ),
+    ]
+    for component in current_episode['components']:
+        source = (
+            'not attached'
+            if not component['attached']
+            else component['sourceJobId'] + ' master ' + component['sourceMasterId']
+        )
+        parts.append(
+            '<p>' + e(component['role']) + ' slot; ' + e(source) + '; source current: '
+            + e(component['sourceCurrent']) + '; eligible operations: '
+            + e(', '.join(component['eligibleOperations'])) + '.</p>'
+        )
+    if current_episode['assemblyReady']:
+        parts.append(form(
+            '/api/v1/episodes/' + current_episode['episodeId'] + '/speech-masters',
+            'episode-assembly',
+            revision(current_episode['revision']),
+            'Assemble dry episode speech master',
+        ))
+    for master in current_episode['masters']:
+        parts.append(
+            '<article><p>Episode master ' + e(master['masterId']) + '; components '
+            + e(master['componentCount']) + '; current ' + e(master['current'])
+            + '; gap configured ' + e(master['gapConfigured']) + '; latest listening '
+            + e(master['latestListening'] or 'none') + '.</p><audio controls preload="metadata" src="'
+            + e(master['audioUrl']) + '"></audio>'
+            + form(
+                '/api/v1/episodes/' + current_episode['episodeId'] + '/speech-masters/'
+                + master['masterId'] + '/listen',
+                'episode-listen',
+                revision(current_episode['revision'])
+                + decision('outcome', ('passed', 'failed'))
+                + field('notes', 'Listening notes', textarea=True),
+                'Record episode listening',
+            )
+            + '</article>'
+        )
+    for attempt in current_episode['assemblyAttempts']:
+        parts.append(
+            '<article><p>Episode assembly attempt ' + e(attempt['attemptId']) + '; state '
+            + e(attempt['state']) + '; terminal ' + e(attempt['terminal']) + '; components '
+            + e(attempt['componentCount']) + '; gap configured ' + e(attempt['gapConfigured'])
+            + '; needs reconciliation ' + e(attempt['needsReconciliation'])
+            + '; output ready ' + e(attempt['outputReady']) + '.</p>'
+        )
+        if attempt['reconciliationAvailable']:
+            parts.append(form(
+                '/api/v1/episodes/' + current_episode['episodeId'] + '/assembly-attempts/'
+                + attempt['attemptId'] + '/reconcile',
+                'episode-reconcile',
+                revision(current_episode['revision']),
+                'Reconcile episode assembly from durable evidence',
+            ))
+        parts.append('</article>')
+    return parts
+
+
+def _narration_mastering_parts(narration, current_episode):
+    base = '/api/v1/jobs/' + narration['jobId']
+    expected = revision(narration['revision'])
+    parts = ['<section><h3>Review, selection and narration mastering</h3>']
+    for passage in narration['passages']:
+        parts.append(
+            '<article><p>Passage ' + e(passage['order'] + 1) + '; text revision '
+            + e(passage['currentTextRevision']) + '; selected take '
+            + e(passage['selectedTakeId'] or 'none') + '; assembly ready '
+            + e(passage['readyForAssembly']) + '.</p>'
+        )
+        for take in passage['takes']:
+            take_path = base + '/takes/' + take['takeId']
+            parts.append(
+                '<div><p>Take ' + e(take['takeId']) + '; text revision ' + e(take['textRevision'])
+                + '; eligible ' + e(take['eligible']) + '; review '
+                + e(take['latestOperationalReview'] or 'none') + '; selected '
+                + e(take['selected']) + '.</p><audio controls preload="metadata" src="'
+                + e(take['audioUrl']) + '"></audio>'
+                + form(
+                    take_path + '/review',
+                    'review',
+                    expected + decision('outcome', ('accepted', 'rejected'))
+                    + field('notes', 'Operational review notes', textarea=True),
+                    'Record operational review',
+                )
+            )
+            if take['eligible'] and take['latestOperationalReview'] == 'accepted' and not take['selected']:
+                parts.append(form(
+                    take_path + '/select',
+                    'select',
+                    expected + hidden('passageId', passage['passageId'])
+                    + field('reason', 'Selection reason', textarea=True),
+                    'Select this take',
+                ))
+            parts.append('</div>')
+        parts.append('</article>')
+    if narration['assemblyReady']:
+        gap_count = max(0, len(narration['passages']) - 1)
+        parts.append(
+            '<p>Enter exactly ' + e(gap_count) + ' inter-passage gap sample value(s), one per line.</p>'
+            + form(
+                base + '/narration-masters',
+                'narration-assembly',
+                expected + field('gapsSamples', 'Inter-passage gap samples', textarea=True),
+                'Assemble dry narration master',
+            )
+        )
+    for master in narration['masters']:
+        parts.append(
+            '<article><p>Narration master ' + e(master['masterId']) + '; selected takes '
+            + e(master['selectedTakeCount']) + '; current ' + e(master['current'])
+            + '; attach ready ' + e(master['attachReady']) + '; issued snapshots '
+            + e(master['issuedSnapshotCount']) + '; latest listening '
+            + e(master['latestListening'] or 'none') + '.</p><audio controls preload="metadata" src="'
+            + e(master['audioUrl']) + '"></audio>'
+            + form(
+                base + '/narration-masters/' + master['masterId'] + '/listen',
+                'narration-listen',
+                expected + decision('outcome', ('passed', 'failed'))
+                + field('notes', 'Listening notes', textarea=True),
+                'Record narration-master listening',
+            )
+        )
+        if master['attachReady'] and current_episode is not None:
+            role = 'intro' if narration['lane'] == 'lane_c' else 'diary'
+            parts.append(form(
+                base + '/narration-masters/' + master['masterId'] + '/attach/' + role,
+                'attach',
+                hidden('sourceExpectedRevision', narration['revision'])
+                + hidden('episodeId', current_episode['episodeId'])
+                + hidden('episodeExpectedRevision', current_episode['revision']),
+                'Issue current snapshot and attach as ' + role,
+            ))
+        parts.append('</article>')
+    for attempt in narration['assemblyAttempts']:
+        parts.append(
+            '<article><p>Narration assembly attempt ' + e(attempt['attemptId']) + '; state '
+            + e(attempt['state']) + '; terminal ' + e(attempt['terminal']) + '; selected takes '
+            + e(attempt['selectedTakeCount']) + '; needs reconciliation '
+            + e(attempt['needsReconciliation']) + '; output ready ' + e(attempt['outputReady']) + '.</p>'
+        )
+        if attempt['reconciliationAvailable']:
+            parts.append(form(
+                base + '/narration-assembly-attempts/' + attempt['attemptId'] + '/reconcile',
+                'narration-reconcile',
+                expected,
+                'Reconcile narration assembly from durable evidence',
+            ))
+        parts.append('</article>')
+    parts.append('</section>')
+    return parts
+
+
 def unavailable_page(csrf_token):
     return document(csrf_token, '<p>Studio unavailable. Authoring is disabled; check the local store with CLI doctor.</p><p>' + BACKUP_GUIDANCE + '</p>')
 
@@ -172,6 +489,7 @@ def page(csrf_token, health, current_episode, authorities, jobs):
         parts.append(form('/api/v1/episode', 'episode', '', 'Create episode'))
     else:
         parts.append('<p>' + e(current_episode['episodeId']) + ' revision ' + e(current_episode['revision']) + ': ' + e(current_episode['status']) + '</p>')
+        parts.extend(_episode_mastering_parts(current_episode))
     parts.append('</section><section><h2>Authority registration and validity</h2><p>Record validity does not establish generation readiness.</p>')
     for record in authorities:
         parts.append('<h3>' + ('Lane B — diary' if record['lane'] == 'lane_b' else 'Lane C — intro') + '</h3><p>' + e(record['status'] or 'not registered') + '</p>')
@@ -187,7 +505,9 @@ def page(csrf_token, health, current_episode, authorities, jobs):
     if current_episode is not None:
         parts.append(form('/api/v1/jobs/intro', 'intro', '<input type="hidden" name="expectedEpisodeRevision" value="' + e(current_episode['revision']) + '">' + field('passages', 'Intro passages (separate with a blank line)', textarea=True), 'Prepare intro'))
     parts.append('</section>')
-    for job, generation in jobs:
+    for item in jobs:
+        job, generation = item[:2]
+        mastering = item[2] if len(item) == 3 else None
         parts.append('<section><h2>' + e(job['lane']) + ' job ' + e(job['jobId']) + '</h2><p>Revision ' + e(job['revision']) + '</p>')
         base = '/api/v1/jobs/' + job['jobId']
         expected = revision(job['revision'])
@@ -270,5 +590,7 @@ def page(csrf_token, health, current_episode, authorities, jobs):
                                   'Reconcile from durable evidence'))
             parts.append('</article>')
         parts.append('</section>')
+        if mastering is not None:
+            parts.extend(_narration_mastering_parts(mastering, current_episode))
         parts.append('</section>')
     return document(csrf_token, ''.join(parts))

@@ -360,6 +360,22 @@ class ApplicationStatusProjectionTests(unittest.TestCase):
         self.assertFalse(status.assembly_ready)
         self.assertFalse(status.delivery_ready)
 
+    def test_episode_gap_projection_preserves_null_zero_and_nonzero_without_using_readiness(self) -> None:
+        episode = DiaryEpisode.prepare(DiaryEpisodeId(uuid(1590)), NOW)
+
+        missing = project_episode_status(episode, (), (), NOW)
+        self.assertIsNone(missing.gap_samples)
+
+        episode.set_intro_diary_gap(0, NOW, expected_revision=episode.revision)
+        zero = project_episode_status(episode, (), (), NOW)
+        self.assertEqual(zero.gap_samples, 0)
+        self.assertFalse(zero.assembly_ready)
+
+        episode.set_intro_diary_gap(44_100, NOW, expected_revision=episode.revision)
+        nonzero = project_episode_status(episode, (), (), NOW)
+        self.assertEqual(nonzero.gap_samples, 44_100)
+        self.assertFalse(nonzero.assembly_ready)
+
     def test_status_recomputes_stale_take_and_withdrawn_authority_without_leaking_reasons(self) -> None:
         flow, _, _, diary = self._completed_flow()
         job = flow.jobs.load(diary.issuing_job_id)
