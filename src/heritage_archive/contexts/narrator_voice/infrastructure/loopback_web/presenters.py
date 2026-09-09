@@ -3,6 +3,12 @@ from html import escape
 import json
 
 from ...domain.evidence import AttemptState
+from ...domain.ids import (
+    EpisodeAssemblyAttemptId,
+    EpisodeSpeechMasterId,
+    NarrationAssemblyAttemptId,
+    NarrationMasterId,
+)
 from ...domain.values import BreakControl, ComponentRole, SpeedControl, VolumeControl, SpellingControl
 from .generation import RECONCILABLE_GENERATION_STATES
 
@@ -163,33 +169,47 @@ def generation_run(value):
 
 
 def narration_assembly(value):
-    state = getattr(value.state, "value", None)
     if (
-        state not in {"completed", "blocked", "quarantined", "unknown"}
-        or ((state == "completed") != (value.master_id is not None))
+        type(value.state) is not AttemptState
+        or value.state not in {
+            AttemptState.COMPLETED,
+            AttemptState.BLOCKED,
+            AttemptState.QUARANTINED,
+            AttemptState.UNKNOWN,
+        }
+        or type(value.attempt_id) is not NarrationAssemblyAttemptId
+        or (value.master_id is not None and type(value.master_id) is not NarrationMasterId)
+        or ((value.state is AttemptState.COMPLETED) != (value.master_id is not None))
     ):
         raise ValueError("unsupported narration assembly result")
     return {
         "jobId": value.job_id.value,
         "revision": value.revision,
         "attemptId": value.attempt_id.value,
-        "state": state,
+        "state": value.state.value,
         "masterId": None if value.master_id is None else value.master_id.value,
     }
 
 
 def episode_assembly(value):
-    state = getattr(value.state, "value", None)
     if (
-        state not in {"completed", "blocked", "quarantined", "unknown"}
-        or ((state == "completed") != (value.master_id is not None))
+        type(value.state) is not AttemptState
+        or value.state not in {
+            AttemptState.COMPLETED,
+            AttemptState.BLOCKED,
+            AttemptState.QUARANTINED,
+            AttemptState.UNKNOWN,
+        }
+        or type(value.attempt_id) is not EpisodeAssemblyAttemptId
+        or (value.master_id is not None and type(value.master_id) is not EpisodeSpeechMasterId)
+        or ((value.state is AttemptState.COMPLETED) != (value.master_id is not None))
     ):
         raise ValueError("unsupported episode assembly result")
     return {
         "episodeId": value.episode_id.value,
         "revision": value.revision,
         "attemptId": value.attempt_id.value,
-        "state": state,
+        "state": value.state.value,
         "masterId": None if value.master_id is None else value.master_id.value,
     }
 

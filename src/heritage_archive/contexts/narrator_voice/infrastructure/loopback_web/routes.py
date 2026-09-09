@@ -664,6 +664,14 @@ class NarrationAuthoringRoutes:
         expected_lane = Lane.C if role is ComponentRole.INTRO else Lane.B
         if master.attach_ready is not True or source_status.lane is not expected_lane:
             raise WebInputError(422, "validation_failed")
+        if (
+            role is ComponentRole.INTRO
+            and source_status.intended_episode_id != episode_id
+        ) or (
+            role is ComponentRole.DIARY
+            and source_status.intended_episode_id is not None
+        ):
+            raise WebInputError(422, "validation_failed")
 
         issue_command_id = self._command_id()
         issued = self._handlers.issue_narration_snapshot(c.IssueNarrationMasterSnapshotCommand(

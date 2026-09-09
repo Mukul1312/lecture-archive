@@ -241,6 +241,7 @@ class NarrationStatusProjection:
     job_id: NarrationJobId
     revision: int
     lane: Lane
+    intended_episode_id: DiaryEpisodeId | None
     current_authority: CurrentAuthorityProjection
     passages: tuple[PassageProjection, ...]
     generation_attempts: tuple[GenerationAttemptProjection, ...]
@@ -583,6 +584,7 @@ def project_narration_status(
         job.job_id,
         job.revision,
         job.lane,
+        job.contract.intended_episode_id,
         current_authority,
         tuple(passages),
         generation_attempts,

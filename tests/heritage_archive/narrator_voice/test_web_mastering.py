@@ -25,7 +25,7 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     PassageId,
     TakeId,
 )
-from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole, Lane
+from heritage_archive.contexts.narrator_voice.domain.values import ComponentRole, Lane, SafeRelativeArtifactPath
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.app import NarratorWebApplication
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web import presenters
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.generation import ProcessGenerationControl
@@ -46,11 +46,15 @@ class _Identifiers:
         return kind(uuid(next(self._values)))
 
 
-def _narration_status(job_id, lane, *, revision=11, passages=2, masters=(), attempts=(), ready=True):
+def _narration_status(
+    job_id, lane, *, revision=11, passages=2, masters=(), attempts=(), ready=True,
+    intended_episode_id=None,
+):
     return SimpleNamespace(
         job_id=job_id,
         revision=revision,
         lane=lane,
+        intended_episode_id=intended_episode_id,
         passages=tuple(
             SimpleNamespace(passage_id=PassageId(uuid(8200 + index)))
             for index in range(passages)
@@ -359,6 +363,60 @@ class WebMasteringRouteTests(unittest.TestCase):
         self.assertEqual((response.status, self.payload(response)["error"]["code"]), (500, "internal_error"))
         self.assertFalse(self.control.busy)
 
+    def test_assembly_rejects_wrong_nominal_ids_path_values_and_enum_impostors(self):
+        private_path = SafeRelativeArtifactPath("private/synthetic-output.wav")
+        narration_factories = (
+            lambda command: r.NarrationAssemblyResult(
+                command.command_id, command.job_id, 12, private_path,
+                AttemptState.COMPLETED, private_path,
+            ),
+            lambda command: r.NarrationAssemblyResult(
+                command.command_id, command.job_id, 12, self.master_id,
+                AttemptState.COMPLETED, self.narration_attempt_id,
+            ),
+            lambda command: r.NarrationAssemblyResult(
+                command.command_id, command.job_id, 12, self.narration_attempt_id,
+                SimpleNamespace(value="completed"), self.master_id,
+            ),
+        )
+        episode_factories = (
+            lambda command: r.EpisodeAssemblyResult(
+                command.command_id, command.episode_id, 18, private_path,
+                AttemptState.COMPLETED, private_path,
+            ),
+            lambda command: r.EpisodeAssemblyResult(
+                command.command_id, command.episode_id, 18, self.episode_master_id,
+                AttemptState.COMPLETED, self.episode_attempt_id,
+            ),
+            lambda command: r.EpisodeAssemblyResult(
+                command.command_id, command.episode_id, 18, self.episode_attempt_id,
+                SimpleNamespace(value="completed"), self.episode_master_id,
+            ),
+        )
+        cases = (
+            (
+                f"/api/v1/jobs/{self.job_id.value}/narration-masters",
+                {"expectedRevision": 11, "gapsSamples": [0]},
+                "assemble_narration",
+                narration_factories,
+            ),
+            (
+                f"/api/v1/episodes/{self.episode_id.value}/speech-masters",
+                {"expectedRevision": 17},
+                "assemble_episode",
+                episode_factories,
+            ),
+        )
+        for path, body, handler_name, factories in cases:
+            for index, factory in enumerate(factories):
+                with self.subTest(handler=handler_name, factory=index):
+                    setattr(self.handlers, handler_name, factory)
+                    response = self.post(path, body)
+                    self.assertEqual(response.status, 500)
+                    self.assertEqual(self.payload(response)["error"]["code"], "internal_error")
+                    self.assertNotIn(private_path.value.encode(), response.body)
+                    self.assertFalse(self.control.busy)
+
     def test_assembly_gate_wraps_status_preflight_and_refuses_stale_or_unready_without_dispatch(self):
         narration_path = f"/api/v1/jobs/{self.job_id.value}/narration-masters"
         self.narration_status = _narration_status(self.job_id, Lane.B, revision=10)
@@ -449,6 +507,7 @@ class WebMasteringRouteTests(unittest.TestCase):
             intro.issuing_job_id: _narration_status(
                 intro.issuing_job_id, Lane.C, revision=31,
                 masters=(SimpleNamespace(master_id=intro.source_master_id, attach_ready=True),),
+                intended_episode_id=episode_id,
             ),
             diary.issuing_job_id: _narration_status(
                 diary.issuing_job_id, Lane.B, revision=41,
@@ -493,6 +552,24 @@ class WebMasteringRouteTests(unittest.TestCase):
         self.handlers.discover = lambda command: SimpleNamespace(
             job_ids=tuple(source_statuses), episode_ids=(episode_id,),
         )
+
+        correct_intro_status = source_statuses[intro.issuing_job_id]
+        source_statuses[intro.issuing_job_id] = _narration_status(
+            intro.issuing_job_id,
+            Lane.C,
+            revision=31,
+            masters=(SimpleNamespace(master_id=intro.source_master_id, attach_ready=True),),
+            intended_episode_id=DiaryEpisodeId(uuid(8490)),
+        )
+        response = self.post(
+            f"/api/v1/jobs/{intro.issuing_job_id.value}/narration-masters/{intro.source_master_id.value}/attach/intro",
+            {"sourceExpectedRevision": 31, "episodeId": episode_id.value,
+             "episodeExpectedRevision": configured.revision},
+        )
+        self.assertEqual(response.status, 422)
+        self.assertEqual(self.payload(response)["error"]["code"], "validation_failed")
+        self.assertEqual(issued_commands, [])
+        source_statuses[intro.issuing_job_id] = correct_intro_status
 
         for role, snapshot, source_revision in (("intro", intro, 31), ("diary", diary, 41)):
             response = self.post(

@@ -305,6 +305,25 @@ class ApplicationStatusProjectionTests(unittest.TestCase):
         self.assertEqual(timing.provenance_counts, ((CueProvenance.DETERMINISTIC_ASSEMBLY, 2),))
         self.assertFalse(episode.delivery_ready)
 
+    def test_narration_status_projects_handler_visible_intended_episode_binding(self) -> None:
+        flow, episode_id, intro, diary = self._completed_flow()
+        intro_job = flow.jobs.load(intro.issuing_job_id)
+        diary_job = flow.jobs.load(diary.issuing_job_id)
+
+        intro_status = project_narration_status(
+            intro_job,
+            flow.authority.read(intro_job.contract.authority_record_id, flow.clock.now()),
+            flow.clock.now(),
+        )
+        diary_status = project_narration_status(
+            diary_job,
+            flow.authority.read(diary_job.contract.authority_record_id, flow.clock.now()),
+            flow.clock.now(),
+        )
+
+        self.assertEqual(intro_status.intended_episode_id, episode_id)
+        self.assertIsNone(diary_status.intended_episode_id)
+
     def test_projection_shape_and_payload_redact_private_text_provider_artifacts_and_authority_evidence(self) -> None:
         flow, authority, narration, episode = self._projections()
         projections = (authority, narration, episode)
