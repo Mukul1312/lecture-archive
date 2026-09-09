@@ -129,12 +129,15 @@ single-episode v1 constraint, and is the authoritative Task 5M execution basis.
 Task 5M is `implemented` and `smoke-verified`, not `hardened` (2026-09-09).
 The fixture journey closes/rebuilds the real local studio and retains three selected
 takes, two listened source masters and one listened episode master with exact PCM
-ordering/gaps. The synchronous checkpoint passed 182 tests and the Task 4M regression
-set passed 219. Eleven async tests remain unverified on this Windows runner because
-asyncio hangs creating its wakeup socket; raw ASGI verified packaged assets and
+ordering/gaps. The final synchronous checkpoint passed 184 tests and the current
+Task 4M regression set passed 227. Eleven async tests remain unverified on this
+Windows runner because asyncio hangs creating its wakeup socket; raw ASGI verified
+packaged assets and
 checked audio without sockets. The detailed plan records this substitution and the
 advancing-clock generation defect found and fixed by the journey. Whole-branch
-review and final acceptance remain controller-owned and pending.
+review found one malformed-generation-result boundary gap; `0a00936` fixed it and
+the original reviewer approved the scoped rereview. Final fixture checkpoints and
+offline package/import verification passed at that reviewed head.
 
 - [x] Choose the smallest frontend only after Task 3M works. React/OpenAPI generation
   is optional rather than preselected.

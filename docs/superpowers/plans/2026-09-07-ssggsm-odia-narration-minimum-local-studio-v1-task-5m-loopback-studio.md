@@ -37,22 +37,26 @@ authorized in the same chat that registers it, on
 the focused 219-test matrix before Task 5M planning.
 
 Task 5M is now `implemented` and `smoke-verified`, **not `hardened`** (2026-09-09).
-Whole-branch review and final acceptance remain controller-owned and pending.
+Whole-branch review found one Important malformed-generation-result boundary gap.
+Fix `0a00936` added exact route/presenter result validation, and the original reviewer
+approved the scoped rereview with no new defect. Two optional regression-strengthening
+Minors remain deferred; neither reflects incorrect current production behavior.
 The Task 9 fixture drives one intro and two diary passages through real filesystem
 repositories, budget/evidence/media verification and dry assembly, replacing only
 the generation gateway. All six selected take/master audio files remain exact after
 close/rebuild, as do final revisions (diary 33, intro 21, episode 11), human decisions
 and attachments. Old session, CSRF and an unused confirmation are rejected.
 
-Verification: the final synchronous Task 5M checkpoint passed 182 tests; the exact
-193-test plan command was attempted but hung at the first asynchronous platform
-test during Windows asyncio wakeup-socket initialization. Eleven async tests are
-not counted as passing. Socket-free raw ASGI GETs verified both packaged assets and
+Verification: the final synchronous Task 5M checkpoint passed 184 tests. The plan
+command now discovers 195 tests; its pre-final-fix 193-test form was attempted but
+hung at the first asynchronous platform test during Windows asyncio wakeup-socket
+initialization. Eleven async tests are not counted as passing. Socket-free raw ASGI
+GETs verified both packaged assets and
 checked episode audio after restart; this is an explicit environment substitution,
-not an HTTPX ASGITransport pass. The Task 4M regression set passed 219 tests across
-its provider/application/audio/architecture (189) and operations/budget/repository
-(30) commands. Offline wheel/sdist source-and-asset byte checks, guarded imports,
-`serve --help` and whitespace checks passed.
+not an HTTPX ASGITransport pass. The historical Task 4M 219-test set passed during
+Task 9; the final current 18-module regression matrix passed 227 tests. Offline
+wheel/sdist source-and-asset byte checks, guarded imports, `serve --help` and
+whitespace checks passed at the final reviewed source and asset bytes.
 
 Actual defect contingency: the journey exposed generation input freezing that
 backdated an attempt to its earlier preview authority observation. The narrow fix
@@ -680,7 +684,7 @@ class SingleOperatorActorResolver:
 - [x] Update README with the fixed local serve command and the explicit pre-live
   warning. Record Task 5M as `implemented` and `smoke-verified`, not `hardened`, only
   after the evidence exists.
-- [ ] Request a whole-branch code review, apply only verified findings, rerun the
+- [x] Request a whole-branch code review, apply only verified findings, rerun the
   smallest affected tests plus the checkpoint, and commit the exact final Task 5M
   files. Do not push, merge, publish or make a live request.
 

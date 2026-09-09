@@ -1,5 +1,9 @@
 # HANDOFF — Task 5M local narration studio (paused 2026-09-08)
 
+> **Superseded 2026-09-09:** Task 5M resumed and completed through reviewed code
+> checkpoint `0a00936`. This file remains historical pause evidence; use `AGENTS.md`
+> and the Task 5M plan for the current pre-live handoff, not the resume steps below.
+
 > **Pause instruction:** Mukul asked to stop before Task 7 implementation because
 > the weekly usage limit is nearly exhausted. Resume from this checkpoint; do not
 > redo completed Tasks 1–6.
@@ -176,7 +180,7 @@ These are non-blocking Minors; do not expand them into unrelated refactors.
 ## Resume checklist
 
 ```powershell
-cd C:\Users\Mukul\code\personal-projects\voice-cloning\.worktrees\narrator-voice-production-v1
+cd .worktrees\narrator-voice-production-v1
 git status --short --branch
 git log --oneline 3f6b00b..HEAD
 ```

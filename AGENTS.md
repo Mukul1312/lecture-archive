@@ -47,8 +47,9 @@
   intro-plus-two-diary journey survives a closed/rebuilt studio, including checked
   audio, selections, masters, listening and process-token invalidation. Read
   `docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md`
-  for evidence and the Windows async-runner limitation. Whole-branch review and
-  final acceptance remain with the controller on `feature/narrator-voice-production-v1`.
+  for evidence and the Windows async-runner limitation. Whole-branch review found
+  one malformed-generation-result boundary gap; local fix `0a00936` passed scoped
+  rereview and final fixture checkpoints on `feature/narrator-voice-production-v1`.
 - Task 5M tests remain fixture-only. Do not read a private production root or API
   key, bind a test server socket, or make a live, paid or private Cartesia request.
 - The pre-live storage/budget/recovery/audio/backup and provider-usage gates remain
