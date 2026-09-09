@@ -694,6 +694,10 @@ class WebMasteringPresenterTests(unittest.TestCase):
             "assets", "studio.js",
         ).read_text("utf-8")
         self.assertIn(
+            'reconciliation_unavailable: "This attempt is not eligible for reconciliation. Reload the page."',
+            script,
+        )
+        self.assertIn(
             "A source snapshot may have been issued even though attachment did not complete. "
             "Reload and inspect both source and episode state before retrying.",
             script,

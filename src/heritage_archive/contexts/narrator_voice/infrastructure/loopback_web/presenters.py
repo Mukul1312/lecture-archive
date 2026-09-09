@@ -6,8 +6,10 @@ from ...domain.evidence import AttemptState
 from ...domain.ids import (
     EpisodeAssemblyAttemptId,
     EpisodeSpeechMasterId,
+    GenerationAttemptId,
     NarrationAssemblyAttemptId,
     NarrationMasterId,
+    TakeId,
 )
 from ...domain.values import BreakControl, ComponentRole, SpeedControl, VolumeControl, SpellingControl
 from .generation import RECONCILABLE_GENERATION_STATES
@@ -144,6 +146,12 @@ def generation_estimate(value, confirmation_token):
 
 
 def generation_run(value):
+    if (
+        type(value.state) is not AttemptState
+        or type(value.attempt_id) is not GenerationAttemptId
+        or (value.take_id is not None and type(value.take_id) is not TakeId)
+    ):
+        raise ValueError("unsupported generation result")
     states = frozenset({"completed", "blocked", "failed", "unknown", "quarantined"})
     dispositions = frozenset({"denied", "released", "held", "settled", "unknown"})
     reachable_dispositions = {
@@ -153,7 +161,7 @@ def generation_run(value):
         "failed": frozenset({"held", "settled"}),
         "unknown": frozenset({"held", "unknown", "released", "settled"}),
     }
-    state = getattr(value.state, "value", None)
+    state = value.state.value
     if (state not in states or value.budget_disposition not in dispositions
             or value.budget_disposition not in reachable_dispositions.get(state, ())
             or ((state == "completed") != (value.take_id is not None))):

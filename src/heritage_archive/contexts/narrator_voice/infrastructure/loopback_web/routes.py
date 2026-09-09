@@ -805,7 +805,13 @@ class NarrationAuthoringRoutes:
                 raise
             except ValidationError:
                 raise WebInputError(500, "internal_error") from None
-            if result.job_id != confirmation.job_id:
+            if (
+                type(result) is not r.GenerationRunResult
+                or result.command_id != command_id
+                or result.job_id != confirmation.job_id
+                or type(result.revision) is not int
+                or result.revision < 1
+            ):
                 raise ValueError("generation result identity mismatch")
             return json_success(presenters.generation_run(result))
         finally:

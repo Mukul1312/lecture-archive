@@ -96,7 +96,7 @@
     generation_busy: "Generation or reconciliation is already active. Try this confirmation again after it finishes.",
     confirmation_capacity: "Confirmation capacity is full after saving the estimate. Reload before estimating again.",
     confirmation_unavailable: "This confirmation is unavailable. Reload and create a fresh estimate.",
-    reconciliation_unavailable: "This generation attempt is not eligible for reconciliation. Reload the page."
+    reconciliation_unavailable: "This attempt is not eligible for reconciliation. Reload the page."
   };
   const attachGuidance = "A source snapshot may have been issued even though attachment did not complete. Reload and inspect both source and episode state before retrying.";
 

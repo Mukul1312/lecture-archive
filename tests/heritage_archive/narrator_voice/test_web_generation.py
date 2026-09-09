@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import count
 import json
 import os
@@ -31,7 +32,7 @@ from heritage_archive.contexts.narrator_voice.domain.ids import (
     PassageId,
     TakeId,
 )
-from heritage_archive.contexts.narrator_voice.domain.values import Lane, PassageText
+from heritage_archive.contexts.narrator_voice.domain.values import Lane, PassageText, SafeRelativeArtifactPath
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web import presenters
 from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.generation import (
     ConfirmationCapacityReached,
@@ -411,6 +412,63 @@ class WebGenerationRouteTests(unittest.TestCase):
         self.assertEqual(_json(second)["error"]["code"], "confirmation_unavailable")
         self.assertEqual(_json(extra)["error"]["code"], "invalid_json")
         self.assertEqual(len(self.generate_commands), 1)
+
+    def test_generation_rejects_path_values_wrong_nominal_ids_and_enum_impostors(self):
+        private_path = SafeRelativeArtifactPath("private/synthetic-output.wav")
+        original = self.handlers.generate
+        self.tokens = (f"{value:064x}" for value in count(100))
+        malformed_fields = (
+            {"attempt_id": private_path},
+            {"take_id": private_path},
+            {"attempt_id": TakeId(uuid(560))},
+            {"take_id": GenerationAttemptId(uuid(561))},
+            {"state": SimpleNamespace(value="completed")},
+        )
+        for fields in malformed_fields:
+            with self.subTest(fields=fields):
+                self.handlers.generate = lambda command, fields=fields: replace(original(command), **fields)
+                token = self.control.issue(self.result)
+                response = self.post(
+                    f"/api/v1/jobs/{self.result.job_id.value}/generate",
+                    {"confirmationToken": token},
+                )
+                self.assertFalse(self.control.busy)
+                self.assertEqual(response.status, 500)
+                self.assertEqual(_json(response), {
+                    "ok": False,
+                    "error": {"code": "internal_error", "message": "The request could not be completed."},
+                })
+                self.assertNotIn(private_path.value.encode(), response.body)
+
+    def test_generation_rejects_structural_results_wrong_bindings_and_invalid_revisions(self):
+        original = self.handlers.generate
+        self.tokens = (f"{value:064x}" for value in count(100))
+        factories = (
+            lambda command: SimpleNamespace(
+                command_id=command.command_id, job_id=command.job_id, revision=9,
+                attempt_id=GenerationAttemptId(uuid(560)), state=AttemptState.COMPLETED,
+                take_id=TakeId(uuid(561)), budget_disposition="settled",
+            ),
+            lambda command: replace(original(command), command_id=CommandId(uuid(562))),
+            lambda command: replace(original(command), job_id=NarrationJobId(uuid(563))),
+            lambda command: replace(original(command), revision=0),
+            lambda command: replace(original(command), revision=True),
+            lambda command: replace(original(command), revision=9.0),
+        )
+        for index, factory in enumerate(factories):
+            with self.subTest(factory=index):
+                self.handlers.generate = factory
+                token = self.control.issue(self.result)
+                response = self.post(
+                    f"/api/v1/jobs/{self.result.job_id.value}/generate",
+                    {"confirmationToken": token},
+                )
+                self.assertFalse(self.control.busy)
+                self.assertEqual(response.status, 500)
+                self.assertEqual(_json(response), {
+                    "ok": False,
+                    "error": {"code": "internal_error", "message": "The request could not be completed."},
+                })
 
     def test_busy_refusal_is_responsive_and_preserves_a_distinct_confirmation(self):
         second_token = self.control.issue(self.result)

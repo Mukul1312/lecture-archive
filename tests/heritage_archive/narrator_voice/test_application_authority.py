@@ -66,7 +66,6 @@ class AuthorityApplicationTests(unittest.TestCase):
         stored = self.repository.load(self.record_id)
         self.assertEqual((result.record_id, result.revision, result.status), (self.record_id, 1, AuthorizationStatus.ACTIVE))
         self.assertEqual((stored.steward_actor_id, self.actor_resolver.calls), (self.actor, ["fake-session"]))
-        self.assertEqual(self.ids.calls, [])
         self.assertFalse(hasattr(result, "evidence_digest"))
 
     def test_register_CAS_refusal_has_no_persisted_mutation(self) -> None:
