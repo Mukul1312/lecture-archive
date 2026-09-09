@@ -241,6 +241,38 @@ class GenerationApplicationTests(unittest.TestCase):
             ),
         )
 
+    def test_generation_after_estimate_preserves_authority_time_without_backdating_attempt(self):
+        class AdvancingClock:
+            def __init__(self):
+                self.value = NOW + timedelta(seconds=10)
+
+            def now(self):
+                value = self.value
+                self.value += timedelta(seconds=1)
+                return value
+
+        self.clock = AdvancingClock()
+        def observe_provider_completion():
+            observed = self.clock.now()
+            self.gateway.result = replace(
+                self.synthesis_result,
+                events=tuple(replace(event, observed_at=observed) for event in self.synthesis_result.events),
+                evidence_publications=tuple(replace(publication, published_at=observed)
+                                            for publication in self.synthesis_result.evidence_publications),
+            )
+        self.gateway.after_call = observe_provider_completion
+        try:
+            result = self.handler()(self.command())
+        except ValidationError as error:
+            self.fail(f"generation rejected an earlier confirmed authority observation: {error}")
+        self.assertEqual(result.state, AttemptState.COMPLETED)
+        attempt = self.jobs.load(self.job_id).generation_attempt(self.attempt_id)
+        self.assertEqual(attempt.effective_input.authority_observed_at, NOW)
+        self.assertEqual(attempt.created_at, NOW + timedelta(seconds=10))
+        self.assertGreaterEqual(attempt.updated_at, attempt.created_at)
+        self.assertEqual(self.gateway.calls[0].effective_input.authority_observed_at, NOW)
+        self.assertEqual(self.budget.read(self.reservation_id), BudgetRecoveryState.SETTLED)
+
     def test_gateway_invocation_binds_attempt_complete_contract_and_frozen_input(self) -> None:
         from heritage_archive.contexts.narrator_voice.application.ports import SynthesisInvocation
 

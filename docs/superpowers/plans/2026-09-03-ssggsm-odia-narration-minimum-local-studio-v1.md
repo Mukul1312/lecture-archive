@@ -126,17 +126,27 @@ The detailed plan selects a server-rendered Starlette boundary with minimal loca
 JavaScript, records the fresh-store authorization/discovery/playback seams, fixes the
 single-episode v1 constraint, and is the authoritative Task 5M execution basis.
 
-- [ ] Choose the smallest frontend only after Task 3M works. React/OpenAPI generation
+Task 5M is `implemented` and `smoke-verified`, not `hardened` (2026-09-09).
+The fixture journey closes/rebuilds the real local studio and retains three selected
+takes, two listened source masters and one listened episode master with exact PCM
+ordering/gaps. The synchronous checkpoint passed 182 tests and the Task 4M regression
+set passed 219. Eleven async tests remain unverified on this Windows runner because
+asyncio hangs creating its wakeup socket; raw ASGI verified packaged assets and
+checked audio without sockets. The detailed plan records this substitution and the
+advancing-clock generation defect found and fixed by the journey. Whole-branch
+review and final acceptance remain controller-owned and pending.
+
+- [x] Choose the smallest frontend only after Task 3M works. React/OpenAPI generation
   is optional rather than preselected.
-- [ ] Bind one worker to `127.0.0.1`; resolve ActorId server-side and enforce a process
+- [x] Bind one worker to `127.0.0.1`; resolve ActorId server-side and enforce a process
   session, exact Host/Origin and anti-forgery checks on mutations.
-- [ ] Never expose credentials, private provider IDs or absolute artifact paths;
+- [x] Never expose credentials, private provider IDs or absolute artifact paths;
   provide opaque checked audio playback routes.
-- [ ] Implement only readiness/authorization, passage/recipe editing, preview/budget,
+- [x] Implement only readiness/authorization, passage/recipe editing, preview/budget,
   sequential generation/recovery, take review/selection, narration assembly/listening,
   episode assembly/listening and backup status.
-- [ ] Keep browser state non-authoritative and show stale-revision/unknown outcomes.
-- [ ] Smoke-verify one complete fake intro-plus-diary workflow and focused mutation
+- [x] Keep browser state non-authoritative and show stale-revision/unknown outcomes.
+- [x] Smoke-verify one complete fake intro-plus-diary workflow and focused mutation
   security checks. Do not build duplicate browser journeys or a comprehensive audit
   explorer.
 

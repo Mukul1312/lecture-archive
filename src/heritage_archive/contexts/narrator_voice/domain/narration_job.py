@@ -827,7 +827,8 @@ class NarrationJob:
                 attempt,
                 state=AttemptState.INPUT_FROZEN,
                 effective_input=effective_input,
-                updated_at=effective_input.authority_observed_at,
+                # Authority observation belongs to the earlier confirmed preview.
+                # Retain this attempt's operation time instead of backdating it.
             )
         )
         self._revision += 1

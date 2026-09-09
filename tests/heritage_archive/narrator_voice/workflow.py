@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager, ExitStack
+from dataclasses import replace
+from importlib.resources import files
+import json
+import os
+from unittest.mock import patch
+
 from heritage_archive.kernel import ActorId, ArtifactId, ArtifactRef
 from heritage_archive.contexts.narrator_voice.application.commands import (
     AssembleNarrationMasterCommand,
@@ -259,3 +266,142 @@ class NoNetworkWorkflow:
                 CommandId(uuid(base + 27)), job_id, assembled.master_id, listened.revision,
             )
         ).snapshot
+
+
+@contextmanager
+def forbid_web_external_io():
+    """Fail positively on credential reads or any network seam, including cleanup."""
+    original_getitem = type(os.environ).__getitem__
+    credential_reads = []
+
+    def guarded_getitem(environment, key):
+        if key.upper() == "CARTESIA_API_KEY":
+            credential_reads.append(key)
+            raise AssertionError("credential lookup forbidden in durable web fixture")
+        return original_getitem(environment, key)
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(type(os.environ), "__getitem__", guarded_getitem))
+        guards = [stack.enter_context(patch(target, side_effect=AssertionError(target + " forbidden")))
+                  for target in (
+                      "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyname_ex",
+                      "socket.socket", "socket.socketpair", "socket.create_connection",
+                      "httpx.Client.send", "httpx.AsyncClient.send",
+                      "http.client.HTTPConnection.request", "urllib.request.urlopen",
+                      "heritage_archive.platform.cartesia.transport.CartesiaSseTransport.stream",
+                      "heritage_archive.composition_root.narrator_voice_live.EnvironmentCartesiaCredentialSupplier.read_for_transmission",
+                      "heritage_archive.contexts.narrator_voice.infrastructure.cartesia_gateway.CartesiaSynthesisGateway.synthesize",
+                  )]
+        yield
+        # Application error redaction can catch an AssertionError; call counts also
+        # make such swallowed attempts fail this fixture's outer boundary.
+        for guard in guards:
+            guard.assert_not_called()
+        if credential_reads:
+            raise AssertionError("credential lookup was swallowed by an application boundary")
+
+
+class DurableFixtureGateway:
+    """Only the provider port is fake; referenced evidence is really published."""
+
+    def __init__(self, artifacts, identifiers, clock):
+        self.artifacts, self.identifiers, self.clock = artifacts, identifiers, clock
+        self.calls = []
+        self.pcm_by_passage = {}
+
+    def synthesize(self, invocation):
+        from heritage_archive.contexts.narrator_voice.domain.values import CanonicalAudioFacts
+        from heritage_archive.contexts.narrator_voice.infrastructure.pcm_audio import encode_canonical_pcm16_wav
+        self.calls.append(invocation)
+        # Distinct, non-silent, deterministic PCM makes concatenation/order visible.
+        ordinal = len(self.calls)
+        pcm = ordinal.to_bytes(2, "little", signed=True) + (-ordinal).to_bytes(2, "little", signed=True)
+        self.pcm_by_passage[invocation.effective_input.passage_id.value] = pcm
+        observed = self.clock.now()
+        publication = self.artifacts.publish(
+            SafeRelativeArtifactPath(f"evidence/fixture/{invocation.attempt_id.value}/sanitized.json"),
+            b'{"fixture":true,"terminal":"success","usage":"1"}',
+            "application/json", observed,
+        )
+        event = ProviderEventEvidence(
+            self.identifiers.new_id(ProviderEventId), 0, ProviderEventKind.TERMINAL,
+            publication.reference, publication.reference.content_digest, observed,
+            None, None, None, None, "1", ProviderTerminalClass.SUCCESS,
+        )
+        return SynthesisResult((event,), encode_canonical_pcm16_wav(pcm, CanonicalAudioFacts()),
+                               (publication,), None, NonNegativeDecimal("1"))
+
+
+class DurableWebWorkflow:
+    """Build the persisted studio and expose requests without a browser or socket."""
+
+    def __init__(self, root, *, security, principal):
+        from heritage_archive.composition_root.narrator_voice_live import build_live_narration
+        from heritage_archive.composition_root.narrator_voice_web import build_authoring_bindings
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.app import NarratorWebApplication
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.generation import ProcessGenerationControl
+        from heritage_archive.contexts.narrator_voice.infrastructure.loopback_web.routes import NarrationAuthoringRoutes
+        from tests.heritage_archive.narrator_voice.test_cartesia_gateway import Identifiers
+        self.ids, self.security = Identifiers(), security
+        self.studio = build_live_narration(root, process_principal=principal, identifiers=self.ids)
+        original = self.studio.handlers.generate
+        self.gateway = DurableFixtureGateway(original.artifacts, self.ids, original.clock)
+        self.handlers = replace(self.studio.handlers, generate=replace(original, gateway=self.gateway))
+        self.control = ProcessGenerationControl(security.session_token)
+        routes = NarrationAuthoringRoutes(
+            self.handlers, build_authoring_bindings(self.studio.policies, principal), self.ids, self.control,
+        )
+        package = files("heritage_archive.contexts.narrator_voice.infrastructure.loopback_web")
+        self.assets = {f"/assets/studio.{suffix}": package.joinpath("assets", f"studio.{suffix}").read_bytes()
+                       for suffix in ("css", "js")}
+        self.app = NarratorWebApplication(security, dispatch=routes, render_root=routes.render_root, assets=self.assets)
+
+    def close(self):
+        self.studio.close()
+
+    def headers(self, mutation=False):
+        values = ((b"host", b"127.0.0.1:8765"),
+                  (b"cookie", ("narrator_session=" + self.security.session_token).encode()))
+        if mutation:
+            values += ((b"origin", b"http://127.0.0.1:8765"), (b"sec-fetch-site", b"same-origin"),
+                       (b"content-type", b"application/json"),
+                       (b"x-narrator-csrf", self.security.csrf_token.encode()))
+        return values
+
+    def request(self, method, path, body=None):
+        from heritage_archive.platform.web import WebRequest
+        return self.app(WebRequest(method, path, self.headers(method == "POST"),
+                                   b"" if body is None else json.dumps(body).encode("utf-8")))
+
+    def editor(self, job_id):
+        from heritage_archive.contexts.narrator_voice.application.commands import ShowNarrationEditorCommand
+        return self.handlers.show_editor(ShowNarrationEditorCommand(self.ids.new_id(CommandId), NarrationJobId(job_id)))
+
+    def raw_asgi_get(self, path):
+        """Drive real ASGI translation inline; asyncio's wakeup socket is forbidden."""
+        from heritage_archive.platform.web.loopback import build_asgi
+        messages = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        async def inline(call, *args):
+            return call(*args)
+
+        scope = {"type": "http", "http_version": "1.1", "method": "GET", "path": path,
+                 "raw_path": path.encode(), "query_string": b"", "headers": list(self.headers()),
+                 "scheme": "http", "server": ("127.0.0.1", 8765), "client": ("127.0.0.1", 1)}
+        with patch("heritage_archive.platform.web.loopback.run_in_threadpool", inline):
+            coroutine = build_asgi(self.app)(scope, receive, send)
+            try:
+                coroutine.send(None)
+            except StopIteration:
+                pass
+            else:
+                raise AssertionError("raw ASGI driver unexpectedly suspended")
+            finally:
+                coroutine.close()
+        return messages[0], b"".join(message.get("body", b"") for message in messages[1:])

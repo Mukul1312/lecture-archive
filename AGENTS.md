@@ -43,10 +43,16 @@
 
 - Tasks 3M and 4M are complete and smoke-verified, not hardened. Task 4M was
   merged locally into `main` through checkpoint `3f6b00b` without a live request.
-- Task 5M is the current implementation task. Read and execute
+- Task 5M is implemented and smoke-verified, not hardened. Its fixture-only
+  intro-plus-two-diary journey survives a closed/rebuilt studio, including checked
+  audio, selections, masters, listening and process-token invalidation. Read
   `docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md`
-  on `feature/narrator-voice-production-v1` in its isolated worktree.
+  for evidence and the Windows async-runner limitation. Whole-branch review and
+  final acceptance remain with the controller on `feature/narrator-voice-production-v1`.
 - Task 5M tests remain fixture-only. Do not read a private production root or API
   key, bind a test server socket, or make a live, paid or private Cartesia request.
 - The pre-live storage/budget/recovery/audio/backup and provider-usage gates remain
   open. Task 5M completion does not itself authorize a production call.
+- No additional numbered build task is scheduled after 5M. Remaining work is the
+  pre-live gate and separately approved controlled production validation; do not
+  invent Task 6M or broaden the single-operator/single-episode scope.

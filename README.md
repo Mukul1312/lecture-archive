@@ -31,8 +31,8 @@ records that the original operational plan was overbuilt for one local operator.
 [v4 minimum local-studio design](docs/superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md)
 and [minimum implementation plan](docs/superpowers/plans/2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1.md)
 govern remaining v1 work.
-Tasks 3M and 4M are implemented and smoke-verified with fixture-only tests. The
-current implementation entry point is the
+Tasks 3M, 4M and 5M are implemented and smoke-verified with fixture-only tests,
+not hardened. The restart journey and verification limits are recorded in the
 [Task 5M loopback studio plan](docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md).
 No live Cartesia request is authorized until the separate pre-live hardening gate
 passes and the operator explicitly approves one capped passage.
@@ -56,6 +56,28 @@ repository before running commands that use the live studio. Initialization also
 requires an explicit private configuration file; inspect `init --help` for its
 arguments. These offline commands do not contact Cartesia or read
 `CARTESIA_API_KEY`.
+
+### Local narration website
+
+After configuring the external studio root, the fixed local serve command is:
+
+```powershell
+.\.venv\Scripts\python.exe -m heritage_archive.composition_root.narrator_voice_cli serve
+```
+
+The website serves one operator and one episode at `http://127.0.0.1:8765`, with
+one worker and no host/port overrides. It supports authoring, explicit estimates
+and generation confirmation, checked playback, human review/selection and dry
+intro-plus-diary mastering. Restart reloads persisted work and invalidates process
+sessions and pending confirmations. Backup history is not persisted; use the
+offline `backup` and `verify-backup` commands.
+
+**Pre-live gate remains open:** the website is not approval to generate paid or
+private audio. Storage, budget, recovery, audio, backup and provider-usage checks,
+plus separate approval for one capped passage, remain required. Real successful
+SSE completion currently lacks an authoritative usage source; it cannot complete a
+take and keeps its budget reservation held. Automated verification uses temporary
+fixture roots, synthetic audio and no listening server or provider call.
 
 ## Main components
 

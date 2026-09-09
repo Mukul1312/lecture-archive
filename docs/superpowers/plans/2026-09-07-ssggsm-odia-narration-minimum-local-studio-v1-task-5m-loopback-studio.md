@@ -34,8 +34,32 @@ This detailed plan is the authoritative Task 5M execution entry point. Execution
 authorized in the same chat that registers it, on
 `feature/narrator-voice-production-v1` in the isolated
 `.worktrees/narrator-voice-production-v1` worktree. The clean Task 4M baseline passed
-the focused 219-test matrix before Task 5M planning. Task 5M is not yet
-`implemented`, `smoke-verified` or `hardened`.
+the focused 219-test matrix before Task 5M planning.
+
+Task 5M is now `implemented` and `smoke-verified`, **not `hardened`** (2026-09-09).
+Whole-branch review and final acceptance remain controller-owned and pending.
+The Task 9 fixture drives one intro and two diary passages through real filesystem
+repositories, budget/evidence/media verification and dry assembly, replacing only
+the generation gateway. All six selected take/master audio files remain exact after
+close/rebuild, as do final revisions (diary 33, intro 21, episode 11), human decisions
+and attachments. Old session, CSRF and an unused confirmation are rejected.
+
+Verification: the final synchronous Task 5M checkpoint passed 182 tests; the exact
+193-test plan command was attempted but hung at the first asynchronous platform
+test during Windows asyncio wakeup-socket initialization. Eleven async tests are
+not counted as passing. Socket-free raw ASGI GETs verified both packaged assets and
+checked episode audio after restart; this is an explicit environment substitution,
+not an HTTPX ASGITransport pass. The Task 4M regression set passed 219 tests across
+its provider/application/audio/architecture (189) and operations/budget/repository
+(30) commands. Offline wheel/sdist source-and-asset byte checks, guarded imports,
+`serve --help` and whitespace checks passed.
+
+Actual defect contingency: the journey exposed generation input freezing that
+backdated an attempt to its earlier preview authority observation. The narrow fix
+retains the attempt operation time and preserves the exact authority evidence.
+An advancing-clock regression failed before the fix; generation/recovery/attempt
+tests plus the initial full journey then passed 66 tests. No fixed test clock hides
+the defect in the durable web journey.
 
 Planning and automated implementation remain entirely fixture-only. Do not read a
 private production root, read `CARTESIA_API_KEY`, open a provider socket, make a
@@ -630,16 +654,16 @@ class SingleOperatorActorResolver:
 - Modify: `AGENTS.md`
 - Modify: this plan and the minimum master plan after evidence exists
 
-- [ ] Drive the framework-neutral/ASGI boundary through: fresh readiness → episode →
+- [x] Drive the framework-neutral/ASGI boundary through: fresh readiness → episode →
   configured Lane-B/Lane-C authority → diary and intro jobs → passage edit/order →
   structured and advanced recipe validation → exact estimate → one-shot fake
   generation → playback → accept/select → narration assembly/listening/snapshot →
   attach intro/diary → explicit episode gap → episode assembly/playback/listening.
-- [ ] Close and rebuild the application against the same temporary external root;
+- [x] Close and rebuild the application against the same temporary external root;
   rediscover the episode/jobs and prove current revisions, selections, masters,
   listening decisions and verified audio remain available. Assert no credential read,
   DNS/socket, HTTP transport or real Cartesia call throughout.
-- [ ] Keep the journey representative: one intro passage and the minimum diary
+- [x] Keep the journey representative: one intro passage and the minimum diary
   passages needed to prove ordering/gaps. Do not add duplicate browser journeys,
   Playwright, a browser farm or an exhaustive hostile-input matrix.
 - [ ] Run the Task 5M focused checkpoint:
@@ -648,11 +672,12 @@ class SingleOperatorActorResolver:
   python -m unittest tests.heritage_archive.narrator_voice.test_application_authority tests.heritage_archive.narrator_voice.test_application_status tests.heritage_archive.narrator_voice.test_application_audio_playback tests.heritage_archive.narrator_voice.test_filesystem_repositories tests.heritage_archive.narrator_voice.test_filesystem_evidence tests.heritage_archive.narrator_voice.test_local_operator tests.heritage_archive.narrator_voice.test_live_studio tests.heritage_archive.platform.test_loopback_web tests.heritage_archive.narrator_voice.test_web_security tests.heritage_archive.narrator_voice.test_web_authoring tests.heritage_archive.narrator_voice.test_web_generation tests.heritage_archive.narrator_voice.test_web_media tests.heritage_archive.narrator_voice.test_web_mastering tests.heritage_archive.narrator_voice.test_web_workflow tests.heritage_archive.narrator_voice.test_cli tests.heritage_archive.test_architecture -v
   ```
 
-- [ ] Run the existing Task 4M fixture regression matrix, source-package/import
-  smoke, `serve --help`, asset GETs through `ASGITransport`, `git diff --check`, and an
+- [x] Run the existing Task 4M fixture regression matrix, source-package/import
+  smoke, `serve --help`, asset GETs through socket-free raw ASGI (the documented
+  Windows replacement for `ASGITransport`), `git diff --check`, and an
   exact staged-file secret/private-data/media scan. Do not bind a real socket during
   automated verification.
-- [ ] Update README with the fixed local serve command and the explicit pre-live
+- [x] Update README with the fixed local serve command and the explicit pre-live
   warning. Record Task 5M as `implemented` and `smoke-verified`, not `hardened`, only
   after the evidence exists.
 - [ ] Request a whole-branch code review, apply only verified findings, rerun the
