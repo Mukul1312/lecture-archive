@@ -2,10 +2,16 @@
 
 > **For agentic workers:** implement one small vertical slice at a time. Report
 > `implemented`, `smoke-verified` and `hardened` separately. Do not expand a slice to
-> exhaustive hardening unless its named pre-live gate has arrived.
+> exhaustive hardening without an observed defect or a release checkpoint.
 
 **Goal:** Finish a simple, restart-safe, single-operator local studio for the accepted
 Lane-C intro and Lane-B SSGGSM Odia diary workflow.
+
+**Operational scope update (2026-09-11):** the current production requirement is
+Lane-B diary narration only. Preserve the completed Lane-C introduction capability
+and all of its tests, but leave it dormant during configuration and controlled live
+validation. Do not create, authorize, generate, select or assemble an intro job
+unless the operator explicitly restores that requirement.
 
 **Architecture:** Preserve the existing three aggregate roots and inward dependency
 rule. Add only concrete local filesystem, audio, Cartesia and loopback-web adapters;
@@ -22,16 +28,16 @@ at Task 5.
 
 - ADR-0012 and the v4 design govern remaining v1 work. ADR-0006 through ADR-0011
   continue to govern the domain/policy decisions they retain.
-- Work only in `feature/narrator-voice-production-v1`; do not push, merge, publish or
-  make a live Cartesia request.
+- Continue on `main`; do not push, merge or publish without separate instruction.
 - Never track private text, authorization evidence, provider IDs, keys, generated or
   reference audio, raw private timing or production stores.
 - Keep exactly three aggregate roots/repositories. Add no Master repository, budget
   aggregate, CQRS/event-sourcing layer or generic workflow engine.
 - Keep dry PCM16 little-endian mono 44.1-kHz WAV, exact PCM assembly and explicit
   sample gaps. Add no hidden DSP, music or resampling.
-- Use risk-based verification: minimal focused checks now, named hardening before the
-  first real paid/private call, and broad suites only at meaningful checkpoints.
+- Use risk-based verification: preserve every existing test, run the smallest affected
+  modules during development, and run broad suites only at major integration or
+  release checkpoints.
 - Stage exact paths only. Preserve unrelated and interrupted worktree changes.
 
 ## Task 2C — close only the persistence-critical Plan 2 findings
@@ -100,7 +106,7 @@ application port, with sanitized evidence and no automated live calls.
 
 Task 4M is implemented and smoke-verified, not hardened. Its fixture-only result was
 merged locally into `main` through checkpoint `3f6b00b`; the detailed plan retains
-the implementation evidence and unresolved pre-live limitations.
+the implementation evidence and unresolved live-operation limitations.
 
 - [x] Confirm the smallest current supported HTTP/parser dependency set immediately
   before implementation; do not add a provider-generic transport framework.
@@ -129,12 +135,12 @@ single-episode v1 constraint, and is the authoritative Task 5M execution basis.
 Task 5M is `implemented` and `smoke-verified`, not `hardened` (2026-09-09).
 The fixture journey closes/rebuilds the real local studio and retains three selected
 takes, two listened source masters and one listened episode master with exact PCM
-ordering/gaps. The final synchronous checkpoint passed 184 tests and the current
-Task 4M regression set passed 227. Eleven async tests remain unverified on this
-Windows runner because asyncio hangs creating its wakeup socket; raw ASGI verified
-packaged assets and
-checked audio without sockets. The detailed plan records this substitution and the
-advancing-clock generation defect found and fixed by the journey. Whole-branch
+ordering/gaps. After the Windows IPv4/asyncio repair, `socket.socketpair()` and
+`asyncio.run()` pass and the complete fixture-only Task 5M checkpoint passes 195/195,
+including all eleven async tests. Raw ASGI also verified packaged assets and checked
+audio without a listening socket. The current Task 4M regression set passed 227. The
+detailed plan records the advancing-clock generation defect found and fixed by the
+journey. Whole-branch
 review found one malformed-generation-result boundary gap; `0a00936` fixed it and
 the original reviewer approved the scoped rereview. Final fixture checkpoints and
 offline package/import verification passed at that reviewed head.
@@ -153,20 +159,18 @@ offline package/import verification passed at that reviewed head.
   security checks. Do not build duplicate browser journeys or a comprehensive audit
   explorer.
 
-## Pre-live hardening gate
+## Controlled live validation and deferred hardening
 
-This gate may run after Tasks 4M/5M, but it must pass before the first real paid or
-private generation:
+On 2026-09-10 the operator authorized at most ten live Cartesia calls, each no longer
+than one minute. Begin with one Lane-B diary call; Lane C remains dormant. Before
+every call, require healthy `doctor` output, current authorization, deliberately
+configured caps, exact preview confirmation, a single request with no automatic
+replay, and checked immutable audio. This approval does not extend beyond the
+ten-call/one-minute boundary.
 
-- [ ] Exercise representative restart boundaries around provider send, artifact
-  publication and aggregate finalization.
-- [ ] Verify stale revisions, immutable artifacts, exact WAV/PCM and unknown budget
-  holds using the durable adapters.
-- [ ] Create, verify and restore one complete backup into an empty temporary root.
-- [ ] Run the focused Narrator Voice suite, architecture checks, package/import checks,
-  one active repository regression checkpoint and `git diff --check`.
-- [ ] Scan the exact staged set for private IDs, keys, text and audio.
-- [ ] Stop and request explicit operator approval before any chargeable Cartesia call.
-
-Contingency is not a scheduled phase. If an actual defect appears, record the defect,
-its impact and the additional time separately.
+Use the real result to drive the next step. Reproduce any observed defect with the
+smallest focused test, preserve existing tests and integrity/hashing behavior, and
+fix only that defect. Broader storage, recovery, budget, audio and backup regression
+work remains a release checkpoint rather than a prerequisite for this bounded live
+validation. Contingency is not a scheduled phase; record actual defects and their
+impact separately. Do not create Task 6M.

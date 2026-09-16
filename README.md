@@ -34,8 +34,12 @@ govern remaining v1 work.
 Tasks 3M, 4M and 5M are implemented and smoke-verified with fixture-only tests,
 not hardened. The restart journey and verification limits are recorded in the
 [Task 5M loopback studio plan](docs/superpowers/plans/2026-09-07-ssggsm-odia-narration-minimum-local-studio-v1-task-5m-loopback-studio.md).
-No live Cartesia request is authorized until the separate pre-live hardening gate
-passes and the operator explicitly approves one capped passage.
+On 2026-09-10 the operator authorized bounded live validation of at most ten
+Cartesia calls, each no longer than one minute. This is validation authority, not
+general production approval.
+The current production requirement is Lane-B diary narration only. Lane-C
+introduction support and its existing tests remain intact but dormant; controlled
+validation must not create or generate an introduction job.
 The [codebase-wide capability audit](docs/narrator-voice-shared-capability-audit-2026-09-02.md)
 supports accepted [ADR-0009](docs/decisions/0009-share-narration-mechanics-not-policy.md),
 which permits provider-neutral narration mechanics while keeping lane policy isolated.
@@ -72,12 +76,14 @@ intro-plus-diary mastering. Restart reloads persisted work and invalidates proce
 sessions and pending confirmations. Backup history is not persisted; use the
 offline `backup` and `verify-backup` commands.
 
-**Pre-live gate remains open:** the website is not approval to generate paid or
-private audio. Storage, budget, recovery, audio, backup and provider-usage checks,
-plus separate approval for one capped passage, remain required. Real successful
-SSE completion currently lacks an authoritative usage source; it cannot complete a
-take and keeps its budget reservation held. Automated verification uses temporary
-fixture roots, synthetic audio and no listening server or provider call.
+**Controlled live validation:** before each authorized call, run `doctor`, confirm
+the current authorization and configured caps, send only one request, never replay
+an unknown result automatically, and verify the immutable evidence and audio. Real
+successful SSE completion currently lacks an authoritative usage source; it cannot
+complete a take and keeps its budget reservation held. Treat observed failures as
+the basis for focused fixes rather than adding speculative hardening. Automated
+verification remains fixture-only and uses temporary roots and synthetic audio. The
+live validation path uses only the configured Lane-B diary voice.
 
 ## Main components
 

@@ -26,7 +26,7 @@ OpenAPI generator, a generic task runner, a database or a provider SDK.
 
 **Prerequisite:** [Task 4M](2026-09-03-ssggsm-odia-narration-minimum-local-studio-v1-task-4m-cartesia-adapter.md)
 is implemented and smoke-verified through the locally merged `main` checkpoint
-`3f6b00b`. Its pre-live hardening gate remains open.
+`3f6b00b`. Its broader hardening remains deferred and defect-driven.
 
 ## Registration and execution status (2026-09-07)
 
@@ -47,16 +47,20 @@ the generation gateway. All six selected take/master audio files remain exact af
 close/rebuild, as do final revisions (diary 33, intro 21, episode 11), human decisions
 and attachments. Old session, CSRF and an unused confirmation are rejected.
 
-Verification: the final synchronous Task 5M checkpoint passed 184 tests. The plan
-command now discovers 195 tests; its pre-final-fix 193-test form was attempted but
-hung at the first asynchronous platform test during Windows asyncio wakeup-socket
-initialization. Eleven async tests are not counted as passing. Socket-free raw ASGI
-GETs verified both packaged assets and
-checked episode audio after restart; this is an explicit environment substitution,
-not an HTTPX ASGITransport pass. The historical Task 4M 219-test set passed during
-Task 9; the final current 18-module regression matrix passed 227 tests. Offline
+Verification update (2026-09-10): after repair of the Windows IPv4/asyncio problem,
+`socket.socketpair()` and `asyncio.run()` pass and the complete fixture-only Task 5M
+checkpoint passes 195/195 tests, including its eleven async tests. Socket-free raw
+ASGI GETs remain additional no-listener evidence for packaged assets and checked
+episode audio after restart, not a substitute forced by the environment. The
+historical Task 4M 219-test set passed during Task 9; the final current 18-module
+regression matrix passed 227 tests. Offline
 wheel/sdist source-and-asset byte checks, guarded imports, `serve --help` and
 whitespace checks passed at the final reviewed source and asset bytes.
+
+Operational scope update (2026-09-11): controlled production validation is now
+Lane-B diary narration only. Preserve the completed Lane-C introduction routes,
+domain behavior and tests as dormant capability; do not exercise them in the live
+validation workflow unless the operator explicitly restores the requirement.
 
 Actual defect contingency: the journey exposed generation input freezing that
 backdated an attempt to its earlier preview authority observation. The narrow fix
@@ -670,20 +674,20 @@ class SingleOperatorActorResolver:
 - [x] Keep the journey representative: one intro passage and the minimum diary
   passages needed to prove ordering/gaps. Do not add duplicate browser journeys,
   Playwright, a browser farm or an exhaustive hostile-input matrix.
-- [ ] Run the Task 5M focused checkpoint:
+- [x] Run the Task 5M focused checkpoint (195/195 on the repaired Windows runner):
 
   ```powershell
   python -m unittest tests.heritage_archive.narrator_voice.test_application_authority tests.heritage_archive.narrator_voice.test_application_status tests.heritage_archive.narrator_voice.test_application_audio_playback tests.heritage_archive.narrator_voice.test_filesystem_repositories tests.heritage_archive.narrator_voice.test_filesystem_evidence tests.heritage_archive.narrator_voice.test_local_operator tests.heritage_archive.narrator_voice.test_live_studio tests.heritage_archive.platform.test_loopback_web tests.heritage_archive.narrator_voice.test_web_security tests.heritage_archive.narrator_voice.test_web_authoring tests.heritage_archive.narrator_voice.test_web_generation tests.heritage_archive.narrator_voice.test_web_media tests.heritage_archive.narrator_voice.test_web_mastering tests.heritage_archive.narrator_voice.test_web_workflow tests.heritage_archive.narrator_voice.test_cli tests.heritage_archive.test_architecture -v
   ```
 
 - [x] Run the existing Task 4M fixture regression matrix, source-package/import
-  smoke, `serve --help`, asset GETs through socket-free raw ASGI (the documented
-  Windows replacement for `ASGITransport`), `git diff --check`, and an
+  smoke, `serve --help`, and asset GETs through socket-free raw ASGI as additional
+  no-listener verification, plus `git diff --check` and an
   exact staged-file secret/private-data/media scan. Do not bind a real socket during
   automated verification.
-- [x] Update README with the fixed local serve command and the explicit pre-live
-  warning. Record Task 5M as `implemented` and `smoke-verified`, not `hardened`, only
-  after the evidence exists.
+- [x] Update README with the fixed local serve command and the live-validation
+  boundary. Record Task 5M as `implemented` and `smoke-verified`, not `hardened`,
+  only after the evidence exists.
 - [x] Request a whole-branch code review, apply only verified findings, rerun the
   smallest affected tests plus the checkpoint, and commit the exact final Task 5M
   files. Do not push, merge, publish or make a live request.
@@ -710,21 +714,21 @@ Task 5M is smoke-complete only when:
 - focused tests and packaging/import checks pass without credentials, network,
   provider credits, private data or generated media entering Git.
 
-## Deferred pre-live hardening and post-5M boundary
+## Controlled live validation and post-5M boundary
 
-Task 5M does not authorize a live request. Before the first paid/private generation,
-the master plan's pre-live gate must still revalidate the Cartesia contract, exercise
-representative restart/fault windows around send/evidence/finalization, verify
-storage/budget/recovery/audio/backup integrity against the private operational setup,
-set explicit caps, and obtain separate operator approval for one tightly capped
-passage. In particular, real successful SSE completion still has no authoritative
-usage source: without one, the current adapter holds the reservation and cannot
-complete a take. That must be resolved or explicitly accepted at the pre-live gate,
-not hidden by the website.
+On 2026-09-10 the operator authorized up to ten live Cartesia calls, each no longer
+than one minute, without first completing a broad pre-live hardening matrix. Before
+each call, retain the immediate safeguards: healthy `doctor` output, current
+authorization, deliberately configured caps, exact preview confirmation, one request
+at a time, no automatic retry, and immutable evidence/audio verification. Start with
+one Lane-B diary passage, keep Lane C dormant, and use further calls only to evaluate
+a result or verify a focused fix.
 
-After that gate, the minimum v1 implementation plan has no additional numbered build
-task. What remains is controlled production validation and operations—not Task 6M:
-one approved capped live smoke, human listening/selection, a verified backup, and any
-defect-driven hardening actually revealed. Multi-user access, LAN/public hosting,
-additional episodes/voices/providers, publishing UI, trusted word timing, web backup,
-generic background work and broader browser matrices remain explicitly deferred.
+Real successful SSE completion currently has no authoritative usage source: without
+one, the current adapter holds the reservation and cannot complete a take. Do not hide
+or automatically replay that outcome. Let the first controlled attempt establish the
+real behavior, then fix only a defect actually observed with the smallest affected
+tests. The minimum v1 plan has no additional numbered build task; this is controlled
+validation and defect-driven hardening, not Task 6M. Multi-user access, LAN/public
+hosting, additional episodes/voices/providers, publishing UI, trusted word timing,
+web backup, generic background work and broader browser matrices remain deferred.
