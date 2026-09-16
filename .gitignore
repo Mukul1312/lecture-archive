@@ -13,6 +13,8 @@ __pycache__/
 *.pt
 models/
 pretrained_models/
+.env
+.env.*
 
 # Trained LoRA checkpoints (70MB each) + eval samples — kept locally, not in git
 cloud/lora_ckpts/
