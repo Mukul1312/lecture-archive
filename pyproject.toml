@@ -23,12 +23,6 @@ dev = [
     "rfc8785==0.1.4",
     "build==1.5.0",
 ]
-narrator = [
-    "httpx==0.28.1",
-    "defusedxml==0.7.1",
-    "starlette==1.6.0",
-    "uvicorn==0.52.4",
-]
 
 # No [project.scripts]. The only console entry point on the branch pointed at
 # heritage_production's CLI, which is 62 lines of unimplemented subcommands
@@ -36,6 +30,3 @@ narrator = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-"heritage_archive.contexts.narrator_voice.infrastructure.loopback_web" = ["assets/*.css", "assets/*.js"]

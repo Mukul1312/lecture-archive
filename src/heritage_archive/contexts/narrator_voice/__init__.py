@@ -1,1 +1,0 @@
-"""Narrator Voice bounded context."""
