@@ -1,7 +1,9 @@
-# Voice cloning and lecture audio tooling
+# Lecture archive
 
 This repository contains source code, tests, research notes, and reusable
-workflows for voice-cloning experiments and spoken-lecture audio enhancement.
+workflows for lecture transcription, spoken-lecture audio enhancement, and the
+earlier voice-cloning experiments. It was named `voice-cloning` until 2026-09-17
+([ADR-0013](docs/decisions/0013-narrator-voice-moves-to-its-own-repository.md)).
 Older or currently inactive workflows are intentionally retained because they
 remain useful technical work.
 
