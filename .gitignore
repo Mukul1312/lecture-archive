@@ -45,7 +45,7 @@ site/.vercel/
 # OS / editor cruft
 .DS_Store
 
-# Secrets — NEVER commit (the repo is public)
+# Secrets — NEVER commit, even though the repository is private
 .hf_token
 *.token
 .claude/settings.json
