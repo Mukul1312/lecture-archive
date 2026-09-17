@@ -43,6 +43,7 @@ someone who never runs that workflow.
 | [0011](0011-diary-episodes-compose-fixed-voice-narration-masters.md) | Diary episodes compose fixed-voice narration masters without becoming a mixed-voice job | Accepted 2026-09-02 | Narrow Odia intro scope, dry episode assembly and timed narration handoff |
 | [0012](0012-narrator-voice-v1-is-a-minimum-local-studio.md) | Narrator Voice v1 is a minimum single-operator local studio, not a general production platform | Accepted 2026-09-03 | Remaining Narrator Voice v1 implementation, verification and rollout |
 | [0013](0013-narrator-voice-moves-to-its-own-repository.md) | Narrator Voice moves to its own repository; transcription and enhancement stay together here | Accepted 2026-09-16 | `src/heritage_archive/`, `tests/heritage_archive/` and the repository boundary |
+| [0014](0014-archive-rewrite-deferred-grow-from-demand.md) | The clean-room archive rewrite missed its start gate and is deferred; archive code grows from real demand | Accepted 2026-09-17 | `scripts/ggsm_transcription/`, `scripts/youtube_enhance/`, the future `lecture_archive` package |
 
 **Reading order** for someone new: 0004 (why a rewrite at all) → 0002 (what the model is)
 → 0005 (where code goes) → 0001 (what is reused) → 0003 (the script cleanup, independent
