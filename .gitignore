@@ -106,3 +106,7 @@ site-odia-check/audio/
 
 # Accidental literal expansion of a Windows environment-variable path
 /%localappdata%/
+
+# Reference audio/subtitle working set (archive.org content, CC BY-NC / BY-NC-ND; not ours to redistribute)
+data/reference/
+data/catalogue/
