@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference editor</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header id="bar">
+  <div class="row">
+    <audio id="player" controls preload="metadata"></audio>
+    <div class="group" id="speeds" role="group" aria-label="Playback speed"></div>
+  </div>
+  <div class="row">
+    <div class="group" role="group" aria-label="Subtitle delay">
+      <span>Subtitle delay</span>
+      <button id="delay-minus" type="button">−0.5 s</button>
+      <output id="delay">+0.0 s</output>
+      <button id="delay-plus" type="button">+0.5 s</button>
+      <button id="delay-reset" type="button">Reset</button>
+    </div>
+    <label class="group"><input type="checkbox" id="follow" checked> Follow audio</label>
+    <button id="next-unchecked" type="button">Next unchecked cue</button>
+    <span id="progress"></span>
+    <span id="save-state" role="status"></span>
+  </div>
+  <div class="row small">
+    <a id="export-srt" href="/api/export.srt">Download verified SRT</a>
+    <a id="export-log" href="/api/changes.md">Download change log</a>
+    <span class="help">Esc play/pause · F2 back 3 s · F4 forward 3 s · Ctrl+Enter mark cue checked and move to the next</span>
+  </div>
+  <details>
+    <summary>Session notes</summary>
+    <textarea id="session-notes" rows="4" placeholder="General notes: the first 60 seconds, speaker labels, which citations are spoken aloud"></textarea>
+  </details>
+</header>
+<p id="load-error" role="alert" hidden></p>
+<main id="cues"></main>
+</body>
+</html>

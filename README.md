@@ -33,7 +33,29 @@ unchanged as history; the copies in `narrator-voice` are the maintained ones.
 - `.agents/skills/enhancing-lecture-audio/`: explicitly invoked operational
   workflow for processing a new lecture.
 - `tests/youtube_enhance/`: unit and workflow-safety coverage.
+- `scripts/reference_editor/`: a local, single-user web page for listening to a
+  lecture and correcting its subtitles cue by cue into a verified accuracy
+  reference. It is a helper for measuring transcription quality, not the
+  transcription pipeline itself.
 - `docs/`: research, architecture, and operational decisions.
+
+## Correcting subtitles into a reference
+
+Point the editor at a subtitle file and its audio (an archive.org URL or a local
+file). It binds `127.0.0.1` only and saves every edit to
+`<subtitle name>-review.json` beside the subtitles, keeping the previous version as
+`.bak` plus a snapshot at most every ten minutes. The subtitle file itself is never
+modified.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.reference_editor `
+    --srt data/reference/MELBOURNE_vs_90-85_synced.srt `
+    --audio "https://archive.org/download/SSGGSM1990/90-11-14%20SB12.10.2%20MEL%2090-85.mp3"
+```
+
+Open `http://127.0.0.1:8770/`. Esc plays and pauses, F2 and F4 step 3 seconds, and
+Ctrl+Enter marks the cue checked and moves to the next. "Download verified SRT" and
+"Download change log" export the result.
 
 ## Lecture-enhancement development
 
@@ -47,6 +69,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install resemblyzer==0.1.4 --no-deps
 $activeTestRoots = @(
     "tests/ggsm_transcription",
+    "tests/reference_editor",
     "tests/youtube_enhance"
 )
 foreach ($testRoot in $activeTestRoots) {
@@ -67,7 +90,7 @@ requirements file:
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements-enhance.txt
-for test_root in tests/ggsm_transcription tests/youtube_enhance; do
+for test_root in tests/ggsm_transcription tests/reference_editor tests/youtube_enhance; do
     ./.venv/bin/python -m unittest discover -s "$test_root" -t . -v || exit
 done
 ./.venv/bin/python -m unittest tests.test_legacy_script_paths -v
