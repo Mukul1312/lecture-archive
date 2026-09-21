@@ -49,6 +49,7 @@
   }
 
   function renderRow(cue, index) {
+    const view = {};
     const row = document.createElement("section");
     row.className = "cue";
     row.dataset.index = String(index);
@@ -80,6 +81,7 @@
       changed(index);
     });
     head.append(number, time, state, check, unsure, revert);
+    view.time = time;
 
     const text = document.createElement("textarea");
     text.className = "text";
@@ -110,7 +112,24 @@
     });
 
     row.append(head, text, original, note);
-    return { row, text, state, original, check, unsure, revert };
+    return Object.assign(view, { row, text, state, original, check, unsure, revert });
+  }
+
+  // Printed times are where the words are on the audio, so they follow the timing shift.
+  function paintTimes() {
+    const shift = review.offset_ms;
+    review.cues.forEach((cue, index) => {
+      const button = rows[index].time;
+      button.textContent = clock(cue.start_ms + shift);
+      button.title = shift
+        ? `Play from here. The subtitle file says ${clock(cue.start_ms)}; shown ${describeShift(shift)}.`
+        : "Play from this cue";
+    });
+  }
+
+  function describeShift(ms) {
+    if (ms === 0) return "not shifted";
+    return `${(Math.abs(ms) / 1000).toFixed(1)} s ${ms < 0 ? "earlier" : "later"}`;
   }
 
   function paint(index) {
@@ -261,8 +280,8 @@
 
   function setDelay(ms) {
     review.offset_ms = Math.max(-MAX_DELAY_MS, Math.min(MAX_DELAY_MS, ms));
-    const seconds = review.offset_ms / 1000;
-    $("delay").textContent = `${seconds >= 0 ? "+" : ""}${seconds.toFixed(1)} s`;
+    $("delay").textContent = describeShift(review.offset_ms);
+    paintTimes();
     if (current >= 0) rows[current].row.classList.remove("current");
     current = -1;
     followAudio();
