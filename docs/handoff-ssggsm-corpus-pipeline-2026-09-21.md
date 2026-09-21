@@ -14,10 +14,11 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 
 | Item | State |
 |---|---|
-| **Melbourne reference sitting** | **In progress.** The steward is checking subtitles in the local editor; work saves continuously to `data/reference/MELBOURNE_vs_90-85_synced-review.json` |
+| **Melbourne reference sitting** | **DONE (2026-09-21).** All 512 cues checked: 495 words confirmed, **17 corrected**, 0 unsure. Verified reference = `data/reference/MELBOURNE_vs_90-85_aligned-review.json` (6,494 words, span 11:22–1:20:16). The steward switched to the re-timed file with `--carry-over` |
+| **First accuracy number** | **Measured (§10.12): English 24.9% wrong/missing, Sanskrit 89.9% (mostly spelling convention), overall 36.4%** — Whisper `small`, beam 1, VAD, gap-filled words |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Switch the steward to the re-timed file** (§10.9): they stop the editor (Ctrl+C), then run the `--carry-over` command with `MELBOURNE_vs_90-85_aligned.srt` |
+| **Next action** | (a) fix Sanskrit scoring in the harness (no CPU); (b) run the settings matrix when the steward frees the machine — **awaiting his answer on when**; (c) optional timing polish of the 79 interpolated cues |
 | **lecture-archive git** | `main` has local commits not yet pushed (at least `fb70698`, `76463e4`, and this handoff). Pushing needs the steward's go-ahead |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | The steward's upload of the SSGGSM archive to Google Drive may still be running. **Never stop, inspect or invoke rclone; ask before heavy network or disk work** |
@@ -247,6 +248,24 @@ It prints how many cues were carried (checked / corrected / unsure) and any cue 
 - Spot checks of the largest remaining anchor differences (#32, #173, #174) show the re-timed cue starts sit exactly on their words; the anchors (segment starts) were the imprecise side.
 - The lag profile in the listening brief is obsolete once the steward switches.
 
+### 10.12 The sitting is done, and the first measurement (2026-09-21)
+
+**The verified reference** is `data/reference/MELBOURNE_vs_90-85_aligned-review.json`: 512/512 cues checked, 495 `ok`, **17 `fixed`**, 0 unsure, 6,494 words, span 11:22–1:20:16, bound to `MELBOURNE_vs_90-85_aligned.srt`. Export a verified SRT / change log with the editor's buttons or `GET /api/export.srt`, `/api/changes.md`.
+
+**What the 17 corrections were — a systematic editorial habit:** 15 of 17 are `"Do you understand?" → "you understand?"` (he omits "Do"; the subtitle writer tidied it). #121 adds "revered spiritual master"; #38 adds an extra "you understand?". Any transcript from this collection likely carries the same tidy-up, which matters when scoring drafts.
+
+**First accuracy measurement** — script `data/reference/melbourne_wer.py` (reference = verified cues; hypothesis = `melbourne-whisper-small-words-gapfilled.jsonl` restricted to the reference span with `spoken_but_not_subtitled` stretches removed; fillers dropped on both sides; diacritics folded):
+
+| Track | Result |
+|---|---|
+| English words (6,002) | **24.9% wrong or missing** |
+| Sanskrit / names (676, IAST in the reference) | 89.9% |
+| Overall | 36.4% — 1,789 substitutions, 530 deletions, 114 insertions, 4,576 correct; hypothesis 6,033 words |
+
+**Read it with care.** The Sanskrit track is mostly measuring spelling convention (`sri→shri`, `bhagavad→bhagad`), not recognition — **fix it to score romanisations by closeness before quoting it**. Typical English errors: `soles→souls` (homophone), `bewildered→build here`, `material→metal`. This is a baseline for comparison, not a verdict on Whisper.
+
+**Settings matrix (not yet run — needs the steward's machine time):** `small` vs `medium` vs `large-v3-turbo`, with and without the glossary prompt, beam 1 vs 5, over the same 69 minutes. Roughly 15 min (small) to an hour (large) per run, 2–4 h total. Reuse `melbourne_words.py` (change the model/settings and the output name), then `melbourne_wer.py` against each.
+
 ### 10.10 After the sitting
 
 1. "Download verified SRT" (or `GET /api/export.srt`) → the verified reference; "Download change log" → the list of corrections.
@@ -292,8 +311,8 @@ It prints how many cues were carried (checked / corrected / unsure) and any cue 
 
 ## 14. Pending work (mine), in order
 
-1. Finish §10.7–§10.9 (re-time, validate, switch with carry-over).
-2. After the sitting: verified SRT → accuracy harness → first WER → error analysis → settings matrix.
+1. ~~Re-time, validate, switch~~ **done** (§10.11); ~~first WER~~ **done** (§10.12).
+2. Fix the Sanskrit track in `melbourne_wer.py` (score romanisations by closeness, e.g. character similarity ≥0.8 counts as heard), then rerun; after that, run the settings matrix when the steward frees the machine and pick a configuration by accuracy against compute.
 3. Rank which of the ~800 draft transcripts are complete (last `(inaudible MM.SS)` / `(? MM.SS)` marker vs tape duration) — no audio, no listening.
 4. One tested RTF extractor + legacy-font decoding (family B still undecoded).
 5. Glossary across all 710 RTFs; final prompt/hotwords.
