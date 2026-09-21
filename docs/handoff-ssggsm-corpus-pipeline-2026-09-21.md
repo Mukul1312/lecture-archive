@@ -15,9 +15,9 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | Item | State |
 |---|---|
 | **Melbourne reference sitting** | **In progress.** The steward is checking subtitles in the local editor; work saves continuously to `data/reference/MELBOURNE_vs_90-85_synced-review.json` |
-| **Subtitle timings** | **Known to be wrong in the middle of the lecture** (up to ~39 s early, §10.4). The words are right. A corrected, per-cue re-timing is being prepared |
-| **Whisper word-timing run** | **Running in the background** when this was written: `data/reference/melbourne_words.py` transcribing 650–4840 s of the verified local mp3 with faster-whisper `small`. Output: `data/reference/melbourne-whisper-small-words.jsonl` + `.config.json`. If it was interrupted, rerun it (§10.6) |
-| **Next action** | Run `retime` (§10.7), spot-check the result (§10.8), ask the steward to stop the editor, restart it on the re-timed file with `--carry-over` (§10.9) |
+| **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
+| **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
+| **Next action** | **Switch the steward to the re-timed file** (§10.9): they stop the editor (Ctrl+C), then run the `--carry-over` command with `MELBOURNE_vs_90-85_aligned.srt` |
 | **lecture-archive git** | `main` has local commits not yet pushed (at least `fb70698`, `76463e4`, and this handoff). Pushing needs the steward's go-ahead |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | The steward's upload of the SSGGSM archive to Google Drive may still be running. **Never stop, inspect or invoke rclone; ask before heavy network or disk work** |
@@ -238,6 +238,14 @@ Compare the new cue starts against §10.5 (within ~2 s), confirm cue #1 ≈ 11:1
 It prints how many cues were carried (checked / corrected / unsure) and any cue it could not carry. It refuses if `MELBOURNE_vs_90-85_aligned-review.json` already exists. The subtitle shift resets to "not shifted" (re-timing replaces it). The local mp3 makes seeking instant.
 3. Every later session: the same command **without** `--carry-over`.
 4. Update `MELBOURNE-LISTENING-BRIEF.md`: the lag profile becomes obsolete.
+
+### 10.11 Update — re-timing done and validated (2026-09-21, commit `d71039f`)
+
+- First attempt (global word matching) put the translation cues on the **second** reading (it runs into the purport, forming a longer match) and matched no Sanskrit cue. Rewritten: each cue searches recognised words within 120 s of its current time, scores by **letter-level** similarity (Whisper glues compounds), with a 0.002-per-second prior penalty; a dynamic programme picks the best time-ordered set.
+- Second problem: the 70-min long-form run **skipped 30 s at 11:19–11:49** (and other gaps). Fixed by re-decoding every gap ≥6 s as a short window (`data/reference/melbourne_gapfill.py`, log in `melbourne-gapfill-log.json`). **Pipeline lesson: long-form Whisper drops whole passages without any error; a gap re-decode stage is required** (the Zurich run lost a Sanskrit verse the same way).
+- Result (`retime-report.json`): 433/512 cues anchored on their own words (median letter score 0.864); 79 placed proportionally (mostly chanted verses and short interjections). Cue #1 11:22.4, #4 "Translation" 11:33.8, first translation reading 11:37.9–11:51.7, #8 "Purport" 12:33.9. **Spoken but not subtitled:** 10:55.8–11:21.5 (synonyms), **11:56.3–12:33.9 (the repeated translation)**, 17:42.6–17:53.4, 25:11.8–25:21.3, **46:14.2–46:54.3 (song)**, 47:57.3–48:05.3, 59:10.2–59:29.5, 73:59.4–74:29.2, 75:31.9–75:43.4, 79:23.8–79:37.1 — the accuracy harness must exclude these.
+- Spot checks of the largest remaining anchor differences (#32, #173, #174) show the re-timed cue starts sit exactly on their words; the anchors (segment starts) were the imprecise side.
+- The lag profile in the listening brief is obsolete once the steward switches.
 
 ### 10.10 After the sitting
 
