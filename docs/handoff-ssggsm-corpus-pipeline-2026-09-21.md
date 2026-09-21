@@ -259,12 +259,21 @@ It prints how many cues were carried (checked / corrected / unsure) and any cue 
 | Track | Result |
 |---|---|
 | English words (6,002) | **24.9% wrong or missing** |
-| Sanskrit / names (676, IAST in the reference) | 89.9% |
-| Overall | 36.4% — 1,789 substitutions, 530 deletions, 114 insertions, 4,576 correct; hypothesis 6,033 words |
+| Sanskrit / names (676, IAST in the reference) | **67.9% unrecognisable** — 68 exact + 149 recognisable romanisations = 217 recognised |
+| Overall | **34.2%** forgiving romanisation; **36.4%** strict (977 wrong, 976 missing, 331 invented, 4,576 exact, 149 near; hypothesis 6,033 words) |
+
+The harness is now versioned: `scripts/transcript_accuracy.py` (tests in `tests/transcript_accuracy/`, in the README suite). English is scored strictly (so `soles→souls` is an error); Sanskrit counts as recognised when a reader would recognise it (character similarity, or after removing meaningless romanisation choices such as sh/s, v/b). Its strict total reproduces the earlier hand-rolled 36.4% exactly. **The Sanskrit result is real, not a spelling artefact:** the English `small` model genuinely fails on chanted verses, which supports the policy of marking chanted spans rather than guessing.
 
 **Read it with care.** The Sanskrit track is mostly measuring spelling convention (`sri→shri`, `bhagavad→bhagad`), not recognition — **fix it to score romanisations by closeness before quoting it**. Typical English errors: `soles→souls` (homophone), `bewildered→build here`, `material→metal`. This is a baseline for comparison, not a verdict on Whisper.
 
-**Settings matrix (not yet run — needs the steward's machine time):** `small` vs `medium` vs `large-v3-turbo`, with and without the glossary prompt, beam 1 vs 5, over the same 69 minutes. Roughly 15 min (small) to an hour (large) per run, 2–4 h total. Reuse `melbourne_words.py` (change the model/settings and the output name), then `melbourne_wer.py` against each.
+**Settings matrix — ready to run, awaiting the steward's machine time.** `data/reference/run_matrix.py` runs six configurations (small beam 1; small beam 1 + glossary prompt; small beam 5; medium; large-v3-turbo; turbo + prompt), each transcribed over the same span, gap re-decoded, and scored with `scripts/transcript_accuracy.py`. It is **resumable** (a configuration whose words file exists is skipped) and uses 4 of 12 threads. Estimated 2.5–3.5 h total, plus model downloads (~1.5 GB each for medium and turbo). Start with:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv-transcribe\Scripts\python.exe -u dataeferenceun_matrix.py
+```
+
+It prints a summary table (WER, English, Sanskrit, minutes per configuration) and writes `data/reference/matrix-summary.json`.
 
 ### 10.10 After the sitting
 
