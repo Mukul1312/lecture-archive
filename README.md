@@ -37,6 +37,8 @@ unchanged as history; the copies in `narrator-voice` are the maintained ones.
   lecture and correcting its subtitles cue by cue into a verified accuracy
   reference. It is a helper for measuring transcription quality, not the
   transcription pipeline itself.
+- `scripts/transcript_accuracy.py`: scores a machine transcript against a
+  human-verified reference, reporting English and Sanskrit tracks separately.
 - `docs/`: research, architecture, and operational decisions.
 
 ## Correcting subtitles into a reference
@@ -70,6 +72,7 @@ py -3.11 -m venv .venv
 $activeTestRoots = @(
     "tests/ggsm_transcription",
     "tests/reference_editor",
+    "tests/transcript_accuracy",
     "tests/youtube_enhance"
 )
 foreach ($testRoot in $activeTestRoots) {
@@ -90,7 +93,7 @@ requirements file:
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements-enhance.txt
-for test_root in tests/ggsm_transcription tests/reference_editor tests/youtube_enhance; do
+for test_root in tests/ggsm_transcription tests/reference_editor tests/transcript_accuracy tests/youtube_enhance; do
     ./.venv/bin/python -m unittest discover -s "$test_root" -t . -v || exit
 done
 ./.venv/bin/python -m unittest tests.test_legacy_script_paths -v
