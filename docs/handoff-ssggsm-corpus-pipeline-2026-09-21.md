@@ -18,8 +18,8 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **The settings matrix is RUNNING** (started 21:56 on 2026-09-21, 10 threads, expected to finish ~00:30–01:30). Log: `data/reference/matrix-run.log`; per-configuration results: `data/reference/accuracy-*.json`, final table `matrix-summary.json`. If it was interrupted, just rerun it — finished configurations are skipped (§10.13). Then: pick a configuration; optional timing polish of the 79 interpolated cues |
-| **lecture-archive git** | Pushed through `0c0f448`; the steward approved pushing on 2026-09-21 |
+| **Next action** | **Matrix running overnight, watched.** 2 of 6 configurations scored (small beam 1: English 25.3%; small + glossary prompt: English 25.2% — the prompt does nothing). `data/reference/watch_matrix.py` restarts the run if it dies and writes `data/reference/MORNING-REPORT.md` when all six are scored (§10.15). Read that report first; then confirm or overrule the recommended configuration |
+| **lecture-archive git** | Pushed through `ff08bef`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
 
@@ -294,33 +294,68 @@ Order: small beam 1 → small + glossary prompt → small beam 5 → medium → 
 
 **Configuration 1 result (small, beam 1, 10 threads, 23 gaps re-decoded, 17.5 min, 4.0× real time):** WER 34.2% (36.4% strict), English **25.3%** wrong or missing, Sanskrit 68.0% unrecognisable.
 
+**Configuration 2 result (small, beam 1, glossary prompt, 28 gaps, 18.5 min, 3.8x real time):** WER 34.5%, English **25.2%**, Sanskrit 68.2%.
+
+**The glossary prompt does not help.** 25.2% against 25.3% English, and 68.2% against 68.0% Sanskrit, are both inside the ~0.4 point run-to-run variation, and it cost 1 minute more. The Sanskrit words it was meant to rescue did not improve. Whether a prompt helps a *larger* model is still open (configuration 6 tests it on turbo), but on `small` it buys nothing.
+
 Two things learned already:
 - **Run-to-run variation is ~0.4 points** (25.3% here vs 24.9% for the earlier 4-thread run of the same settings). Treat differences below ~0.5 points as noise.
 - **More threads did not help**: 10 threads gave 4.0× real time against 5.1× on 4 threads for the same model. The gap re-decodes (many short windows) are included in this figure and parallelise badly. Worth re-checking on the larger models before choosing thread counts for the corpus run.
 
-### 10.14 Timing polish of the 79 interpolated cues — tool ready, waiting for the machine
+### 10.14 Timing polish of the 79 guessed cues — tool built and measured
 
 79 of the 512 cues never matched a heard word in the first re-timing, so their times are
-interpolated between their neighbours and can be several seconds out. Two things have
-improved since that run: the cue text is now the steward's **verified** text (not the
-subtitle text, which had the 17 errors he fixed), and the matrix is producing better
-transcripts. `data/reference/polish_timings.py` re-runs the same matcher with both and
-reports what changed — no re-decoding, so it costs seconds:
+interpolated between their neighbours. `data/reference/polish_timings.py` searches for them
+again using the steward's **verified** text (not the subtitle text, which held the 17 errors
+he fixed) and a matrix transcript. Nothing is re-decoded, so it costs about a minute.
+
+It has two modes, and the difference matters:
+
+- **`--mode bracketed` (default, safe).** The 433 cues that did anchor keep their times
+  exactly. Each unmatched cue is searched for only *between its anchored neighbours*, so a
+  cue either finds real speech inside that bracket or keeps the guess it already had. By
+  construction nothing the steward checked can move. **Measured against the `small`
+  transcript: 26 of the 79 rescued, 0 regressions, 9 of them moving 2 s or more.**
+- **`--mode global` (second opinion, do not apply blindly).** Re-runs the whole matcher.
+  Against the same transcript it rescued only 9 **and lost 6 cues that had previously
+  anchored**, and it disagreed with 16 already-anchored cues by 2 s or more — one by 19.8 s
+  (cue 358). That list is a useful shortlist to listen to; it is not a set of fixes.
+
+The global result is why bracketed is the default: a better global optimum for the whole
+lecture is not the same thing as a better time for each cue, and the steward's checked cues
+must not be collateral.
+
+Neither mode writes to the review. `--apply` writes `…-review-polished.json` beside it and
+leaves the original untouched.
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
 .\.venv\Scripts\python.exe data/reference/polish_timings.py --words data/reference/matrix-<winner>-words.jsonl
 ```
 
-It writes `data/reference/polish-matrix-<winner>-words.json` and prints: how many of the 79
-were rescued, which cues **moved 2 s or more although they were already anchored** (those
-are warnings to check by ear, not fixes), and which cues still have no match — only those
-would need a targeted re-decode. `--apply` writes `…-review-polished.json` beside the review;
-the original review is never modified.
+### 10.15 Overnight watcher (started 2026-09-21 22:41)
 
-Smoke-tested on cues 1–8 against the small transcript: all 8 anchored, median match score
-0.914, and every cue stayed within a second of its verified time — the matcher does not
-destabilise what the steward already checked.
+The steward went to sleep with the matrix running, so `data/reference/watch_matrix.py` runs
+detached and does three things:
+
+1. **Watches the output files, not the process**, so a restarted run still counts as the
+   same work.
+2. **Restarts the matrix if it dies** — the same resumable command, never a changed setting,
+   at most 3 times, each restart written to `data/reference/watcher.log` and marked in
+   `matrix-run.log`. (The restart path was tested against a dummy script before being
+   trusted: it launches detached and appends its marker.)
+3. **Writes `data/reference/MORNING-REPORT.md`** when all six configurations are scored: the
+   comparison table, the recommendation (most accurate, then the fastest configuration
+   within half a point of it, because half a point is the noise floor), what the winner
+   costs per 1,000 hours of audio, the bracketed timing polish against the winning
+   transcript, and — honestly — any configuration that produced no result, with the tail of
+   the log.
+
+The report builder was dry-run against the two finished configurations before the watcher
+was launched, so its output is known to work rather than assumed to.
+
+**The machine will not sleep:** "Sleep after" and "Hibernate after" are both 0 (never) on AC
+power. The run only needs the laptop to stay plugged in.
 
 ---
 
