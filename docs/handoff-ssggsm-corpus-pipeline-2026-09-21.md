@@ -15,11 +15,11 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | Item | State |
 |---|---|
 | **Melbourne reference sitting** | **DONE (2026-09-21).** All 512 cues checked: 495 words confirmed, **17 corrected**, 0 unsure. Verified reference = `data/reference/MELBOURNE_vs_90-85_aligned-review.json` (6,494 words, span 11:22–1:20:16). The steward switched to the re-timed file with `--carry-over` |
-| **First accuracy number** | **Measured (§10.12): English 24.9% wrong/missing, Sanskrit 89.9% (mostly spelling convention), overall 36.4%** — Whisper `small`, beam 1, VAD, gap-filled words |
+| **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | (a) fix Sanskrit scoring in the harness (no CPU); (b) run the settings matrix when the steward frees the machine — **awaiting his answer on when**; (c) optional timing polish of the 79 interpolated cues |
-| **lecture-archive git** | `main` has local commits not yet pushed (at least `fb70698`, `76463e4`, and this handoff). Pushing needs the steward's go-ahead |
+| **Next action** | **Run the settings matrix** — `data/reference/run_matrix.py` is written, resumable, and waiting on the steward's machine time (2.5–3.5 h, §10.12). Then: pick a configuration; optional timing polish of the 79 interpolated cues |
+| **lecture-archive git** | Pushed through `9c037da` (the steward approved pushing on 2026-09-21) |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | The steward's upload of the SSGGSM archive to Google Drive may still be running. **Never stop, inspect or invoke rclone; ask before heavy network or disk work** |
 
@@ -270,7 +270,9 @@ The harness is now versioned: `scripts/transcript_accuracy.py` (tests in `tests/
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
-.\.venv-transcribe\Scripts\python.exe -u dataeferenceun_matrix.py
+.\.venv-transcribe\Scripts\python.exe -u data
+eference
+un_matrix.py
 ```
 
 It prints a summary table (WER, English, Sanskrit, minutes per configuration) and writes `data/reference/matrix-summary.json`.
