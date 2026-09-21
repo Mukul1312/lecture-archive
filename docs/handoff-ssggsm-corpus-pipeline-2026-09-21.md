@@ -240,6 +240,12 @@ It prints how many cues were carried (checked / corrected / unsure) and any cue 
 3. Every later session: the same command **without** `--carry-over`.
 4. Update `MELBOURNE-LISTENING-BRIEF.md`: the lag profile becomes obsolete.
 
+### 10.10 After the sitting
+
+1. "Download verified SRT" (or `GET /api/export.srt`) → the verified reference; "Download change log" → the list of corrections.
+2. Build the accuracy harness. Rules from the 2026-09-18 synthesis (full text in `data/research/ssggsm-2026-09/workflow-results/reference-and-catalogue-prep.journal.jsonl`, label `synthesize`): the verified Melbourne file is the only primary reference; the two genuine Finals (19890310 SB4.20.28-29 Mayapur, 19890325 SB7.7.12-14 Bhubaneswar) are secondary, English-only, after transliteration normalisation; never use the `19000000 Another class` pair (two different lectures), the `19940215` Vishnupriya pair or the RipenedMango `.rtf/.odt` pair; never gate on similarity to the `_work` 1985 transcripts. Normalise fillers on both sides; exclude gap placeholders, spliced book text, paraphrased questions and `spoken_but_not_subtitled` spans; report English, Sanskrit/names and covered fraction separately.
+3. First WER: the words already transcribed by `melbourne_words.py` are a valid first hypothesis (`small`, beam 1). Then the settings matrix (model size, batching, VAD, beam, glossary prompt) when the steward allows CPU time.
+
 ### 10.11 Update — re-timing done and validated (2026-09-21, commit `d71039f`)
 
 - First attempt (global word matching) put the translation cues on the **second** reading (it runs into the purport, forming a longer match) and matched no Sanskrit cue. Rewritten: each cue searches recognised words within 120 s of its current time, scores by **letter-level** similarity (Whisper glues compounds), with a 0.002-per-second prior penalty; a dynamic programme picks the best time-ordered set.
@@ -266,13 +272,11 @@ The harness is now versioned: `scripts/transcript_accuracy.py` (tests in `tests/
 
 **Read it with care.** The Sanskrit track is mostly measuring spelling convention (`sri→shri`, `bhagavad→bhagad`), not recognition — **fix it to score romanisations by closeness before quoting it**. Typical English errors: `soles→souls` (homophone), `bewildered→build here`, `material→metal`. This is a baseline for comparison, not a verdict on Whisper.
 
-**Settings matrix — ready to run, awaiting the steward's machine time.** `data/reference/run_matrix.py` runs six configurations (small beam 1; small beam 1 + glossary prompt; small beam 5; medium; large-v3-turbo; turbo + prompt), each transcribed over the same span, gap re-decoded, and scored with `scripts/transcript_accuracy.py`. It is **resumable** (a configuration whose words file exists is skipped) and uses 4 of 12 threads. Estimated 2.5–3.5 h total, plus model downloads (~1.5 GB each for medium and turbo). Start with:
+**Settings matrix — started 2026-09-21 21:56 (see §10.13 for results as they land).** `data/reference/run_matrix.py` runs six configurations (small beam 1; small beam 1 + glossary prompt; small beam 5; medium; large-v3-turbo; turbo + prompt), each transcribed over the same span, gap re-decoded, and scored with `scripts/transcript_accuracy.py`. It is **resumable** (a configuration whose words file exists is skipped) and uses 10 of 12 threads. Estimated 2.5–3.5 h total, plus model downloads (~1.5 GB each for medium and turbo). Start with:
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
-.\.venv-transcribe\Scripts\python.exe -u data
-eference
-un_matrix.py
+.\.venv-transcribe\Scripts\python.exe -u data/reference/run_matrix.py
 ```
 
 It prints a summary table (WER, English, Sanskrit, minutes per configuration) and writes `data/reference/matrix-summary.json`.
@@ -283,7 +287,7 @@ Command (resumable, skips finished configurations):
 
 ```powershell
 $env:PYTHONIOENCODING = "utf-8"
-.\.venv-transcribe\Scripts\python.exe -u dataeferenceun_matrix.py
+.\.venv-transcribe\Scripts\python.exe -u data/reference/run_matrix.py
 ```
 
 Order: small beam 1 → small + glossary prompt → small beam 5 → medium → large-v3-turbo → turbo + prompt. Each: transcribe 650–4840 s, re-decode gaps ≥6 s, score with `scripts/transcript_accuracy.py`.
@@ -294,11 +298,29 @@ Two things learned already:
 - **Run-to-run variation is ~0.4 points** (25.3% here vs 24.9% for the earlier 4-thread run of the same settings). Treat differences below ~0.5 points as noise.
 - **More threads did not help**: 10 threads gave 4.0× real time against 5.1× on 4 threads for the same model. The gap re-decodes (many short windows) are included in this figure and parallelise badly. Worth re-checking on the larger models before choosing thread counts for the corpus run.
 
-### 10.10 After the sitting
+### 10.14 Timing polish of the 79 interpolated cues — tool ready, waiting for the machine
 
-1. "Download verified SRT" (or `GET /api/export.srt`) → the verified reference; "Download change log" → the list of corrections.
-2. Build the accuracy harness. Rules from the 2026-09-18 synthesis (full text in `data/research/ssggsm-2026-09/workflow-results/reference-and-catalogue-prep.journal.jsonl`, label `synthesize`): the verified Melbourne file is the only primary reference; the two genuine Finals (19890310 SB4.20.28-29 Mayapur, 19890325 SB7.7.12-14 Bhubaneswar) are secondary, English-only, after transliteration normalisation; never use the `19000000 Another class` pair (two different lectures), the `19940215` Vishnupriya pair or the RipenedMango `.rtf/.odt` pair; never gate on similarity to the `_work` 1985 transcripts. Normalise fillers on both sides; exclude gap placeholders, spliced book text, paraphrased questions and `spoken_but_not_subtitled` spans; report English, Sanskrit/names and covered fraction separately.
-3. First WER: the words already transcribed by `melbourne_words.py` are a valid first hypothesis (`small`, beam 1). Then the settings matrix (model size, batching, VAD, beam, glossary prompt) when the steward allows CPU time.
+79 of the 512 cues never matched a heard word in the first re-timing, so their times are
+interpolated between their neighbours and can be several seconds out. Two things have
+improved since that run: the cue text is now the steward's **verified** text (not the
+subtitle text, which had the 17 errors he fixed), and the matrix is producing better
+transcripts. `data/reference/polish_timings.py` re-runs the same matcher with both and
+reports what changed — no re-decoding, so it costs seconds:
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv\Scripts\python.exe data/reference/polish_timings.py --words data/reference/matrix-<winner>-words.jsonl
+```
+
+It writes `data/reference/polish-matrix-<winner>-words.json` and prints: how many of the 79
+were rescued, which cues **moved 2 s or more although they were already anchored** (those
+are warnings to check by ear, not fixes), and which cues still have no match — only those
+would need a targeted re-decode. `--apply` writes `…-review-polished.json` beside the review;
+the original review is never modified.
+
+Smoke-tested on cues 1–8 against the small transcript: all 8 anchored, median match score
+0.914, and every cue stayed within a second of its verified time — the matcher does not
+destabilise what the steward already checked.
 
 ---
 
