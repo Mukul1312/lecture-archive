@@ -18,10 +18,10 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Run the settings matrix** — `data/reference/run_matrix.py` is written, resumable, and waiting on the steward's machine time (2.5–3.5 h, §10.12). Then: pick a configuration; optional timing polish of the 79 interpolated cues |
-| **lecture-archive git** | Pushed through `9c037da` (the steward approved pushing on 2026-09-21) |
+| **Next action** | **The settings matrix is RUNNING** (started 21:56 on 2026-09-21, 10 threads, expected to finish ~00:30–01:30). Log: `data/reference/matrix-run.log`; per-configuration results: `data/reference/accuracy-*.json`, final table `matrix-summary.json`. If it was interrupted, just rerun it — finished configurations are skipped (§10.13). Then: pick a configuration; optional timing polish of the 79 interpolated cues |
+| **lecture-archive git** | Pushed through `0c0f448`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
-| **rclone** | The steward's upload of the SSGGSM archive to Google Drive may still be running. **Never stop, inspect or invoke rclone; ask before heavy network or disk work** |
+| **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
 
 ---
 
@@ -276,6 +276,23 @@ un_matrix.py
 ```
 
 It prints a summary table (WER, English, Sanskrit, minutes per configuration) and writes `data/reference/matrix-summary.json`.
+
+### 10.13 Settings matrix — running (started 2026-09-21 21:56)
+
+Command (resumable, skips finished configurations):
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+.\.venv-transcribe\Scripts\python.exe -u dataeferenceun_matrix.py
+```
+
+Order: small beam 1 → small + glossary prompt → small beam 5 → medium → large-v3-turbo → turbo + prompt. Each: transcribe 650–4840 s, re-decode gaps ≥6 s, score with `scripts/transcript_accuracy.py`.
+
+**Configuration 1 result (small, beam 1, 10 threads, 23 gaps re-decoded, 17.5 min, 4.0× real time):** WER 34.2% (36.4% strict), English **25.3%** wrong or missing, Sanskrit 68.0% unrecognisable.
+
+Two things learned already:
+- **Run-to-run variation is ~0.4 points** (25.3% here vs 24.9% for the earlier 4-thread run of the same settings). Treat differences below ~0.5 points as noise.
+- **More threads did not help**: 10 threads gave 4.0× real time against 5.1× on 4 threads for the same model. The gap re-decodes (many short windows) are included in this figure and parallelise badly. Worth re-checking on the larger models before choosing thread counts for the corpus run.
 
 ### 10.10 After the sitting
 
