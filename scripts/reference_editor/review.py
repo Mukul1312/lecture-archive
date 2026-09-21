@@ -177,6 +177,30 @@ def validate_review(submitted: object, *, baseline: dict) -> dict:
     }
 
 
+def carry_over(previous: object, baseline: dict) -> tuple[dict, list[int]]:
+    """Move a listener's work onto a re-timed copy of the same subtitles.
+
+    Words, status and notes transfer for every cue whose number and original words
+    are unchanged; timings come from the new baseline. The listening offset resets,
+    because re-timing replaces it. Returns the new review and the cue numbers that
+    could not be carried.
+    """
+    if not isinstance(previous, dict) or previous.get("schema") != SCHEMA:
+        raise ReviewError("the previous review is not a reference review")
+    earlier = {cue.get("n"): cue for cue in previous.get("cues") or [] if isinstance(cue, dict)}
+    draft = {**baseline, "cues": [dict(cue) for cue in baseline["cues"]]}
+    skipped = []
+    for cue in draft["cues"]:
+        before = earlier.get(cue["n"])
+        if before is None or before.get("original") != cue["original"]:
+            skipped.append(cue["n"])
+            continue
+        cue.update(text=before.get("text"), status=before.get("status"), note=before.get("note", ""))
+    draft["session_notes"] = previous.get("session_notes", "")
+    draft["last_position_s"] = previous.get("last_position_s", 0.0)
+    return validate_review(draft, baseline=baseline), skipped
+
+
 def counts(review: dict) -> dict[str, int]:
     tally = {status: 0 for status in STATUSES}
     for cue in review["cues"]:

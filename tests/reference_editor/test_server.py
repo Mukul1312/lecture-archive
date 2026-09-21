@@ -152,6 +152,24 @@ class EditorServerTests(unittest.TestCase):
         self.srt.write_bytes(SRT.encode("utf-8"))
         self.start()
 
+    def test_carry_over_starts_a_new_review_and_never_overwrites_one(self) -> None:
+        review = self.current()
+        review["cues"][1].update(text="Take shelter of the Holy Name", status="fixed")
+        self.assertEqual(self.save(review)[0], 200)
+        retimed = self.srt.with_name("ref-retimed.srt")
+        retimed.write_bytes(SRT.replace("00:00:01,000", "00:00:41,000").replace("00:00:02,500", "00:00:42,500")
+                            .replace("00:00:05,000", "00:00:45,000").encode("utf-8"))
+        new_review = retimed.with_name("ref-retimed-review.json")
+
+        server = build_server(retimed, new_review, str(self.audio), port=0, carry_over_from=self.review_path)
+        server.server_close()
+        carried = json.loads(new_review.read_text(encoding="utf-8"))
+        self.assertEqual(carried["cues"][1]["text"], "Take shelter of the Holy Name")
+        self.assertEqual(carried["cues"][0]["start_ms"], 41_000)
+
+        with self.assertRaisesRegex(review_model.ReviewError, "refusing to overwrite"):
+            build_server(retimed, new_review, str(self.audio), port=0, carry_over_from=self.review_path)
+
     def test_remote_audio_must_be_archive_org(self) -> None:
         with self.assertRaises(review_model.ReviewError):
             build_server(self.srt, self.review_path, "https://example.com/a.mp3", port=0)

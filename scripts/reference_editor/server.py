@@ -50,13 +50,21 @@ _RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 class ReviewStore:
     """The review file on disk plus the subtitle baseline it must stay faithful to."""
 
-    def __init__(self, srt_path: Path, review_path: Path, audio: str) -> None:
+    def __init__(self, srt_path: Path, review_path: Path, audio: str, carry_over_from: Path | None = None) -> None:
         self.baseline = review_model.new_review(srt_path.read_bytes(), source_name=srt_path.name, audio=audio)
         self.review_path = review_path
         self.snapshot_dir = review_path.with_name(review_path.stem + "-snapshots")
         self._lock = threading.Lock()
         self._last_snapshot: float | None = None
-        if review_path.exists():
+        self.carried_skipped: list[int] = []
+        if carry_over_from is not None:
+            if review_path.exists():
+                raise review_model.ReviewError(
+                    f"{review_path.name} already exists; refusing to overwrite it with carried-over work")
+            previous = json.loads(carry_over_from.read_text(encoding="utf-8"))
+            self.current, self.carried_skipped = review_model.carry_over(previous, self.baseline)
+            self._write(self.current)
+        elif review_path.exists():
             try:
                 loaded = json.loads(review_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as error:
@@ -231,7 +239,8 @@ class EditorHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def build_server(srt_path: Path, review_path: Path, audio: str, port: int = DEFAULT_PORT) -> ThreadingHTTPServer:
+def build_server(srt_path: Path, review_path: Path, audio: str, port: int = DEFAULT_PORT,
+                 carry_over_from: Path | None = None) -> ThreadingHTTPServer:
     audio_path: Path | None = None
     audio_url: str | None = None
     if re.match(r"https?://", audio):
@@ -243,7 +252,7 @@ def build_server(srt_path: Path, review_path: Path, audio: str, port: int = DEFA
         audio_path = Path(audio).resolve()
         if not audio_path.is_file():
             raise review_model.ReviewError(f"audio file not found: {audio}")
-    store = ReviewStore(srt_path, review_path, audio)
+    store = ReviewStore(srt_path, review_path, audio, carry_over_from)
     handler = type("BoundEditorHandler", (EditorHandler,), {
         "store": store, "audio_path": audio_path, "audio_url": audio_url,
     })
@@ -261,13 +270,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--audio", required=True, help="https archive.org URL or a local audio file")
     parser.add_argument("--review", type=Path, help="review JSON (default: <subtitle name>-review.json beside it)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--carry-over", type=Path, metavar="OLD_REVIEW",
+                        help="start a new review by importing the work in OLD_REVIEW (for re-timed subtitles)")
     args = parser.parse_args(argv)
     review_path = args.review or args.srt.with_name(args.srt.stem + "-review.json")
     try:
-        server = build_server(args.srt, review_path, args.audio, args.port)
-    except (review_model.ReviewError, OSError) as error:
+        server = build_server(args.srt, review_path, args.audio, args.port, args.carry_over)
+    except (review_model.ReviewError, OSError, json.JSONDecodeError) as error:
         print(f"reference editor: {error}", file=sys.stderr)
         return 2
+    if args.carry_over:
+        store = server.RequestHandlerClass.store
+        tally = review_model.counts(store.current)
+        print(f"Carried over from {args.carry_over.name}: {tally['checked']} checked, {tally['fixed']} corrected, "
+              f"{tally['unsure']} unsure. Not carried (cue changed): {store.carried_skipped or 'none'}")
     print(f"Reference editor for {args.srt.name}: http://127.0.0.1:{server.server_address[1]}/")
     print(f"Every edit is saved to {review_path}. Press Ctrl+C to stop.")
     try:
