@@ -56,6 +56,27 @@ class RetimeTests(unittest.TestCase):
         start, end = report["spoken_but_not_subtitled"][0]
         self.assertTrue(46.0 <= start <= 48.0 and end >= 55.0, report["spoken_but_not_subtitled"])
 
+    def test_sanskrit_glued_together_by_the_recogniser_still_matches(self) -> None:
+        cues = review_model.parse_srt("1\n00:00:10,000 --> 00:00:12,000\n<b>prapanno ’smy aṅghri-mūlaṁ te</b>\n")
+        heard = [HeardWord("prapannasmyangri", 12.0, 13.0), HeardWord("mulamte", 13.0, 14.0)]
+        timings, report = retime(cues, heard)
+        self.assertEqual(report["cues_anchored"], 1)
+        self.assertEqual(timings[0][0], 12_000)
+
+    def test_a_repeated_passage_goes_to_the_reading_nearest_the_expected_time(self) -> None:
+        cues = review_model.parse_srt("1\n00:01:40,000 --> 00:01:44,000\n<b>O Lord Hari, I take shelter</b>\n")
+        heard = say("o lord hari i take shelter", 95.0) + say("o lord hari i take shelter", 125.0)
+        timings, _ = retime(cues, heard)
+        self.assertEqual(timings[0][0], 95_000)
+
+    def test_cues_stay_in_time_order_even_when_a_later_cue_matches_earlier_audio(self) -> None:
+        cues = review_model.parse_srt(
+            "1\n00:00:10,000 --> 00:00:12,000\n<b>the holy name is krishna</b>\n\n"
+            "2\n00:00:12,000 --> 00:00:14,000\n<b>become fearless</b>\n")
+        heard = say("become fearless", 5.0) + say("the holy name is krishna", 11.0) + say("become fearless", 14.0)
+        timings, _ = retime(cues, heard)
+        self.assertEqual([start for start, _ in timings], [11_000, 14_000])
+
     def test_rewritten_file_keeps_numbers_and_text_exactly(self) -> None:
         timings, _ = retime(self.cues, self.heard)
         rewritten = review_model.parse_srt(write_srt(self.cues, timings))
