@@ -537,6 +537,19 @@ or missing; 2-3 words 24.8%; 4-10 words 16.8%; over 10 words 14.7%.
 - 60% of real speech segments score no_speech_prob > 0.6, which again shows the signal is
   meaningless on this corpus.
 
+### 10.22 The steward's 34 Indic links (2026-09-22)
+
+Read at source and verified (run `wf_b39c2eed-460`): **`docs/indic-links-survey-2026-09-22.md`**.
+For SSGGSM, the find is **Prabhupadavani** (arXiv 2201.11391): 94 h of English devotional
+lectures with code-mixed Sanskrit and Bengali, romanised with diacritics and counted per
+language. It is a second, independent benchmark for the trilingual code-switching problem
+(§10.20), with Bengali already marked. The audio is BBT/Vanipedia's, so it is fine as a
+private test set but needs permission before any training. Indic-Transcribe-flex is the one
+open recogniser trained on Indian English, Sanskrit and Bengali together. For the Odia seva:
+IndicTrans2 (MIT, Odia to English) and Indic-Transcribe-core. Nothing new for narrator-voice.
+The language models (Sarvam, Param-1, Qwen3 and its Sanskrit fine-tune) do not help:
+deterministic verse retrieval and transliteration beat them.
+
 ---
 
 ## 11. Tools built this session (lecture-archive)
