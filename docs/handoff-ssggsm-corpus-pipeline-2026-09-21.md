@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Read `docs/melbourne-reference-eight-point-findings-2026-09-22.md` first.** The eight-point measurements are done and verified; the scorer bug they found is fixed (medium-beam1 is 19.5% English / 58.7% Sanskrit / 27.7% WER, choice unchanged). The steward decides the next step: the findings recommend one timed correction sitting on a different lecture, ~100 hand-marked word onsets, and three machine runs (silence skipping off, batched, beam 5) |
+| **Next action** | Read **`docs/melbourne-reference-eight-point-findings-2026-09-22.md`** and **`docs/open-asr-model-survey-2026-09-22.md`**. The survey's top finding is not a model: faster-whisper discards whole 30 s windows when no_speech_prob > 0.6 and avg_logprob < -1.0, and every run so far left that rule on. Proposed next (awaiting the steward): bake-off stage A (Whisper with the skip rule off; batched), then Parakeet TDT v2 via onnx-asr, Sanskrit verse-span models, Qwen3-ASR; dropped words as the headline metric |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -450,6 +450,23 @@ fixed with a test, all six configurations are re-scored, and the old scores are 
 
 Everything measured, point by point, with the verifier's corrections applied:
 **`docs/melbourne-reference-eight-point-findings-2026-09-22.md`.**
+
+### 10.18 Beyond Whisper: open ASR survey (2026-09-22)
+
+The steward pointed out that only Whisper had been considered. A five-sweep survey with a
+verifier (run `wf_4e095424-673`, script `.agents/workflows/open-asr-model-survey.js`)
+produced **`docs/open-asr-model-survey-2026-09-22.md`**. In short:
+
+- Before any model swap, turn off faster-whisper's verified 30 s skip rule
+  (`no_speech_threshold=None`). It was on in all six matrix runs.
+- Shortlist: Parakeet TDT 0.6B v2 (CC-BY-4.0, native word times, ~5-7 min per lecture on
+  this laptop via onnx-asr or transcribe.cpp), Qwen3-ASR 1.7B, then Parakeet v3, Cohere
+  Transcribe, Whisper large-v3 full, and Sanskrit models on verse spans only.
+- For verses, retrieve the canonical text rather than recognise it: catalogue entries name
+  the verse, and the canon is finite.
+- "Non-autoregressive models don't drop speech" is not established. Dropped words must be
+  the bake-off's headline metric.
+- Don't feed enhanced audio to ASR by default.
 
 ---
 
