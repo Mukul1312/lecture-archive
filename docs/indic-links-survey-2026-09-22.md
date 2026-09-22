@@ -21,9 +21,9 @@ speed is an estimate; none was measured on this Ryzen 5 5625U.
 - **One real find for the transcription project: Prabhupadavani** (arXiv 2201.11391). It
   is 94 hours of English devotional lectures, mostly Srila Prabhupada's, with the
   code-mixed Sanskrit (8.6% of tokens) and Bengali (7.8%) **romanised with diacritics and
-  counted per language**. That is exactly the trilingual code-switching the steward
-  identified as the main source of errors. It can serve as a second, independent benchmark
-  where Bengali is already marked. It cannot be used for training without permission: the
+  counted per language** in the paper (the released text does not tag them; see below).
+  That is exactly the trilingual code-switching the steward identified as the main source
+  of errors, and it can serve as a second, independent benchmark. It cannot be used for training without permission: the
   audio is the Bhaktivedanta Book Trust's, supplied through Vanipedia.
 - **For the Odia seva: IndicTrans2** (MIT) translates Odia to English with strong published
   scores. Its distilled 200M model is small enough for the laptop. **Indic-Transcribe-core**
@@ -53,10 +53,18 @@ speed is an estimate; none was measured on this Ryzen 5 5625U.
   diacritics**, plus translations into 25 languages.
 - **Why it matters here:** it is the only public speech set in this domain. It shows the
   same pattern as Gurudeva's lectures: English exposition with Sanskrit and Bengali
-  quotations. It answers two open problems at once:
-  - **A second reference.** Every calibration so far rests on one lecture.
-  - **Bengali already marked.** Our reference does not mark Bengali, so trilingual models
-    cannot yet be scored fairly on it.
+  quotations. It gives us **a second reference**; every calibration so far rests on one
+  lecture.
+- **Correction after opening the released files (2026-09-22).** The paper *counts* Bengali
+  and Sanskrit separately, but the released text does **not** tag them. Both are simply
+  romanised with diacritics, so separating Bengali from Sanskrit still needs work on our
+  side.
+- **What the test split actually is:** 1,048 subtitle lines from 20 clips, 12,243 English
+  words, 8.0% with diacritics. Each line's audio is its own small mp3 (44.1 kHz stereo),
+  so this tests code-switched *recognition*, not long-form dropping. Speaker labels
+  ("Prabhupāda:", "Brahmānanda:") are embedded in the text and must be stripped before
+  scoring. The audio is in per-clip Google Drive folders (`ChoppedAudio`), and the split
+  lists are in the second Drive folder named in the repository's `Data/README.md`.
 - **Licence:** the repository is Apache-2.0, but it says the audio is "provided by
   Vanipedia courtesy Bhaktivedanta Book Trust". **Using it as a private test set is one
   thing. Training a model on it, or publishing anything derived from it, needs BBT's
@@ -154,6 +162,62 @@ speed is an estimate; none was measured on this Ryzen 5 5625U.
   **Training our own Odia TTS on its audio would bring its licence along.** Already in
   narrator-voice's notes.
 - Neither changes the decision to train an Odia emotional TTS.
+
+## Why each of the others was set aside
+
+**Encoders, tokenizers and catalogues** don't transcribe, translate or speak, so none of
+the three projects has a job for them:
+
+- **IndicBERT-v3-1B:** a text encoder with no published scores. The "MIT" label sits on a
+  Gemma derivative whose own terms probably still apply.
+- **IndicBERT page:** returns 404. It described the 2020 IndicBERT v1, which has no Sanskrit.
+- **XLMIndic uniscript:** an 11M-parameter encoder, with no English, and dormant. Its
+  required transliterator, Aksharamukha, is AGPL. We use `indic_transliteration` (MIT)
+  instead.
+- **Ansh-256k:** a tokenizer, not a model; there is nothing to run.
+- **MuRIL:** a 2021 encoder that was never evaluated on Odia or Sanskrit.
+- **indicnlp_catalog:** only kept for its pointers (indic_transliteration, Vāksañcayaḥ,
+  OdiEnCorp); it has not been updated since December 2024.
+
+**Language models** fail on at least one of three counts: they don't know Sanskrit, their
+licence restricts publishing outputs, or they don't fit this laptop. And for the Sanskrit
+tasks we actually have, deterministic tools do better:
+
+- **Sarvam-1:** no Sanskrit; a base model, not instruction-tuned. Its research licence
+  limits outputs to non-commercial research.
+- **Sarvam-30B bf16 repack:** a duplicate of Sarvam-30B, ~60 GB in this format, far too
+  large for the laptop. The official GGUF stays in "keep in mind" as an Odia-translation
+  fallback.
+- **Param-1-7B:** no evaluation on any of our tasks. The BharatGen Research License requires
+  written approval to publish outputs.
+- **Param-1-2.9B-Instruct and its commits:** English and Hindi only, and an early checkpoint.
+  One commit is the licence change from MIT to the research licence; the other is the
+  original upload.
+- **AIKosh and AIbase pages:** listings of the same English-Hindi model. One is currently
+  unavailable, the other a stale mirror.
+- **Qwen3 (repository, report, blog, docs):** a general model family. **Sanskrit is not
+  among its 119 languages.** Its tokenizer spends about two tokens per Odia character. None
+  of the projects has a concrete job for it today.
+- **dhee-nxtgen-qwen3-sanskrit-v2:** a 1.7B chat fine-tune. It publishes no training data
+  and no evaluation, and its tokenizer is identical to Qwen3's. "Restoring" a verse with a
+  language model risks confident, wrong verses. Retrieving the canonical text named in the
+  catalogue cannot invent one.
+
+**Speech models that don't fit the task:**
+
+- **GitaWhisper-tiny:** 92% WER on its own clean 30-verse test; Gītā only; contradictory
+  licence. A verse bank plus alignment covers every scripture, not just the Gītā.
+
+**Papers and pages without anything usable:**
+
+- **Zenodo "IndicGPT" report:** self-published, releases nothing, and contains at least
+  one fabricated citation.
+- **IndicKLAR paper:** measures language models' knowledge across Indian languages. It is
+  not a tool; its one useful fact is that open models are weakest on Odia.
+- **Nitinmall repository:** a student's hobby assistant that calls a cloud Whisper API. It
+  has no licence, and its README claims Odia support the code doesn't have.
+- **Paramanu (v2):** small base models under CC-BY-NC-SA. The linked version is
+  superseded, and the published version dropped Odia and Sanskrit from its headline scope.
 
 ## Licence traps worth remembering
 
