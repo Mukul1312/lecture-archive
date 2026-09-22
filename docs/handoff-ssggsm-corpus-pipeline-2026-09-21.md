@@ -18,8 +18,8 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Matrix running overnight, watched.** 2 of 6 configurations scored (small beam 1: English 25.3%; small + glossary prompt: English 25.2% — the prompt does nothing). `data/reference/watch_matrix.py` restarts the run if it dies and writes `data/reference/MORNING-REPORT.md` when all six are scored (§10.15). Read that report first; then confirm or overrule the recommended configuration |
-| **lecture-archive git** | Pushed through `ff08bef`; the steward approved pushing on 2026-09-21 |
+| **Next action** | **Matrix finished; `medium-beam1` chosen** (English 20.1%, Sanskrit 61.4%, 2.0x real time) — §10.13 has the table and the reasoning. The bracketed timing polish rescues 42 of the 79 guessed cues against that transcript, unapplied. Awaiting the steward on: confirm the configuration; whether to test `medium-beam5` (~45 min); the Sanskrit lexicon pass; measuring the real average lecture length |
+| **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
 
@@ -281,7 +281,7 @@ $env:PYTHONIOENCODING = "utf-8"
 
 It prints a summary table (WER, English, Sanskrit, minutes per configuration) and writes `data/reference/matrix-summary.json`.
 
-### 10.13 Settings matrix — running (started 2026-09-21 21:56)
+### 10.13 Settings matrix — FINISHED (2026-09-21 21:56 → 2026-09-22 00:39)
 
 Command (resumable, skips finished configurations):
 
@@ -301,6 +301,55 @@ Order: small beam 1 → small + glossary prompt → small beam 5 → medium → 
 Two things learned already:
 - **Run-to-run variation is ~0.4 points** (25.3% here vs 24.9% for the earlier 4-thread run of the same settings). Treat differences below ~0.5 points as noise.
 - **More threads did not help**: 10 threads gave 4.0× real time against 5.1× on 4 threads for the same model. The gap re-decodes (many short windows) are included in this figure and parallelise badly. Worth re-checking on the larger models before choosing thread counts for the corpus run.
+
+#### The full table (all six configurations, same 69.8-minute span, same verified reference)
+
+| configuration | English wrong | Sanskrit unrecognisable | WER | wall | speed |
+|---|---:|---:|---:|---:|---:|
+| `small-beam1` | 25.3% | 68.0% | 34.2% | 17.5 min | 4.00x |
+| `small-beam1-prompt` | 25.2% | 68.2% | 34.5% | 18.5 min | 3.77x |
+| `small-beam5` | 23.4% | 66.4% | 32.9% | 23.1 min | 3.03x |
+| **`medium-beam1`** | **20.1%** | **61.4%** | **28.5%** | **34.2 min** | **2.04x** |
+| `turbo-beam1` | 19.6% | 71.0% | 28.9% | 36.6 min | 1.91x |
+| `turbo-beam1-prompt` | 20.2% | 69.1% | 29.6% | 32.5 min | 2.15x |
+
+Counts (reference 6,678 words = 6,002 English + 676 Sanskrit):
+
+| configuration | exact | recognisable | wrong | missing | invented |
+|---|---:|---:|---:|---:|---:|
+| `small-beam1` | 4556 | 146 | 980 | 996 | 310 |
+| `small-beam5` | 4680 | 143 | 849 | 1006 | 339 |
+| `medium-beam1` | 4889 | 169 | 773 | 847 | 281 |
+| `turbo-beam1` | 4899 | 121 | 742 | 916 | 272 |
+
+#### Decision: `medium-beam1`
+
+`turbo-beam1` has the lowest English error (19.6% against 20.1%), but that 0.5 point gap is
+exactly the measured run-to-run variation, so it is not a real difference. **Sanskrit
+decides: 61.4% unrecognisable for medium against 71.0% for turbo — a 10 point gap, far
+outside the noise.** Those are the names and verse terms the archive will be searched by.
+Compute is a wash: turbo ran at 1.91x and 2.15x on two runs of the same model, so medium's
+2.04x sits inside turbo's own noise, and medium's wall time was in fact shorter (34.2 min
+against 36.6 min).
+
+#### What the matrix settled
+
+- **The glossary prompt does nothing.** No effect on small (25.2% vs 25.3%), and on turbo it
+  traded English for Sanskrit, both around noise. Do not carry it into the pipeline.
+- **`large-v3-turbo` is worse at Sanskrit than `small`** (71.0% against 68.0%), while being
+  much better at English. Its aggressive distillation appears to cost exactly the vocabulary
+  this corpus needs. A "better" model on paper was the wrong model here.
+- **Model size beats beam width.** `small-beam5` costs 1.3x of `small-beam1` and buys 1.9
+  points; `medium-beam1` costs 2.0x and buys 5.2 points. Spend compute on the model.
+- **`medium-beam5` was not tested** and is the obvious next question: if beam 5 repeats its
+  small-model gain on medium, English lands near 18% for about 45 minutes per lecture.
+- **Sanskrit is the real problem and the decoder will not fix it.** The best of six
+  configurations still fails on 61% of Sanskrit words. Two untried levers, in order of
+  expected value: a **post-hoc lexicon correction** built from the 710 RTF transcripts
+  (costs no decode time, testable on this reference), and faster-whisper's **`hotwords`**
+  parameter, which is a different mechanism from `initial_prompt` and untested.
+- **Dropped speech is still 12.7% of the reference** (847 missing words) with medium, after
+  the gap re-decode. The gap re-decode stage is necessary but not sufficient.
 
 ### 10.14 Timing polish of the 79 guessed cues — tool built and measured
 
