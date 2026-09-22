@@ -485,6 +485,36 @@ The steward asked about Deepgram. Survey with a verifier (run `wf_659d3dd8-130`)
 - The decision rule is correction labour: a paid service is worth it only if it removes
   enough of the ~690 fixes per lecture on the reference.
 
+### 10.20 Code-switching is where the errors concentrate (measured 2026-09-22)
+
+The steward's hypothesis: the errors come from relying on monolingual models (every run forced
+`language="en"`) when the lectures are trilingual — English, Bengali and Sanskrit, with heavy
+code-switching. Measured on `stagea-medium-beam1-noskip` with the fixed scorer
+(`data/reference/analysis/codeswitch_errors.py`):
+
+| cue type | cues | words | error rate | share of all errors |
+|---|---:|---:|---:|---:|
+| plain English | 329 | 4,336 | 19.3% | 46.3% |
+| English with Sanskrit words | 148 | 1,975 | **36.8%** | **40.0%** |
+| verse (>50% Sanskrit) | 35 | 367 | 67.8% | 13.7% |
+
+**English words only**, by distance from the nearest Sanskrit word: **1 word away 49.8%** wrong
+or missing; 2-3 words 24.8%; 4-10 words 16.8%; over 10 words 14.7%.
+
+- **Cues containing Sanskrit hold 35% of the words but 54% of the errors.**
+- **Code-switching damages the English around it**, not only the Sanskrit. An English word next
+  to a Sanskrit word is wrong or missing more than three times as often as one far from any.
+  Part of the gradient may come from how alignment assigns words inside a garbled block, so
+  treat the size as approximate. The direction is unambiguous.
+- **Code-switching explains about half the problem, not all of it.** English far from any
+  Sanskrit is still ~15% wrong: accent, cassette audio and dropped words. A multilingual model
+  alone will not fix that half.
+- **The shortlist's best English models are monolingual.** Parakeet's vocabulary is English-only,
+  Deepgram `en` skips other languages, and Qwen3-ASR has no Bengali or Sanskrit. By this
+  measurement they risk the same damage at every switch.
+- **The reference does not mark Bengali.** Bengali written without diacritics (*jakhona*) counts
+  as English. Tagging Bengali spans is needed before trilingual models can be scored fairly.
+
 ---
 
 ## 11. Tools built this session (lecture-archive)
