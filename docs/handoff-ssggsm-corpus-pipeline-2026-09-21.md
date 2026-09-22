@@ -591,6 +591,40 @@ soundfile, indic_transliteration); model in `data/models/indic-transcribe-flex` 
 the duplicate `nemo/` copy skipped). The model is gated; the steward accepted its licence
 and `HF_TOKEN` is in `.env.local` (git-ignored).
 
+### 10.24 What language models can do here (2026-09-22)
+
+The steward pointed out that GPU rental and licences are available, so neither may be used
+to dismiss a model. Re-judged on capability: **`docs/llm-roles-for-transcription-2026-09-22.md`**
+(run `wf_40a9456e-3c0`). In short:
+
+- **Free-form LLM correction of transcripts is the most replicated failure in the
+  literature** (Whisper 3.89 -> 5.84 WER with GPT-3.5 on lecture speech; "all LLMs degrade
+  the baseline ASR" in Apple's study; only *fine-tuned* mT5/ByT5 helped a strong Indic
+  baseline). The failure mode, over-correction toward written language, is exactly what
+  would erase Gurudeva's verbatim English. Our own matrix found the same one stage earlier:
+  the glossary prompt made WER worse.
+- **Text-only correction has an arithmetic ceiling of 10.6% WER** on the reference, because
+  706 of 6,678 words are missing and no text model can hear them.
+- **Missing words, located today** (answering the verifier's own gap): only 8% lie in the
+  never-subtitled stretches; **92% are inside cues, i.e. the model did not write them**.
+  Rate by cue type: plain English 7.7%, English-with-Sanskrit 13.4%, verse 17.7%. So
+  dropping is twice as likely in code-switched passages (the steward's hypothesis again),
+  but **half of all dropped words are still in plain English**.
+- **Safe jobs for a model are the ones where it cannot invent words:** choosing between two
+  recognisers (baseline: plain ROVER, free and deterministic), labelling each word's
+  language, restoring punctuation with a token classifier, translating Odia.
+- **Verse identification needs TWO indexes**: Sanskrit verses and Bengali padavali. The
+  Bengali songs are where the most words go missing, and a Sanskrit corpus does not contain
+  them.
+- **Missed by the sweeps, worth following up:** Sarvam Saaras v4 accepts up to 50 keyterms
+  *at recognition time* with a code-mix mode - glossary biasing where the literature says it
+  belongs; Sarvam's API also hosts Gemma-4-31B and DeepSeek V4 Flash inside its free credit.
+- **The binding constraint is human attention** (~690 edit sites x 3,766 lectures is roughly
+  2.6M review decisions), which nobody has priced.
+
+Order of work this implies: the second recogniser first (already running), then ROVER as the
+baseline any model must beat, then constrained-edit model arms with a do-nothing control.
+
 ---
 
 ## 11. Tools built this session (lecture-archive)
