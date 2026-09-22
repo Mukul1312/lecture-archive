@@ -95,6 +95,8 @@ open question already in the handoff about the ND-licensed years. **Asking the
 rights-holder's permission is the first step before any commercial test.** The local
 bake-off has no such issue.
 
+**Permission received (2026-09-22).** On 2026-09-22 the steward reported: "I've also got permission from right-holders that transcription can be done on models." Recorded as permission to transcribe the lectures with ASR models, local or hosted. It does not clearly extend to a vendor *training* on the recordings, so hosted tests keep training switched off (Deepgram `mip_opt_out=true` on every request; ElevenLabs training disabled in settings; no AssemblyAI free tier, which cannot opt out) unless the rights-holder explicitly allows training too.
+
 ## Correction labour, not money, should decide
 
 The eight-point findings showed that correction labour dominates. medium leaves about 690
