@@ -6,6 +6,7 @@ session directory, which is not backed up and is cleaned up eventually.
 
 | script | what it did | run |
 |---|---|---|
+| `commercial-asr-free-credit-survey.js` | Deepgram in depth, independent accuracy evidence, and commercial peers with free allowances (AssemblyAI, Speechmatics, ElevenLabs, Soniox, Gladia, Google, Azure, Rev, OpenAI), then a verifier that checks prices, free credits and data terms at source. Notes in `data/research/commercial-asr-2026-09/` | `wf_659d3dd8-130`, 2026-09-22 |
 | `melbourne-eight-point-measurements.js` | Four measurements on the verified Melbourne reference — correction workload, error-signal calibration, read-along timing drift, Sanskrit lexicon headroom — then one adversarial verifier that recomputes every headline number | `wf_1d5e654d-7eb`, 2026-09-22 |
 | `open-asr-model-survey.js` | Five research sweeps on open ASR models beyond Whisper (English, Indic and Sanskrit, alignment and CPU runtimes, 2026 releases, evidence on archival and accented speech plus rented-GPU cost), then a verifier that checks licence, timestamps, CPU feasibility and accuracy claims at primary sources. Sweeps write as they go to `data/research/asr-model-survey-2026-09/` | `wf_4e095424-673`, 2026-09-22 |
 | `ssggsm-reference-and-catalogue-prep.js` | Found the corpus's only verbatim reference, built the RTF glossary, prepared the catalogue | `wf_163b7baa-099`, 2026-09-18 |
