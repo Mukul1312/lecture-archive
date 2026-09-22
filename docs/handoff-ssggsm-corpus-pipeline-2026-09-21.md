@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Bake-off Stage A running** (started 2026-09-22 ~20:55): `data/reference/run_stage_a.py`, log `data/reference/stage-a-run.log`, resumable. It runs medium with the no-speech skip rule off, then medium batched, and saves the words from before the gap re-decode, per-segment scores and the gap log. Then Stage B (Parakeet via onnx-asr; needs one pip install and ~1.3 GB) and the commercial tests (rights permission received; accounts and API keys are the steward's to create) |
+| **Next action** | Stage A done (§10.21): skip rule off is the new baseline (dropped 768->706, verse 73->68%); batched is faster but loses 441 words, mostly chanted verse, which implicates VAD. Code-switching holds 54% of the errors (§10.20). Awaiting the steward: a VAD test (sequential, VAD off) and/or batched without VAD; Whisper multilingual mode (needs indic_transliteration); Stage B; commercial tests. The Indic links survey (wf_b39c2eed-460) is running |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -514,6 +514,28 @@ or missing; 2-3 words 24.8%; 4-10 words 16.8%; over 10 words 14.7%.
   measurement they risk the same damage at every switch.
 - **The reference does not mark Bengali.** Bengali written without diacritics (*jakhona*) counts
   as English. Tagging Bengali spans is needed before trilingual models can be scored fairly.
+
+### 10.21 Bake-off Stage A results (2026-09-22)
+
+`data/reference/run_stage_a.py`. Each configuration changes one thing from `medium-beam1`.
+
+| configuration | English | Sanskrit | WER | dropped words | verse-cue error | time |
+|---|---:|---:|---:|---:|---:|---:|
+| medium-beam1 (skip rule on) | 19.5% | 58.7% | 27.7% | 768 | 73.3% | 34.2 min |
+| **medium, skip rule off** | **19.3%** | **55.8%** | **27.2%** | **706** | **67.8%** | 39.0 min |
+| medium, batched | 21.2% | 71.6% | 29.6% | 1,147 | 88.0% | 23.9 min |
+
+- **Skip rule off is the new baseline.** It is a small but real gain, concentrated in verse:
+  verse-cue error fell from 73.3% to 67.8%. Only one segment in 957 still meets both skip
+  conditions, and it is a verse. The cost is +14% time, from 24 temperature retries.
+- **Batched mode is 43% faster but drops 441 more words**, and verse collapses to 88% error.
+  Batched decoding relies entirely on Silero VAD segments, with a much tighter default
+  segmentation (160 ms minimum silence) than sequential decoding. Chanted verse is what it
+  loses most. **This points at VAD as a cause of dropped speech**, including in the
+  sequential runs, which also use VAD. It is not yet proven; the test is sequential with VAD
+  off, or batched with fixed clip_timestamps and no VAD.
+- 60% of real speech segments score no_speech_prob > 0.6, which again shows the signal is
+  meaningless on this corpus.
 
 ---
 
