@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Prabhupadavani bake-off**: audio downloading (§10.23), then Whisper baseline, then flex `lang=en` and `lang=bn mode=mixed`, all scored by `data/research/prabhupadavani/score.py`. This tests the steward's trilingual hypothesis (§10.20) on a second corpus. Also running: the language-model evidence sweep (`wf_40a9456e-3c0`) on what LLMs could do once GPU rental and licences are not constraints |
+| **Next action** | **Read `data/research/prabhupadavani/MORNING-REPORT-prabhupadavani.md`** (written overnight by `run_tonight.py`, §10.25): Whisper against Indic-Transcribe-flex in two configurations on a second corpus, with the code-switching breakdown. Then the steward's decisions listed in §10.25. The day's findings are mapped in §10.25; the four new write-ups are in `docs/` |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -624,6 +624,93 @@ to dismiss a model. Re-judged on capability: **`docs/llm-roles-for-transcription
 
 Order of work this implies: the second recogniser first (already running), then ROVER as the
 baseline any model must beat, then constrained-edit model arms with a do-nothing control.
+
+### 10.25 State at the end of 2026-09-22, and how to resume
+
+**Running unattended tonight.** `data/research/prabhupadavani/run_tonight.py`, started 23:32,
+detached (it survives this session ending). It waits for the Whisper run already in progress,
+then runs the two flex configurations, scores all three and writes
+`data/research/prabhupadavani/MORNING-REPORT-prabhupadavani.md`.
+
+| stage | command (from the repo root) | output | expected |
+|---|---|---|---|
+| 1 | `.venv-transcribe\Scripts\python.exe -u data/research/prabhupadavani/run_whisper.py` | `whisper-medium-noskip/<folder>.jsonl` | ~48 min, ~2.1x real time |
+| 2 | `.venv-indic\Scripts\python.exe -u data/research/prabhupadavani/run_flex.py --lang en --mode native` | `flex-en-native/<folder>.txt` | ~80 min, ~1.4x |
+| 3 | `.venv-indic\Scripts\python.exe -u data/research/prabhupadavani/run_flex.py --lang bn --mode mixed` | `flex-bn-mixed/<folder>.txt` | ~80 min, ~1.3x |
+| score | `python data/research/prabhupadavani/score.py data/research/prabhupadavani/<stage> --label <stage>` | `accuracy-<stage>.json` | seconds |
+
+Every stage writes one file per clip folder and skips finished ones, so an interruption costs
+only the folder in progress. Logs: `tonight.log` (the runner), `<stage>.log`, `whisper.log`.
+
+**Power.** The steward was about to leave the laptop on battery at 45%. Tonight needs about
+3.5 hours of continuous CPU, which the battery would not survive, and Windows throttles the
+processor on battery. He plugged it back in. Sleep and hibernate are both set to never on
+mains.
+
+#### Environments and paths
+
+| what | where |
+|---|---|
+| Whisper (faster-whisper 1.2.1) | `.venv-transcribe` |
+| Scoring, editor, tests | `.venv` |
+| Indic-Transcribe-flex (torch CPU, transformers, indic_transliteration) | `.venv-indic` |
+| flex weights, 4.89 GB, gated model accepted by the steward | `data/models/indic-transcribe-flex` |
+| Hugging Face token (read) | `.env.local`, git-ignored. Never print it |
+| Melbourne reference and all Whisper runs | `data/reference/` |
+| Prabhupadavani benchmark | `data/research/prabhupadavani/` |
+| Research results from the four workflow runs | `data/research/*/workflow-result-*.json` |
+
+#### What 2026-09-22 established
+
+Each has its own write-up; this is the map:
+
+1. **The scorer had a bug** that made every published figure too pessimistic; fixed with a
+   test. Corrected baseline for medium: English 19.5%, Sanskrit 58.7%, WER 27.7% (§10.17,
+   `docs/melbourne-reference-eight-point-findings-2026-09-22.md`).
+2. **Whisper's no-speech skip rule** discards whole 30 s windows and was on in every earlier
+   run. Turning it off is the new baseline: **English 19.3%, Sanskrit 55.8%, 706 dropped
+   words** (§10.21). Batched decoding is 43% faster but loses the chanted verse (§10.21).
+3. **Code-switching concentrates the errors** (§10.20): cues containing Sanskrit are 35% of
+   the words and 54% of the errors; an English word next to a Sanskrit word is wrong 49.8% of
+   the time against 14.7% far from any. Half the remaining errors are in plain English, so a
+   multilingual model can fix about half the problem.
+4. **The missing words are located** (§10.24): 92% sit inside cues, not in never-subtitled
+   stretches; the rate is 7.7% plain English, 13.4% mixed, 17.7% verse. The worst individual
+   cues are Bengali songs and Sanskrit verses.
+5. **Open ASR survey** (`docs/open-asr-model-survey-2026-09-22.md`): Parakeet TDT and
+   Qwen3-ASR shortlisted, but both are monolingual, which finding 3 makes a liability here.
+6. **Commercial survey** (`docs/commercial-asr-survey-2026-09-22.md`): Deepgram supports
+   Bengali and Indian English separately but cannot switch between them in one request, so it
+   is a router target, not a code-switching model. ElevenLabs Scribe v2 and Speechmatics have
+   better independent evidence. Rights permission received 2026-09-22; vendor training stays
+   off.
+7. **The steward's 34 Indic links** (`docs/indic-links-survey-2026-09-22.md`): the find is
+   Prabhupadavani; IndicTrans2 and Indic-Transcribe-core for the Odia seva; nothing new for
+   narrator-voice.
+8. **Language models** (`docs/llm-roles-for-transcription-2026-09-22.md`): never let one
+   rewrite a transcript; text-only correction has a 10.6% WER floor here; the safe jobs are
+   choosing between two recognisers (baseline: plain ROVER), word-language tagging,
+   punctuation by token classification, and Odia translation.
+
+#### Decisions waiting for the steward
+
+- Whether to test **Sarvam Saaras v4 keyterms** (biasing at the recognition stage, free
+  credit) and the three commercial recognisers on the Melbourne reference.
+- Whether to run **Parakeet TDT** locally (Stage B: one pip install, ~1.3 GB).
+- Whether to spend one **timed correction sitting** on a different lecture, which is still the
+  single most valuable measurement outstanding (it fixes the corpus-hours estimate, tests the
+  error signal out of sample, and yields a second reference).
+- Whether to mark ~100 word onsets by ear (~20 minutes) to turn the read-along timing bounds
+  into measured accuracy.
+
+#### Gotchas worth remembering
+
+- `PYTHONIOENCODING=utf-8` before every Python call, or Windows cp1252 crashes on IAST text.
+- Google Drive rate-limits with HTTP 503; `fetch_test.py` now backs off and retries. One clip
+  line (`0580_clip36`) never returned audio and is excluded from both sides of the scoring.
+- flex `lang=sa` and `lang=hi` mangle plain English into Devanagari; only `en` and
+  `bn mode=mixed` are worth scoring.
+- The transliteration library leaves Bengali's nukta behind; `run_flex.py` strips it.
 
 ---
 
