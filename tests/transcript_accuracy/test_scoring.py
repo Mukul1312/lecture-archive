@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import tempfile
 import unittest
 
-from scripts.transcript_accuracy import fold, has_diacritics, recognisable, score, skeleton
+from scripts.transcript_accuracy import fold, has_diacritics, load_hypothesis, recognisable, score, skeleton
 
 
 class TokenTests(unittest.TestCase):
@@ -52,6 +55,30 @@ class ScoreTests(unittest.TestCase):
         words = ["take", "shelter", "of", "krsna"]
         tally = score(words, [False, False, False, True], list(words))
         self.assertEqual((tally["exact"], tally["wrong"], tally["missing"], tally["inserted"]), (4, 0, 0, 0))
+
+
+class HypothesisSpanTests(unittest.TestCase):
+
+    def _words(self, items: list[tuple[str, float]]) -> Path:
+        handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8")
+        with handle:
+            for word, at in items:
+                handle.write(json.dumps({"w": word, "s": at, "e": at + 0.3}) + "\n")
+        self.addCleanup(Path(handle.name).unlink)
+        return Path(handle.name)
+
+    def test_words_outside_the_span_and_in_unsubtitled_speech_are_dropped(self) -> None:
+        path = self._words([("before", 5.0), ("kept", 12.0), ("chatter", 30.0), ("after", 60.0)])
+        self.assertEqual(load_hypothesis(path, (10.0, 50.0), [[20.0, 40.0]]), ["kept"])
+
+    def test_heard_words_inside_a_cue_are_scored_even_within_an_unsubtitled_span(self) -> None:
+        # The re-timing marks long stretches of speech that no cue matched as "never
+        # subtitled". A cue it could not match (a garbled song, say) has its time
+        # interpolated into such a stretch. Dropping the heard words there while its
+        # reference words stay would count every one of them as missing.
+        path = self._words([("kept", 12.0), ("song", 21.0), ("chatter", 30.0)])
+        heard = load_hypothesis(path, (10.0, 50.0), [[20.0, 40.0]], covered=[(20.5, 22.0)])
+        self.assertEqual(heard, ["kept", "song"])
 
 
 if __name__ == "__main__":

@@ -140,7 +140,16 @@ def load_reference(review_path: Path) -> tuple[list[str], list[bool], dict]:
     return reference, is_indic, review
 
 
-def load_hypothesis(words_path: Path, span: tuple[float, float], excluded: list[list[float]]) -> list[str]:
+def load_hypothesis(words_path: Path, span: tuple[float, float], excluded: list[list[float]],
+                    covered: list[tuple[float, float]] = ()) -> list[str]:
+    """Heard words inside the span, without speech the subtitles never covered.
+
+    ``excluded`` comes from the re-timing, which could only mark speech that no *matched*
+    cue covered. A cue it could not match keeps an interpolated time that can fall inside
+    such a stretch, and its reference words are still scored, so heard words inside any
+    ``covered`` cue interval are always kept. Dropping them counted every one of that
+    cue's words as missing: 16 cues on the Melbourne reference, the Bengali song among them.
+    """
     start, end = span
     words = []
     for line in words_path.read_text(encoding="utf-8").splitlines():
@@ -148,7 +157,10 @@ def load_hypothesis(words_path: Path, span: tuple[float, float], excluded: list[
             continue
         item = json.loads(line)
         at = item["s"]
-        if start <= at <= end and not any(a <= at <= b for a, b in excluded):
+        if not start <= at <= end:
+            continue
+        in_cue = any(a <= at <= b for a, b in covered)
+        if in_cue or not any(a <= at <= b for a, b in excluded):
             words += fold(item["w"])
     return words
 
@@ -165,7 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     reference, is_indic, review = load_reference(args.review)
     excluded = json.loads(args.retime_report.read_text(encoding="utf-8"))["spoken_but_not_subtitled"] if args.retime_report else []
     span = (review["cues"][0]["start_ms"] / 1000, review["cues"][-1]["end_ms"] / 1000)
-    hypothesis = load_hypothesis(args.words, span, excluded)
+    covered = [(cue["start_ms"] / 1000, cue["end_ms"] / 1000) for cue in review["cues"]]
+    hypothesis = load_hypothesis(args.words, span, excluded, covered)
     tally = score(reference, is_indic, hypothesis)
 
     n = tally["reference_words"]

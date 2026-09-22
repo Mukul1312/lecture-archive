@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Matrix finished; `medium-beam1` chosen** (English 20.1%, Sanskrit 61.4%, 2.0x real time) — §10.13 has the table and the reasoning. The bracketed timing polish rescues 42 of the 79 guessed cues against that transcript, unapplied. Awaiting the steward on: confirm the configuration; whether to test `medium-beam5` (~45 min); the Sanskrit lexicon pass; measuring the real average lecture length |
+| **Next action** | **Read `docs/melbourne-reference-eight-point-findings-2026-09-22.md` first.** The eight-point measurements are done and verified; the scorer bug they found is fixed (medium-beam1 is 19.5% English / 58.7% Sanskrit / 27.7% WER, choice unchanged). The steward decides the next step: the findings recommend one timed correction sitting on a different lecture, ~100 hand-marked word onsets, and three machine runs (silence skipping off, batched, beam 5) |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -304,6 +304,10 @@ Two things learned already:
 
 #### The full table (all six configurations, same 69.8-minute span, same verified reference)
 
+> **Superseded 2026-09-22:** these figures came from a scorer that dropped the heard words of 16
+> cues while still scoring their reference words. Corrected table and the fix:
+> `docs/melbourne-reference-eight-point-findings-2026-09-22.md`. The ranking and the choice did not change.
+
 | configuration | English wrong | Sanskrit unrecognisable | WER | wall | speed |
 |---|---:|---:|---:|---:|---:|
 | `small-beam1` | 25.3% | 68.0% | 34.2% | 17.5 min | 4.00x |
@@ -434,6 +438,18 @@ how to resume, and where a run's output lives). Agent outputs go to
 closed session — read `journal.jsonl` in the session's `subagents/workflows/wf_1d5e654d-7eb/`
 directory **before** re-running: it records what each agent actually returned, and finished
 agents do not need to be paid for twice.
+
+### 10.17 Eight-point measurements — finished and verified (2026-09-22)
+
+The workflow in §10.16 completed after one resume (the first attempt hit a usage limit on
+two of its five agents; the three finished ones replayed from cache). The verifier
+reproduced most arithmetic, **disputed several conclusions, and found a bug in
+`scripts/transcript_accuracy.py`** that biased every earlier accuracy figure. The bug is
+fixed with a test, all six configurations are re-scored, and the old scores are kept in
+`data/reference/analysis/accuracy-before-scorer-fix/`.
+
+Everything measured, point by point, with the verifier's corrections applied:
+**`docs/melbourne-reference-eight-point-findings-2026-09-22.md`.**
 
 ---
 
