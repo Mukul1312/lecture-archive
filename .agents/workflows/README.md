@@ -7,6 +7,7 @@ session directory, which is not backed up and is cleaned up eventually.
 | script | what it did | run |
 |---|---|---|
 | `melbourne-eight-point-measurements.js` | Four measurements on the verified Melbourne reference — correction workload, error-signal calibration, read-along timing drift, Sanskrit lexicon headroom — then one adversarial verifier that recomputes every headline number | `wf_1d5e654d-7eb`, 2026-09-22 |
+| `open-asr-model-survey.js` | Five research sweeps on open ASR models beyond Whisper (English, Indic and Sanskrit, alignment and CPU runtimes, 2026 releases, evidence on archival and accented speech plus rented-GPU cost), then a verifier that checks licence, timestamps, CPU feasibility and accuracy claims at primary sources. Sweeps write as they go to `data/research/asr-model-survey-2026-09/` | `wf_4e095424-673`, 2026-09-22 |
 | `ssggsm-reference-and-catalogue-prep.js` | Found the corpus's only verbatim reference, built the RTF glossary, prepared the catalogue | `wf_163b7baa-099`, 2026-09-18 |
 | `ssggsm-transcript-corpus-check.js` | Surveyed the ~800 draft transcripts and the duplicate structure of the tape corpus | `wf_b4c3304d-910`, 2026-09-18 |
 
