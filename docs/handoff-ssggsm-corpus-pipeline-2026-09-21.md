@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | Stage A done (§10.21): skip rule off is the new baseline (dropped 768->706, verse 73->68%); batched is faster but loses 441 words, mostly chanted verse, which implicates VAD. Code-switching holds 54% of the errors (§10.20). Awaiting the steward: a VAD test (sequential, VAD off) and/or batched without VAD; Whisper multilingual mode (needs indic_transliteration); Stage B; commercial tests. The Indic links survey (wf_b39c2eed-460) is running |
+| **Next action** | **Prabhupadavani bake-off**: audio downloading (§10.23), then Whisper baseline, then flex `lang=en` and `lang=bn mode=mixed`, all scored by `data/research/prabhupadavani/score.py`. This tests the steward's trilingual hypothesis (§10.20) on a second corpus. Also running: the language-model evidence sweep (`wf_40a9456e-3c0`) on what LLMs could do once GPU rental and licences are not constraints |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -549,6 +549,47 @@ open recogniser trained on Indian English, Sanskrit and Bengali together. For th
 IndicTrans2 (MIT, Odia to English) and Indic-Transcribe-core. Nothing new for narrator-voice.
 The language models (Sarvam, Param-1, Qwen3 and its Sanskrit fine-tune) do not help:
 deterministic verse retrieval and transliteration beat them.
+
+### 10.23 Prabhupadavani benchmark and Indic-Transcribe-flex (2026-09-22)
+
+The steward asked to test both Whisper and a code-switching model on Prabhupadavani.
+Everything lives in `data/research/prabhupadavani/` (gitignored):
+
+- `fetch_test.py` downloads the TEST split from the dataset's public Google Drive: 1,048
+  subtitle lines from 20 clips, one small mp3 per line. Drive rate-limits with HTTP 503,
+  so it retries with a long backoff and skips what it already has.
+- `score.py` scores any system the same way, reusing `scripts/transcript_accuracy.py`.
+  Because the released text does not tag Bengali separately, the two tracks are English and
+  **Sanskrit + Bengali** (every word written with diacritics). It strips what nobody speaks:
+  speaker labels from the dataset's own list (mid-line as well as at line start), scripture
+  citations and editorial notes, but it keeps verse quotations that end in a colon
+  ("Me śṛṇu:"), which a pattern-based stripper would have deleted.
+  Two fairness normalisations are applied to every system and to the reference: apostrophes
+  become spaces (flex writes "he ll", Whisper "he'll") and numbers under 1,000 are spelt out
+  (flex writes "3 hours", the reference "three hours").
+- `run_whisper.py` uses the Melbourne baseline exactly (medium, skip rule off).
+- `run_flex.py` feeds flex the same joined audio through its own chunked helper, then
+  converts Devanagari, Bengali and Odia script to IAST (stripping the nukta the
+  transliteration library leaves behind).
+
+**Flex measured on this laptop (probe, 61 s of real audio, CPU, 6 threads):**
+
+| run | speed | what it writes |
+|---|---|---|
+| `lang=en` | 1.45x real time | plain English, no apostrophes; **translates Sanskrit terms**: the reference's *brāhmaṇa* becomes "Brahmin" |
+| `lang=bn mode=mixed` | 1.30x | English in Latin, Bengali in Bengali script - the promising one |
+| `lang=sa mode=mixed` | 1.31x | mangles plain English into Devanagari ("देर् इस् ए practical story") |
+| `lang=hi mode=mixed` | 1.32x | the same problem |
+
+So flex runs locally at about 1.3-1.45x real time (model load 14 s, ~5 GB of RAM in
+float32). Only `en` and `bn mode=mixed` are worth scoring. Its card publishes **no English
+and no Sanskrit accuracy**, and flex is weaker than its sibling *core* on their own
+benchmark (11.3 against 8.7 average), but only flex has the mixed-script mode.
+
+Setup: `.venv-indic` (a separate environment: torch CPU, transformers, sentencepiece,
+soundfile, indic_transliteration); model in `data/models/indic-transcribe-flex` (4.89 GB,
+the duplicate `nemo/` copy skipped). The model is gated; the steward accepted its licence
+and `HF_TOKEN` is in `.env.local` (git-ignored).
 
 ---
 
