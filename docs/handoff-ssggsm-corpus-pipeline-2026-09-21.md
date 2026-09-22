@@ -468,6 +468,22 @@ produced **`docs/open-asr-model-survey-2026-09-22.md`**. In short:
   the bake-off's headline metric.
 - Don't feed enhanced audio to ASR by default.
 
+### 10.19 Deepgram and other commercial services (2026-09-22)
+
+The steward asked about Deepgram. Survey with a verifier (run `wf_659d3dd8-130`):
+**`docs/commercial-asr-survey-2026-09-22.md`**.
+
+- Deepgram: $200 free credit; Nova-3 costs ~$890 for the corpus (~$1,160 with keyterms),
+  possibly doubled by stereo billing. It fetches archive.org URLs itself and has useful
+  per-word confidence. But it is in the lower half on independent accuracy, and it skips
+  non-English speech (verse) by design.
+- The best independent evidence is for ElevenLabs Scribe v2 and AssemblyAI, including the
+  fewest long runs of dropped words. Speechmatics is the privacy-friendliest free test.
+- **Rights come first:** the vendors require the uploader to hold the rights, and several
+  train on uploads by default. Ask the rights-holder before any commercial test.
+- The decision rule is correction labour: a paid service is worth it only if it removes
+  enough of the ~690 fixes per lecture on the reference.
+
 ---
 
 ## 11. Tools built this session (lecture-archive)
