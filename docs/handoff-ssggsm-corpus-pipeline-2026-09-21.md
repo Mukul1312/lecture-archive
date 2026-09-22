@@ -406,6 +406,35 @@ was launched, so its output is known to work rather than assumed to.
 **The machine will not sleep:** "Sleep after" and "Hibernate after" are both 0 (never) on AC
 power. The run only needs the laptop to stay plugged in.
 
+### 10.16 Eight-point measurement workflow (launched 2026-09-22 09:52)
+
+The steward framed the reference sitting as eight purposes. Points 1 (measure accuracy),
+4 (test the glossary) and 7 (test the correction workflow) were already answered; point 2
+(choose the model by numbers) is answered for model size and the prompt but **not for
+batching or silence skipping**; point 8 (regression baseline) has every ingredient but is
+not pinned. The four that needed real computation were given to a workflow:
+
+- **correction workload** — edit *sites* rather than error words (adjacent errors are one
+  fix), his observed working rate reconstructed from the review snapshot timestamps rather
+  than assumed, and what choosing medium over small saves in *his* hours;
+- **error-signal calibration** — ground-truth error labels, then nine candidate signals
+  scored by precision, recall and **lift**, plus a proper post-mortem of the signal that
+  flagged 481 of 785 segments;
+- **read-along timing drift** — designed around the circularity trap: the reference's cue
+  times came from Whisper, so cross-model disagreement is used as an honest floor instead;
+- **Sanskrit lexicon headroom** — the upper bound of a post-hoc glossary pass *and* the
+  damage it would do to English words that are currently correct.
+
+A fifth agent then tries to refute all four, recomputing every headline number itself.
+
+**Run `wf_1d5e654d-7eb`.** Script versioned at
+`.agents/workflows/melbourne-eight-point-measurements.js` (see that directory's README for
+how to resume, and where a run's output lives). Agent outputs go to
+`data/reference/analysis/` (gitignored). If the run was interrupted — a usage limit, a
+closed session — read `journal.jsonl` in the session's `subagents/workflows/wf_1d5e654d-7eb/`
+directory **before** re-running: it records what each agent actually returned, and finished
+agents do not need to be paid for twice.
+
 ---
 
 ## 11. Tools built this session (lecture-archive)
