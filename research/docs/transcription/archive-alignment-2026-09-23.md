@@ -23,7 +23,8 @@ The first lecture through the pipeline:
 | speed | **1.56× real time** on CPU |
 
 It opens on `"I thank you, one and all, for your…"` at 0.2 s and closes on `"Jaya Srila Gurudeva
-ki jaya!"` at 493.5 s. The transcript's own rate — **88 words per minute** — matches the 91
+ki jaya!"` at 493.5 s. The second lecture through, four times longer, did better still:
+**2,333 of 2,337 words placed — 100%** — 24 minutes of audio in 12.7, at 1.9× real time. The transcript's own rate — **88 words per minute** — matches the 91
 measured on the one other lecture we have, which is the first evidence that these published
 transcripts are not heavily abridged.
 
@@ -92,8 +93,17 @@ site's fault rather than ours.
 path outright, and the refusal is an `InvalidURL` — neither a `URLError` nor an `OSError`, so it
 escapes the obvious `except` clause and takes the whole batch with it.
 
-**Six lectures serve audio by JavaScript injection** and have no static `<source>` tag. They need
-a headless fetch and are not in this run.
+**Twenty-one lectures serve audio by JavaScript injection** and have no static `<source>` tag.
+Their transcripts came down fine; the audio needs a headless fetch (firecrawl would do it) and
+they are not in this run.
+
+**One lecture is published damaged.** A broken MPEG frame partway through, and a fresh download
+returns byte-identical — so the damage is in the file on the server, not the transfer.
+libsndfile refuses it outright; ffmpeg skips the bad frame and recovers **60.8 of its 61
+minutes**, which for a lecture recording is the right trade. The fallback only runs after
+soundfile has already failed.
+
+**So the run covers 78 of the 100**, carrying 318,571 transcript words.
 
 ## Running it
 

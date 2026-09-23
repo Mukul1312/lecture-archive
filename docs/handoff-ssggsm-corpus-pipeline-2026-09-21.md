@@ -1321,7 +1321,7 @@ the next window. No boundary is ever guessed, and a bad step shows as a collapse
 than silent drift. Costs ~1.6x re-scoring of window tails.
 
 First lecture: **718/728 words (99%), score 0.525, all invariants holding, 0.2-493.6s of 493.6s,
-1.56x real time.** Its 88 wpm matches the 91 on the other lecture - first evidence these
+1.56x real time.** Second, four times longer: **2,333/2,337 - 100%** - at 1.9x real time. Its 88 wpm matches the 91 on the other lecture - first evidence these
 published transcripts are not heavily abridged.
 
 **The star's purpose turned out to be different from what I built it for.** CTC's blank ALREADY
@@ -1343,7 +1343,11 @@ Melbourne's *verified* subtitle file was still at fault in 14.9% of disagreement
    corpus. `taptajivanam_mirror.transcript_of` tries both.
 2. **MP3 filenames contain SPACES.** urllib raises `InvalidURL`, which is **neither URLError nor
    OSError**, so it escaped the except clause and killed the first run.
-3. **6 lectures serve audio by JavaScript** - no static `<source>`; they need a headless fetch.
+3. **21 lectures serve audio by JavaScript** - no static `<source>`; transcripts came down but
+   the audio needs a headless fetch (firecrawl). **So the run covers 78 of 100**, 318,571 words.
+   And **one lecture is published damaged** - a broken MPEG frame, byte-identical on re-download,
+   so the fault is on the server. libsndfile refuses it; ffmpeg recovers 60.8 of its 61 minutes,
+   and `align_archive.read_audio` falls back to it only after soundfile has failed.
 4. **A 7-minute window through `emissions()` is 21,000 frames** - quadratic attention, ~1.8 GB
    per head. `emissions_long` exists for this and I had not used it.
 
