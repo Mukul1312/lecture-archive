@@ -80,6 +80,9 @@ average length, which every cost figure multiplies.
 - [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md) — all 483
   remaining disagreements judged one at a time, with every claim against the reference put to
   a sceptic. **72% are genuinely the model's mistake.**
+- [Giving every word a time](forced-alignment-2026-09-23.md) — `flex` and Sarvam emit no
+  timestamps at all, and read-along needs one per word. Forced alignment supplies them, and
+  agrees with three commercial systems **more closely than they agree with each other**.
 
 **Surveys** — what exists, before anything was run.
 
