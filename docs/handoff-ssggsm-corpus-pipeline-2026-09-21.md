@@ -1267,6 +1267,30 @@ Prefix every command with `PYTHONIOENCODING=utf-8`.
 modules (scipy 13, the shelved `heritage_production` 13, hypothesis 4, librosa 3), none related
 to this work. The repo keeps five venvs for exactly this reason.
 
+#### Before scaling up - the candidates, written down
+
+**`research/docs/transcription/before-scaling-2026-09-23.md`** holds the full list with costs and
+reasoning. In short, and in order:
+
+1. **A SECOND VERIFIED LECTURE.** Everything - nine-system ranking, 15.1% English, the ElevenLabs
+   purchase, the Sanskrit/Bengali split, the timing agreement - rests on ONE 66-minute recording.
+   The one other corpus ever tried (Prabhupadavani) **reversed the ranking**, and public
+   benchmarks have mispredicted this corpus 3 times out of 3. Nothing else protects against being
+   wrong about this, and everything else is cheaper to redo.
+2. **~100 hand-marked word onsets** - hours of work; turns the forced-alignment result from
+   agreement into accuracy, and settles the unrecorded word-onset convention.
+3. **The `data/reference/` gitignore question** - ~20 scripts including the verifiers that check
+   published figures. Flagged FIVE times, still undecided, protecting nothing.
+4. **Run `flex_timed.py` over a full lecture** - ready, no decisions, ~40 min decode + ~25 align.
+5. **Decide where punctuation and casing come from.** The output is still folded tokens, and flex
+   - the only Bengali system - emits almost no punctuation.
+6. Only then the spend (~$760 vs ~$2,000) and a bulk GPU pass, which needs re-costing because the
+   existing figure is for `large-v3-turbo`, **a model that was rejected**.
+
+Also unaddressed: nothing can say "unclear" (a gap versus a fabrication, for scripture), nobody
+attributes speech, and the corpus's real average length is unverified while every cost multiplies
+it.
+
 #### Still open
 
 1. **~100 hand-marked onsets**, turning agreement into accuracy.

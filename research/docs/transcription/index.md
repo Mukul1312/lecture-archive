@@ -27,6 +27,11 @@ emit no word times at all, so the transcript had no way to be followed while lis
 alignment now supplies a start and end for every word, agreeing with the paid systems
 [more closely than they agree with each other](forced-alignment-2026-09-23.md).
 
+**Before transcribing at scale**, read
+[what to settle first](before-scaling-2026-09-23.md) — the remaining risks are no longer
+technical. Every figure on this page rests on **one 66-minute lecture**, and the one other
+corpus ever tried reversed the ranking.
+
 **Still open:** whether to spend ~$760 on ElevenLabs alone, or ~$2,000 for the three-way
 combination that recovers the most speech. Before any spend: hand-mark ~100 word onsets so the
 timings can be stated as accuracy rather than agreement, test the chosen route on a second
