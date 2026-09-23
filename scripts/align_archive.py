@@ -29,6 +29,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -113,6 +116,33 @@ def align_prose(waveform: torch.Tensor, words: list[str],
     return placed, steps
 
 
+def read_audio(path: Path) -> tuple[torch.Tensor, int]:
+    """One recording as mono samples, even when the file is damaged.
+
+    At least one lecture on the archive has a broken MPEG frame partway through - the same bytes
+    arrive on a fresh download, so the damage is in the published file, not the transfer.
+    libsndfile refuses it outright. ffmpeg skips the bad frame and carries on, which for a
+    lecture recording is the right trade: a fraction of a second lost against the whole thing.
+    """
+    import soundfile as sf
+    try:
+        data, rate = sf.read(str(path), dtype="float32", always_2d=True)
+        return torch.from_numpy(data.mean(axis=1)), rate
+    except Exception:
+        pass
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError(f"{path.name} is damaged and ffmpeg is not on PATH to rescue it")
+    with tempfile.TemporaryDirectory() as workspace:
+        repaired = Path(workspace) / "repaired.wav"
+        subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-err_detect", "ignore_err",
+                        "-i", str(path), "-ac", "1", "-ar", str(SAMPLE_RATE), str(repaired)],
+                       check=True, capture_output=True)
+        data, rate = sf.read(str(repaired), dtype="float32", always_2d=True)
+        return torch.from_numpy(data.mean(axis=1)), rate
+
+
 def align_lecture(folder: Path) -> dict | None:
     """One lecture: its published transcript, timed."""
     audio = folder / "audio.mp3"
@@ -120,10 +150,8 @@ def align_lecture(folder: Path) -> dict | None:
     if not (audio.exists() and transcript.exists()):
         return None
 
-    import soundfile as sf
     import torchaudio
-    data, rate = sf.read(str(audio), dtype="float32", always_2d=True)
-    waveform = torch.from_numpy(data.mean(axis=1))
+    waveform, rate = read_audio(audio)
     if rate != SAMPLE_RATE:
         waveform = torchaudio.functional.resample(waveform, rate, SAMPLE_RATE)
 
