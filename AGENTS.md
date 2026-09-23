@@ -32,6 +32,11 @@
 - This repository holds lecture transcription (`scripts/ggsm_transcription/`),
   lecture audio enhancement (`scripts/youtube_enhance/`), the shelved
   `heritage_production` package, the Hindi clone work and the research scripts.
+- **Sanskrit and Bengali are different languages and must be measured apart.** The scorer's
+  Indic track counts any diacritic-marked word, and Bengali transliteration carries as many as
+  Sanskrit, so a combined figure hides which system is best. Use
+  `scripts.transcript_accuracy.indic_language`. Getting this wrong once produced a completely
+  inverted result.
 - Detailed research reports live in the MkDocs site at `research/` (`research/docs/<topic>/`),
   each topic opening with an answer-first `index.md`. Add new research there, not to `docs/`,
   and list it in the `nav` in `research/mkdocs.yml`. `docs/` keeps project state: handoffs,

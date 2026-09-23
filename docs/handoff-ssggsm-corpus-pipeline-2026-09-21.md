@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Finish the KKSongs mirror and re-measure verse retrieval at real corpus size** (10.31). Then flex token scores, the wisdomlib/GRETIL pulls, and forced alignment - which is still the structural gap, because flex emits no timestamps and read-along alignment is the product |
+| **Next action** | **Move the passage-identity margin into `verse_match.py`** with tests (10.32) - it lifted Bengali retrieval from 13% to 67% and currently lives in a scratch script. Then re-split the earlier retrieval figures by language, and route by language rather than treating Indic as one problem |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -1074,6 +1074,95 @@ composes to NFC.
    assembled across three systems has timing for a minority of its words, and read-along
    alignment IS the product.
 5. **A second verified lecture.** Everything still rests on one.
+
+### 10.32 The "Sanskrit" column was two languages (2026-09-23)
+
+**Write-up: `research/docs/transcription/sanskrit-and-bengali-2026-09-23.md`.** This corrects
+claims in 10.27-10.31 and in the bake-off page, which now carries a banner.
+
+The scorer's Indic track counts **any word the reference wrote with diacritics**, and Bengali
+transliteration carries as many as Sanskrit. So every "Sanskrit" figure in this project has
+been **Sanskrit AND Bengali**. Classifier now in `scripts.transcript_accuracy.indic_language`,
+checked against thirty cues read by hand: **thirty right, none wrong**.
+
+**676 Indic words = 486 Sanskrit + 190 Bengali.**
+
+| system | as reported | Sanskrit | Bengali |
+|---|---:|---:|---:|
+| Whisper medium | 67.6% | 61.1% | 84.2% |
+| Deepgram | 90.4% | 86.6% | **100.0%** |
+| flex `bn mixed` | 45.7% | 44.2% | **49.5%** |
+| Sarvam | 51.5% | 46.1% | 65.3% |
+| ElevenLabs + keyterms | 54.6% | **42.6%** | 85.3% |
+| all three fused | 44.7% | **36.8%** | 64.7% |
+
+**Three corrections.** ElevenLabs is **second-best at Sanskrit**, not poor - its blend hid
+42.6% Sanskrit against 85.3% Bengali. Deepgram gets **100.0%** of Bengali wrong, not 90%. And
+flex `bn mixed`'s apparent Sanskrit lead is really that it is **the only system under 50% on
+Bengali**, which dragged its blend down.
+
+**Bengali is the weakest link and was invisible**: 190 words, the longest blackouts, one
+system that manages 50%, and no licensed corpus but KKSongs.
+
+#### A Sanskrit-specific recogniser, tested
+
+`data/models/sushrota-onnx/` - Su-srota, IndicConformer-CTC fine-tuned for **chanted** Sanskrit,
+int8 ONNX, Apache-2.0, ~30x real time on CPU, runs in `.venv-indic` (onnxruntime already there).
+On verse cues, languages separated:
+
+| | Sanskrit (n=16) | Bengali (n=14) |
+|---|---:|---:|
+| **Su-srota** | **35.7% CER** | 61.6% |
+| ElevenLabs + keyterms | 37.0% | 82.3% |
+| flex `bn mixed` | 37.9% | **45.7%** |
+| Whisper medium | 57.6% | 65.8% |
+
+**It wins on Sanskrit.** The margin is modest, not the 4x the literature suggests; a window
+sweep showed that is the cassette audio, not our segmentation (even an oracle window per cue
+only reaches 38.1%).
+
+**WARNING - this was nearly missed by the same error.** My first run filtered "pure Sanskrit"
+by diacritic density, fed **fourteen Bengali songs to a Sanskrit-only model**, and reported
+47.8% CER and a loss. The steward disbelieved it and was right.
+
+#### KKSongs corpus complete, and retrieval at real scale
+
+**1,437 of 1,437 songs mirrored -> 25,687 distinct lyric lines** in
+`data/reference/kksongs/`. Rerun with `kksongs_mirror.py index|fetch|corpus`.
+
+Retrieval measured against it, and **the first two answers were both wrong because of my own
+indexing**:
+
+| index | coverage of the reference's Bengali |
+|---|---:|
+| 25,687 single lines | 27% |
+| 84,075 windows of 1-3 lines | 13% |
+| **windows + passage-identity margin + length check** | **67%** |
+
+**The bug:** the margin compared the winner against the literal second-ranked item, which with
+overlapping windows is **the same passage at a different length** - both score 1.000 by
+containment, so the margin read 0.000 and abstention refused everything. The ranking was
+always perfect; the confidence measure was not.
+
+**The fix, not yet in `verse_match.py`** (it lives in a scratch script -
+`scratchpad/retrieval_at_scale.py`): compute the margin against the best candidate from a
+**different song**, and require a candidate to be at least 55% the query's length, because
+containment lets a 3-word window trivially score 1.0 against a 10-word query.
+
+Remaining misses are honest: Caitanya-caritamrta lines are correctly absent from a songbook,
+and one is split across a line boundary the windows did not span.
+
+**Stop citing the Sikh Kirtan Recall@1 figure.** It was a placeholder analogue while we had no
+real number - live tracking with no abstention, not comparable. We now have our own: 67% on
+84,075 windows. The caution that remains is **sample size** - 15 Bengali cues from one lecture.
+
+#### Next
+
+1. **Move the margin fix into `verse_match.py`** with passage identity as a first-class
+   concept and tests that hold it. It is the highest-value pending change.
+2. Re-split the earlier verse-retrieval measurements by language.
+3. Route by language: English -> local trio confidence-gated; Sanskrit -> fused or
+   ElevenLabs+keyterms, Su-srota on verse spans; **Bengali -> flex `bn mixed`, nothing else**.
 
 ---
 
