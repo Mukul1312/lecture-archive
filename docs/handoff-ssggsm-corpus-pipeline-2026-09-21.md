@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **The steward's route decision**, now on thrice-corrected numbers (10.29): ElevenLabs alone (459 stops, ~$760) or all three (509 stops but 405 dropped words against 665, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, measure the corpus average length, extend the closeness rule to the glossary, and adjudicate each system's own errors before this reference judges a second lecture |
+| **Next action** | **Build per-word selection across systems** (10.30): the ceiling is 93.1% against the best single system's 85.1%, and current fusion only fills silence rather than replacing wrong words. Then verse/song retrieval for the 458 words nobody gets. Also: decide the `data/reference/` gitignore question, recompute 10.29's shared-failure figure, verify word timestamps, and test on a second lecture |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -904,6 +904,66 @@ fewer stops than Whisper**, against the 21% first published. Every repair enlarg
 **Known limit:** reference faults were found by adjudicating only ElevenLabs' sites, so other
 systems' discounts are lower bounds and the per-system table flatters ElevenLabs. Settle it
 before using this reference to judge a second lecture, not before the route decision.
+
+### 10.30 The unexploited lever: pick the best system PER WORD (2026-09-23)
+
+**Start a new session here.** The steward, reading the data himself in the inspector, said
+there are "many possibilities to make a transcription 100%" and that the previous sessions
+were looping on measurement rather than pursuing them. He is right, and here is the number
+that makes the point:
+
+| | words | share |
+|---|---:|---:|
+| best single system right (ElevenLabs + keyterms) | 5,628 | **85.1%** |
+| **at least one of eight systems right** | 6,155 | **93.1%** |
+| no system right | 458 | 6.9% |
+
+**Eight points of headroom sit between the best single system and a per-word choice**, and
+the deterministic fusion built so far captures only part of it, because it only fills gaps
+where the base system wrote nothing. It never *replaces* a word the base got wrong.
+
+How many systems are right at each word:
+
+| systems right | words |
+|---|---:|
+| 8 of 8 | 4,020 |
+| 5-7 of 8 | 1,270 |
+| 2-4 of 8 | 713 |
+| **only 1 of 8** | **152** |
+| none | 458 |
+
+The 4,020 unanimous words need no work. The middle band is where majority voting would pay.
+**The 152 words only one system gets are the hard problem**: any voting scheme loses them, so
+they need a selector that can back a lone dissenter - per-word confidence, or a language
+model choosing between candidates (a job the LLM research already sanctioned, unlike
+rewriting). Deepgram is the only system with well-evidenced per-word confidence and is 517x
+real time, which is a role for it even though it is the worst transcriber here.
+
+The 458 nobody gets are the Bengali songs and chanted verse: **quotations, so the answer is
+retrieval from print, not recognition.** Together, per-word selection plus verse retrieval is
+the only credible route to the steward's "100%".
+
+**Tools for this are in place** (all under the gitignored `data/reference/`, see the warning
+below): `error_text.py csv` writes the whole lecture as spreadsheets with timestamps, and
+`inspect.py` serves `inspect.html`, a local page where clicking any row seeks the recording
+to that moment. Five views: word-by-word grid, one system's mistakes, all systems compared,
+what was lost, and who was judged wrong.
+
+**A bug fixed on the way, which had been inflating things:** `error_flags` charged an
+insertion to the reference word that followed it, so "sri" showed as wrong in 9 of 9 systems
+when all nine wrote "sri". Insertions are still stops, counted by `edit_sites`; they are just
+not any particular reference word's failure. Corrected figures: words no system gets right
+6.9% (was 7.6%), words every system gets right 60.8% (was 59%). **The "9.8% of words defeat
+all four systems" figure in 10.29 is inflated for the same reason and should be recomputed.**
+Edit-site counts and WER are unaffected - they come from `edit_sites` and `score`, which were
+always right.
+
+**WARNING - none of this tooling is versioned.** `error_text.py`, `adjudication.py`,
+`inspect.py`, `inspect.html` and every CSV live under `data/reference/`, which `.gitignore`
+excludes wholesale for a licensing reason that applies to the archive.org audio and
+subtitles, not to our own code. Twenty-plus scripts are affected, including the verifiers
+that check published figures. The steward has been asked twice and has not yet decided; ask
+once and act on the answer.
 
 ---
 
