@@ -60,6 +60,8 @@ average length, which every cost figure multiplies.
   result.**
 - [Reading the mistakes, not the rates](error-text-analysis-2026-09-23.md) — printing the errors
   word by word, which found three faults in the scoring itself and moved where the labour is.
+- [Should we fine-tune on his voice?](speaker-adaptation-2026-09-23.md) — speaker adaptation,
+  its three failure modes for a verbatim archive, and the one finding worth more than it.
 - [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md) — all 483
   remaining disagreements judged one at a time, with every claim against the reference put to
   a sceptic. **72% are genuinely the model's mistake.**
