@@ -11,7 +11,7 @@ Five stages. Each line is measured on the Melbourne reference unless marked othe
 | # | stage | what it does | evidence |
 |---|---|---|---|
 | 1 | **Bulk decode** | three local models over the whole corpus on a rented GPU | ~$33, ~5 days on one GPU — *figure not yet benchmarked for these models* |
-| 2 | **English spine** | choose the best of three per word | majority vote settles **86.1%** of plain English; ceiling **92.4%** |
+| 2 | **English spine** | choose the best of three per word | oracle ceiling **92.4%** on plain English — but **plain voting reaches none of it**, see below |
 | 3 | **Sanskrit & Bengali** | retrieve the printed verse; substitute from a glossary | 54% of Sanskrit is quotation, 46% lone terms; recognition ceiling is only 67% |
 | 4 | **Timing** | force-align the finished text to the audio | **not designed yet — see below** |
 | 5 | **Correction** | a person fixes what is left, measured in stops | ~474 stops a lecture today |
@@ -23,9 +23,10 @@ essentially matches the best paid single system, at no cost and with nothing lea
 laptop. ElevenLabs is better as a single system, but the archive is not limited to a single
 system.
 
-**Selection, not gap-filling.** The current fusion only inserts where the base is silent and
-never overrules a wrong word. That is the whole distance between 82.9% delivered and 92.4%
-available.
+**Selection, not gap-filling** — in principle. The gap-filling fusion only inserts where the
+base is silent and never overrules a wrong word, which is why it delivers 82.9% against a
+92.4% ceiling. But the voting selector built to close that gap **made things worse**, and the
+reason is instructive: see the first gap below.
 
 **Retrieval for the quotations, never recognition.** Whisper has **zero hours** of Sanskrit
 transcription training data; Bengali has 1.3. Chanted verse defeats even Sanskrit-trained
@@ -44,14 +45,39 @@ product.
 
 ### Structural — the plan does not work without these
 
-!!! danger "1. The selector does not exist"
-    Every number in stage 2 is a *ceiling*, computed by asking an oracle. Nobody has written
-    the thing that actually chooses. This is the largest measured win available — roughly nine
-    points of English — and it is entirely unbuilt.
+!!! danger "1. The selector was built, and plain voting does not work"
+    `scripts/transcript_select.py` implements ROVER: align every transcript onto the first,
+    then vote in each slot. 13 tests. Measured on the Melbourne reference against its own
+    pivot (flex en-native):
 
-    It has three tiers, and only the first is easy: **709 words** are settled by a plain
-    majority; **561 words** are got by exactly one system, where a majority vote picks *wrong*
-    and something cleverer is needed; **813 words** no system has.
+    | | |
+    |---|---:|
+    | words the pivot got wrong that voting **fixed** | 33 |
+    | words the pivot got right that voting **broke** | 75 |
+    | **net** | **−42** |
+
+    And where:
+
+    | setting | fixed | broke | net |
+    |---|---:|---:|---:|
+    | plain English | 20 | 20 | **±0** |
+    | mixed Sanskrit | 11 | 41 | **−30** |
+    | verse or chant | 2 | 14 | **−12** |
+
+    **Voting is a wash on plain English and actively harmful wherever Sanskrit appears** —
+    precisely what the verse-retrieval research predicted when it reported that a second
+    architecture "does not recover any" of the failures.
+
+    **A correction to what this page said earlier.** The 92.4% figure is a ceiling that requires
+    an *oracle* — something that knows which system is right. Plain voting has no such signal,
+    so it captures none of the headroom. Counting "two of three are right" as recoverable was
+    misleading: those are mostly words the pivot already had.
+
+    What the next attempt needs is not better voting but **a confidence signal**. Whisper emits
+    a per-word probability and we already store it; flex emits none. Deepgram has the
+    best-evidenced per-word confidence at 517× real time — rejected as a transcriber, it may
+    earn its place here. Until some signal can separate "two systems agree and are right" from
+    "two systems agree and are wrong", selection is not the lever it looked like.
 
 !!! danger "2. The finished transcript has no timings"
     **flex produces plain text with no timestamps at all.** Only Whisper emits word times. So a
@@ -123,8 +149,10 @@ product is readable text with capitals, sentence breaks, paragraphing and IAST f
 
 ## What to do next, in order
 
-1. **Build the selector.** Biggest measured win, needs no new data, no GPU, no money. Start
-   with the plain majority (settles 709 words) and measure; then attack the 561.
+1. **Find a confidence signal.** The selector is built, and plain voting is measured to lose 42
+   words. Without something that separates "two systems agree and are right" from "two agree
+   and are wrong", no amount of vote-tuning helps. Whisper's per-word probability is already on
+   disk and has never been used; Deepgram sells the best-evidenced one at 517× real time.
 2. **Decide where the verse corpus comes from.** Nothing in stage 3 can start until it exists.
 3. **Design the forced-alignment stage**, and hand-mark ~100 word onsets so timing can finally
    be measured rather than assumed.
