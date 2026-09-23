@@ -50,6 +50,11 @@ average length, which every cost figure multiplies.
 
 ## The pages
 
+**The method** — everything assembled, and what is still missing.
+
+- [The method, and what is still missing](methodology-2026-09-23.md) — the five-stage pipeline,
+  what each stage is measured to buy, and the three structural gaps that would stop it working.
+
 **Measured findings** — what was actually run and scored.
 
 - [What the eight purposes measured](melbourne-reference-eight-point-findings-2026-09-22.md) —
