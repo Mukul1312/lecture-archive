@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Melbourne bake-off running** (§10.26, started 2026-09-23 09:42): Whisper against Indic-Transcribe-flex on Gurudeva's own audio, report at `data/reference/MELBOURNE-BAKEOFF-REPORT.md`. Prabhupadavani is done: Whisper won overall but flex dropped 27% fewer words, so the pairing to test next is Whisper + flex with plain vote-counting. The steward's other open decisions are in §10.25 |
+| **Next action** | **Hosted services win** (§10.27, `docs/commercial-bakeoff-results-2026-09-23.md`): ElevenLabs Scribe v2 cuts edit sites 21% and English errors a third; Sarvam is the Sanskrit specialist; keyterms work inside the recogniser. Decisions for the steward: adopt ElevenLabs (fewest stops) or the ElevenLabs+Sarvam combination (most complete); whether to spend ~$760-2,000 on the corpus. The flex Melbourne run is still finishing and will add two rows |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -744,6 +744,43 @@ timestamps, all three decode the same **cut** audio: the reference span minus th
 of never-subtitled speech (66.4 minutes in 11 pieces, `melbourne-cut.wav`), and scoring is
 text-only for everyone with the same apostrophe and number normalisations. Whisper is re-run
 on that audio rather than reusing its earlier timestamped output. About two hours.
+
+### 10.27 The hosted services beat everything local (2026-09-23)
+
+Full write-up: **`docs/commercial-bakeoff-results-2026-09-23.md`**. Client:
+`data/reference/commercial_bakeoff.py` (`.venv-api`; Deepgram and ElevenLabs over REST because
+the ElevenLabs SDK cannot install on Windows, Sarvam through its SDK for the batch flow).
+
+| system | WER | English | Sanskrit | dropped | edit sites |
+|---|---:|---:|---:|---:|---:|
+| Whisper medium, skip rule off | 28.8% | 20.3% | 62.1% | 928 | 666 |
+| Deepgram Nova-3 en-IN | 35.0% | 24.9% | 89.5% | 1,584 | 694 |
+| **ElevenLabs Scribe v2** | 22.5% | 13.8% | 61.1% | 922 | **523** |
+| ElevenLabs + 50 keyterms | 22.0% | 13.6% | 53.1% | 832 | 543 |
+| Sarvam Saaras v4 verbatim | 23.8% | 17.4% | 45.9% | 729 | 633 |
+| Sarvam verbatim + keyterms | 24.1% | 17.6% | **43.5%** | 730 | 669 |
+| **ElevenLabs + Sarvam combined** | **20.5%** | **12.7%** | 43.0% | **606** | 567 |
+
+- **The first change that reduces LABOUR, not just words: ElevenLabs cuts edit sites 21%**
+  (666 -> 523). Model size, the skip rule and local fusion all moved words while leaving stops
+  flat.
+- **Keyterms finally work** - but only inside the recogniser. 50 Sanskrit names cut ElevenLabs'
+  Sanskrit errors 8 points (61.1% -> 53.1%). The same glossary failed as a Whisper prompt and
+  as post-correction.
+- **Sarvam is the Sanskrit specialist** (43.5%) and drops the fewest words of any single
+  system. ElevenLabs is the English specialist. Combining them is the best transcript but not
+  the fewest stops, so the choice depends on whether completeness or labour matters more.
+- **Deepgram is out**: its docs say English mode does not transcribe other languages, and the
+  measurement agrees (89.5% Sanskrit unrecognisable, 1,584 words dropped).
+- **Public benchmarks have now mispredicted this corpus three times out of three** (turbo,
+  flex, Deepgram).
+- ElevenLabs writes Sanskrit in **IAST**, the archive's own convention, and **marks
+  non-English spans** (`[speaking Bangla]`, `[singing]`) - a free detector for verse and song
+  routing.
+- Corpus cost if adopted: ElevenLabs ~$760, +20% with keyterms; Sarvam ~$1,180; both ~$2,000.
+  Against ~2.6M review decisions, a 21% cut in stops is worth far more than $760.
+- Spent today: 2.2 h of ElevenLabs' 4.5 h free month, Rs 66 of Sarvam's Rs 100, $0.29 of
+  Deepgram's $200.
 
 ---
 
