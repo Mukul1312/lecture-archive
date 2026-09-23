@@ -131,6 +131,16 @@ decode so the text is the text the bake-off scored rather than a near-miss.
 That turns the hard problem into an easy one. A ≤30-second piece whose words are already known
 aligns in under a second, and **no chunk boundary is ever guessed.**
 
+**Measured on a five-minute slice:** 12 segments, **470 words timed**, decode 280s and alignment
+111s. Every invariant holds — no word starts before the one before it, none ends before it
+starts, none falls outside the audio, and the segments tile contiguously (0–25.1, 25.1–49.7,
+49.7–74.8…). Mean confidence 0.479, with the chanted verse scoring highest (`prapanna` 0.96).
+A full lecture is roughly 40 minutes of decoding plus 25 of alignment.
+
+Those invariants are now checked on every run by `problems()`, on the finished result rather than
+inside any one path: one pass, cue by cue, and segment-by-segment-with-offsets each have their
+own way of going wrong and the same way of looking fine.
+
 ## What is built
 
 | | |

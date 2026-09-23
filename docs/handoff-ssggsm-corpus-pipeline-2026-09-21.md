@@ -1224,6 +1224,12 @@ A 30-second piece with known words aligns in under a second and **no chunk bound
 which matters because one-pass alignment of the whole blob needs a ~12 GB backtrack matrix and
 raises `bad allocation`.
 
+**Trial run (5 minutes): 12 segments, 470 words timed**, decode 280s + align 111s, every invariant
+holding. A full lecture is ~40 min decode + ~25 min align. `problems()` now checks those
+invariants on every run of both pipelines, on the finished result rather than inside any one
+path - a word placed before its predecessor or past the end of the recording is a page that
+highlights the wrong line and reports nothing.
+
 #### Still open
 
 1. **~100 hand-marked onsets**, turning agreement into accuracy.
