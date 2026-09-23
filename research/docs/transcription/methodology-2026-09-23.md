@@ -73,11 +73,53 @@ product.
     so it captures none of the headroom. Counting "two of three are right" as recoverable was
     misleading: those are mostly words the pivot already had.
 
-    What the next attempt needs is not better voting but **a confidence signal**. Whisper emits
-    a per-word probability and we already store it; flex emits none. Deepgram has the
-    best-evidenced per-word confidence at 517× real time — rejected as a transcriber, it may
-    earn its place here. Until some signal can separate "two systems agree and are right" from
-    "two systems agree and are wrong", selection is not the lever it looked like.
+    What the next attempt needs is not better voting but **a confidence signal**, to separate
+    "two systems agree and are right" from "two agree and are wrong".
+
+!!! success "1b. Confidence works — English 17.8% → 15.1%"
+    Whisper emits a per-word probability that was sitting unused in the decode output. Checked
+    against the verified reference before building anything on it:
+
+    | Whisper confidence | words | correct |
+    |---|---:|---:|
+    | lowest quarter | 1,558 | **49.6%** |
+    | 0.80–0.90 | 541 | 94.1% |
+    | highest quarter | 1,558 | **98.5%** |
+
+    Using it to overrule the best single local system where the challenger is confident
+    (`overrule_where_confident`, threshold 0.50):
+
+    | | WER | English | Sanskrit |
+    |---|---:|---:|---:|
+    | **confidence-gated** | **23.7%** | **15.1%** | 48.4% |
+    | flex en-native alone | 24.2% | 17.8% | 41.9% |
+    | gap-filling fusion | 24.7% | 17.1% | 41.9% |
+
+    Best local English measured, by two points. The threshold was swept with the lecture split
+    in half and the gain holds on the unseen half (77.6% → 78.7% word accuracy), though smaller
+    than on the fitted half — which is what one lecture can honestly support. Sanskrit gets
+    worse, because Whisper is confident *and* wrong there; that is the half retrieval owns.
+
+!!! failure "1c. Deepgram cannot be the second confidence source"
+    It has the best-evidenced per-word confidence and runs at 517× real time, so it looked like
+    the obvious addition. The economics kill it: a confidence source must run on **every**
+    lecture, forever.
+
+    | | across the SSGGSM corpus |
+    |---|---:|
+    | Deepgram as a *confidence* source | **$904** |
+    | ElevenLabs as a *transcriber* | $759 |
+
+    Paying more for a signal about words than for better words is incoherent — and it would
+    turn a local pipeline into a permanent vendor dependency, shipping 3,450 hours to a service
+    that trains on submitted audio unless opted out on every request. The one-lecture bake-off
+    hid this, because $0.29 for 66 minutes looks free.
+
+    **The local sources instead:** Whisper's `p` (working now); **flex's own token scores** —
+    it decodes through HuggingFace `generate()`, so `output_scores=True` yields per-token
+    log-probabilities for a small wrapper change and no per-lecture cost; and the **forced
+    aligner** needed anyway for timestamps, whose per-word acoustic score covers every word
+    uniformly, including those from a system with no native confidence.
 
 !!! danger "2. The finished transcript has no timings"
     **flex produces plain text with no timestamps at all.** Only Whisper emits word times. So a
