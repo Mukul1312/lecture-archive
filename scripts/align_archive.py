@@ -149,7 +149,16 @@ def align_lecture(folder: Path) -> dict | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--report", action="store_true",
+                        help="summarise what has been aligned so far and stop")
     args = parser.parse_args()
+
+    if args.report:
+        summary = report()
+        (OUT / "SUMMARY.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False),
+                                          encoding="utf-8")
+        print(json.dumps(summary, indent=1, ensure_ascii=False))
+        return
 
     OUT.mkdir(parents=True, exist_ok=True)
     folders = sorted(f for f in LECTURES.iterdir()
@@ -174,6 +183,48 @@ def main() -> None:
               + ("  WRONG: " + "; ".join(result["invariants_violated"])
                  if result["invariants_violated"] else ""), flush=True)
 
+
+
+
+def report() -> dict:
+    """What the corpus looks like once the walk has been over it.
+
+    Coverage is the honest headline: the share of published words that could be placed in the
+    audio at all. A lecture well under the rest is not necessarily a failed alignment - it is
+    just as likely a transcript that omits more than the others, which is the thing this corpus
+    was always going to have to tell us.
+    """
+    done = sorted(OUT.glob("*.json"))
+    rows = [json.loads(p.read_text(encoding="utf-8")) for p in done
+            if p.name != "SUMMARY.json"]
+    if not rows:
+        return {"lectures": 0}
+
+    words = sum(r["transcript_words"] for r in rows)
+    placed = sum(r["words_placed"] for r in rows)
+    audio = sum(r["audio_seconds"] for r in rows)
+    wall = sum(r["wall_seconds"] for r in rows)
+    scored = [r["mean_score"] for r in rows if r["words_placed"]]
+    broken = [r["slug"] for r in rows if r["invariants_violated"]]
+    by_coverage = sorted(rows, key=lambda r: r["coverage"])
+
+    return {
+        "what_this_is": "Published prose transcripts placed against their recordings.",
+        "lectures": len(rows),
+        "audio_hours": round(audio / 3600, 2),
+        "transcript_words": words,
+        "words_placed": placed,
+        "coverage": round(placed / words, 4) if words else 0.0,
+        "mean_score": round(sum(scored) / len(scored), 4) if scored else 0.0,
+        "speed_vs_realtime": round(audio / wall, 2) if wall else 0.0,
+        "lectures_with_broken_invariants": broken,
+        "worst_coverage": [{"slug": r["slug"], "coverage": r["coverage"],
+                            "score": r["mean_score"], "words": r["transcript_words"]}
+                           for r in by_coverage[:5]],
+        "best_coverage": [{"slug": r["slug"], "coverage": r["coverage"],
+                           "score": r["mean_score"], "words": r["transcript_words"]}
+                          for r in by_coverage[-5:]],
+    }
 
 if __name__ == "__main__":
     main()
