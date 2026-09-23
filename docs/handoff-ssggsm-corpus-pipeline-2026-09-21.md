@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Move the passage-identity margin into `verse_match.py`** with tests (10.32) - it lifted Bengali retrieval from 13% to 67% and currently lives in a scratch script. Then re-split the earlier retrieval figures by language, and route by language rather than treating Indic as one problem |
+| **Next action** | **Hand-mark ~100 word onsets** so forced alignment can be stated as accuracy rather than agreement (10.33). Then run `flex_timed.py` over a full lecture, and re-split the earlier verse-retrieval figures by language |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -1163,6 +1163,76 @@ real number - live tracking with no abstention, not comparable. We now have our 
 2. Re-split the earlier verse-retrieval measurements by language.
 3. Route by language: English -> local trio confidence-gated; Sanskrit -> fused or
    ElevenLabs+keyterms, Su-srota on verse spans; **Bengali -> flex `bn mixed`, nothing else**.
+
+### 10.33 Every word now has a time (2026-09-23)
+
+**Write-up: `research/docs/transcription/forced-alignment-2026-09-23.md`.**
+
+Read-along playback is the product and it needs a time per word. **Two of the nine systems
+emit none at all**: flex returns 6,175 words in one string, and Sarvam returns 263 rows with
+every timestamp null and each "word" a whole utterance. Forced alignment supplies what they do
+not - the transcript is treated as known and only the timing is searched for, so the model never
+has to be right about what was said. That is why it works on cassette audio and on Sanskrit.
+
+**All 512 verified cues aligned: 6,365 words, 34 minutes on CPU, no failures.**
+Output `data/reference/analysis/word-timings-mmsfa.json`. Model is torchaudio's MMS_FA,
+wav2vec2 over 1,100+ languages sharing one 29-symbol romanised alphabet - which is why one model
+serves English, Sanskrit and Bengali. **Licence CC-BY-NC 4.0** (the weights, not the corpora).
+
+| median onset difference | English | Sanskrit | Bengali |
+|---|---:|---:|---:|
+| vs ElevenLabs | **0.03s** (n=4,985) | **0.02s** (n=77) | 0.05s (n=10) |
+| vs Whisper | 0.07s | 0.06s | 0.70s (n=5) |
+| vs Deepgram | 0.08s | 0.09s (n=6) | - |
+| **the control: those three against EACH OTHER** | **0.06s** | | |
+
+**The control is the point.** Three commercial systems agree with one another to a median 0.06s.
+The aligner sits inside that spread and beats it against ElevenLabs. **These are agreement
+figures, not accuracy** - the ~100 hand-marked onsets remain the honest next step, and nothing
+here establishes correctness to a tolerance.
+
+#### Four silent traps, all now handled
+
+1. **`-` is CTC's blank.** A hyphen in `angghri-mulam` mapped naively is a forbidden target.
+2. **The apostrophe is two things.** Kept inside a word (contraction), stripped at an edge
+   (avagraha, possessive - written, not spoken).
+3. **Not everything written was spoken.** 43 of 512 cues open with a speaker label; with it left
+   in, cue 41 scored 0.017. Melbourne has no bracketed inserts but **the next lecture has 28,
+   carrying 60 phantom words**. Forced alignment cannot decline a word.
+4. **`get_model()` output is ALREADY log-probabilities** - log-softmaxed over 28 symbols with the
+   star appended at probability 1, so `exp()` sums to **2, not 1**. Applying log_softmax again
+   subtracts log 2 uniformly: **timings untouched, every confidence halved.** Found by a research
+   sweep that read the installed library instead of the docs.
+
+#### The measurement was wrong first, in the familiar way
+
+Bengali first read 0.32s against ElevenLabs and 3.47s against Whisper. Both artifacts: `ei` and
+`nama` are two letters and recur through a song, so the sequence matcher paired ours with an
+occurrence **25 seconds away**. The aligner had placed them inside their own cues, correctly.
+Requiring a pair to fall in the same cue took Bengali to **0.05s**; English barely moved, which
+is how one tells the filter removes mistakes and not inconvenient data.
+
+**Known limit:** the disagreement tail sits at cue edges - 20% of edge words over 1s out, falling
+monotonically to 6% four or more words inside. The aligner cannot place a word outside its window.
+
+#### flex's timestamps are discarded, not missing
+
+`transcribe_long` cuts audio at pauses into <=30s pieces, decodes each, then ends with
+`" ".join(out)` - knowing which piece produced which words and dropping it. `scripts/flex_timed.py`
+keeps it, reusing flex's own `split_on_silence` and decode so the text matches what was scored.
+A 30-second piece with known words aligns in under a second and **no chunk boundary is guessed** -
+which matters because one-pass alignment of the whole blob needs a ~12 GB backtrack matrix and
+raises `bad allocation`.
+
+#### Still open
+
+1. **~100 hand-marked onsets**, turning agreement into accuracy.
+2. **A star token cannot be expressed** - `romanise('*')` returns nothing by design. The cue-less
+   path needs it against a recogniser's omissions.
+3. **Word-onset convention unrecorded** - MMS_FA has no word-separator token, so the silence
+   between words belongs to neither. Published figures swing several fold on this choice.
+4. **Alignment confidence is not transcription confidence.** Where flex misheard, the span will
+   look monotonic and well-scored while pointing at the wrong audio.
 
 ---
 
