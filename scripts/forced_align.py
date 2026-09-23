@@ -104,6 +104,12 @@ def tokenise(words: list[str]) -> Tokenised:
     owner: list[int] = []
     skipped: list[int] = []
     for index, word in enumerate(words):
+        # A word that IS a star marks audio the transcript does not account for. An asterisk
+        # inside a word is only punctuation, and romanises away like any other.
+        if word == STAR:
+            targets.append(DICTIONARY[STAR])
+            owner.append(index)
+            continue
         letters = romanise(word)
         if not letters:
             skipped.append(index)

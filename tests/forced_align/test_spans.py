@@ -10,15 +10,23 @@ import unittest
 
 import torch
 
-from scripts.forced_align import DICTIONARY, align, stitch, to_seconds
+from scripts.forced_align import DICTIONARY, STAR, align, stitch, to_seconds
 
 
 def posteriors(frames: str, confidence: float = 0.9) -> torch.Tensor:
-    """Log-probabilities that clearly say one symbol per frame. '-' means blank."""
-    rest = (1.0 - confidence) / (len(DICTIONARY) - 1)
+    """Log-probabilities that clearly say one symbol per frame. '-' means blank.
+
+    Shaped like the real model's output, which is the part worth copying: the 28 ordinary
+    symbols sum to 1, and the star is appended at probability 1 on top. A fixture that gave the
+    star an ordinary share would make it unattractive to the path and quietly prove nothing
+    about the behaviour it exists to test.
+    """
+    ordinary = len(DICTIONARY) - 1
+    rest = (1.0 - confidence) / (ordinary - 1)
     probs = torch.full((len(frames), len(DICTIONARY)), rest)
     for t, ch in enumerate(frames):
         probs[t, DICTIONARY[ch]] = confidence
+    probs[:, DICTIONARY[STAR]] = 1.0
     return probs.log()
 
 
