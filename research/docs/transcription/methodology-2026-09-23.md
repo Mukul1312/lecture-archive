@@ -11,7 +11,7 @@ Five stages. Each line is measured on the Melbourne reference unless marked othe
 | # | stage | what it does | evidence |
 |---|---|---|---|
 | 1 | **Bulk decode** | three local models over the whole corpus on a rented GPU | ~$33, ~5 days on one GPU — *figure not yet benchmarked for these models* |
-| 2 | **English spine** | choose the best of three per word | oracle ceiling **92.4%** on plain English — but **plain voting reaches none of it**, see below |
+| 2 | **English spine** | keep the best system, overrule it where another is confident | English error **17.8% → 15.1%**, the best local result measured |
 | 3 | **Sanskrit & Bengali** | retrieve the printed verse; substitute from a glossary | 54% of Sanskrit is quotation, 46% lone terms; recognition ceiling is only 67% |
 | 4 | **Timing** | force-align the finished text to the audio | **not designed yet — see below** |
 | 5 | **Correction** | a person fixes what is left, measured in stops | ~474 stops a lecture today |
@@ -162,9 +162,6 @@ product is readable text with capitals, sentence breaks, paragraphing and IAST f
 - **No abstention.** The research is explicit: say "unclear" rather than emit a plausible wrong
   verse. For scripture that is the difference between a gap and a fabrication. Nothing in the
   pipeline can currently decline to answer.
-- **No confidence signal**, which is what the 561 hard words need. Deepgram has the
-  best-evidenced per-word confidence and is 517× real time — rejected as a transcriber, it may
-  still earn a place as an error detector.
 - **Sanskrit should be scored by CER, not WER**, because sandhi fuses words and "half of WER is
   spacing". Recommended, not implemented.
 
@@ -191,10 +188,9 @@ product is readable text with capitals, sentence breaks, paragraphing and IAST f
 
 ## What to do next, in order
 
-1. **Find a confidence signal.** The selector is built, and plain voting is measured to lose 42
-   words. Without something that separates "two systems agree and are right" from "two agree
-   and are wrong", no amount of vote-tuning helps. Whisper's per-word probability is already on
-   disk and has never been used; Deepgram sells the best-evidenced one at 517× real time.
+1. **Extract flex's token scores** (`output_scores=True` through its HuggingFace `generate()`
+   call), so two of the three local systems carry confidence rather than one. Whisper's is
+   already working and bought two points of English.
 2. **Decide where the verse corpus comes from.** Nothing in stage 3 can start until it exists.
 3. **Design the forced-alignment stage**, and hand-mark ~100 word onsets so timing can finally
    be measured rather than assumed.
