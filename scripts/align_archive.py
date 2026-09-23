@@ -35,8 +35,8 @@ from pathlib import Path
 
 import torch
 
-from scripts.forced_align import (SAMPLE_RATE, STAR, align, emissions, problems, spoken_words,
-                                  to_seconds)
+from scripts.forced_align import (SAMPLE_RATE, STAR, align, emissions_long, problems,
+                                  spoken_words, to_seconds)
 
 REPO = Path(__file__).resolve().parents[1]
 LECTURES = REPO / "data/lectures"
@@ -75,7 +75,10 @@ def align_prose(waveform: torch.Tensor, words: list[str],
 
         piece = waveform[at_sample:at_sample + span_samples]
         try:
-            log_probs, seconds_per_frame = emissions(piece)
+            # emissions_long, not emissions: wav2vec2's attention is quadratic in frames, and
+            # a seven-minute window is 21,000 of them. It scores the window in overlapping
+            # half-minute pieces and joins what each one was best placed to judge.
+            log_probs, seconds_per_frame = emissions_long(piece)
             spans = to_seconds(align(log_probs, targets), seconds_per_frame,
                                offset=at_sample / SAMPLE_RATE)
         except Exception as exc:
