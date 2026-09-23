@@ -25,6 +25,7 @@ the page highlights the wrong word for the rest of the lecture. Hence the care, 
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -220,25 +221,48 @@ def read_window(path: str, start: float, end: float, pad: float = 0.0) -> torch.
     return mono
 
 
+def check_model(log_probs: torch.Tensor) -> None:
+    """Confirm the model still normalises the way `emissions` assumes it does.
+
+    `get_model()` applies log-softmax over the 28 real symbols and then appends the star at
+    probability 1, so `exp()` across all 29 sums to exactly 2, not 1. That is deliberate: a star
+    is free to emit. It is also a trap, because the output looks like an unnormalised score and
+    invites a log-softmax that must not be applied - see `emissions`.
+    """
+    total = log_probs.exp().sum(-1)
+    if not torch.allclose(total, torch.full_like(total, 2.0), atol=1e-3):
+        raise RuntimeError(
+            f"MMS_FA normalisation changed: exp() sums to {total.mean():.4f}, expected 2.0 "
+            "(28 symbols summing to 1, plus the star at probability 1)"
+        )
+
+
 @lru_cache(maxsize=1)
 def acoustic_model():
     """MMS_FA, loaded once. 1.2 GB of weights is not something to pay for twice."""
     check_dictionary()
     model = torchaudio.pipelines.MMS_FA.get_model()
     model.eval()
+    with torch.inference_mode():
+        check_model(model(torch.zeros(1, SAMPLE_RATE))[0])
     return model
 
 
 def emissions(waveform: torch.Tensor) -> tuple[torch.Tensor, float]:
     """Frame-level log-probabilities over the alphabet, and how long one frame lasts.
 
+    The model's output is ALREADY log-probabilities and must not be softmaxed again. It arrives
+    log-softmaxed over the 28 real symbols with the star appended at probability 1, so `exp()`
+    sums to 2. Renormalising over all 29 subtracts log 2 from every symbol at every frame -
+    which, being a uniform offset, leaves the Viterbi path and so every timestamp untouched,
+    and quietly halves every confidence score. A timing bug announces itself; that one does not.
+
     The frame rate is derived from the model's own output length rather than assumed to be the
     nominal 50 Hz, because the convolutional front end drops a partial frame at the end and an
     assumed rate would accumulate that error across a long recording.
     """
     with torch.inference_mode():
-        scores, _ = acoustic_model()(waveform.unsqueeze(0))
-        log_probs = torch.log_softmax(scores, dim=-1)
+        log_probs, _ = acoustic_model()(waveform.unsqueeze(0))
     seconds_per_frame = waveform.size(0) / log_probs.size(1) / SAMPLE_RATE
     return log_probs, seconds_per_frame
 
@@ -256,16 +280,99 @@ def align_window(path: str, start: float, end: float, words: list[str],
     return to_seconds(spans, seconds_per_frame, offset=max(0.0, start - pad))
 
 
+# Editorial annotations, the repository's existing convention for "written, not spoken".
+_BRACKETED = re.compile(r"\[[^\]]*\]")
+
+
 def spoken_words(text: str) -> list[str]:
     """The words of a transcript line that were actually said aloud.
 
-    A verified transcript carries more than speech. "Gour Govinda Swami:" marks who is talking;
-    nobody pronounces it. Forced alignment has no way to decline a word, so a label left in the
-    text is found anyway - in audio belonging to the words on either side, which are then placed
-    wrongly too. On this reference 43 of 512 cues carry such a label.
+    A verified transcript carries more than speech, and forced alignment has no way to decline
+    a word: anything left in the text is found anyway, in audio belonging to the words on either
+    side, which are then placed wrongly too. Two kinds of writing have to go.
 
-    Reuses the scorer's rule, so that the text being aligned and the text being scored agree
-    about what counts as speech.
+    Speaker labels - "Gour Govinda Swami:" marks who is talking and nobody pronounces it. On
+    the Melbourne reference 43 of 512 cues carry one.
+
+    Editorial brackets - `[verse]`, `[?]`, `[Śrīmad Bhāgavatam 5.5.8]`, and the bracketed word
+    an editor supplied to finish a sentence. Melbourne happens to have none of these, but the
+    next lecture in the queue has 28 of them carrying 60 phantom words, so this is a trap that
+    is simply waiting rather than one that has been avoided.
+
+    Both rules are the repository's existing ones, so the text being aligned and the text being
+    scored agree about what counts as speech.
     """
     from scripts.transcript_accuracy import strip_speaker_label
-    return strip_speaker_label(text).split()
+    return _BRACKETED.sub(" ", strip_speaker_label(text)).split()
+
+
+@dataclass
+class Chunk:
+    """A window of audio to score, and the part of it worth keeping."""
+
+    start: int      # first sample handed to the encoder
+    end: int        # last sample handed to the encoder
+    keep_from: int  # first sample whose frames survive
+    keep_to: int    # last sample whose frames survive
+
+
+def plan_chunks(samples: int, window: float = 30.0, overlap: float = 2.0) -> list[Chunk]:
+    """How to score audio too long for one encoder pass, without moving anything.
+
+    wav2vec2's attention is quadratic in frames, though the cost stays flat in practice out to
+    about a minute and only then begins to tell (measured: 0.43-0.48x real time at 10, 30 and
+    60 seconds, 0.61x at 120). Windows therefore overlap, and the frames nearest each seam -
+    scored with only half the context they deserve - are thrown away in favour of the
+    neighbour's, which saw them in the middle of its own window.
+
+    The windows are spread evenly rather than laid on a fixed grid, so the last one ends exactly
+    at the end of the audio and there is never a final sliver scored with no context. What each
+    chunk keeps is cut at the midpoint of its overlap with the next, which makes the kept
+    regions tile the recording exactly once: no gap, no repetition, nothing shifted.
+    """
+    if samples <= 0:
+        return []
+    width = int(window * SAMPLE_RATE)
+    if samples <= width:
+        return [Chunk(0, samples, 0, samples)]
+
+    step = width - int(overlap * SAMPLE_RATE)
+    count = -(-(samples - width) // step) + 1  # ceiling division, then the first window
+    starts = [round(i * (samples - width) / (count - 1)) for i in range(count)]
+    bounds = [(start, start + width) for start in starts]
+
+    plan = []
+    for index, (start, end) in enumerate(bounds):
+        keep_from = start if index == 0 else (bounds[index][0] + bounds[index - 1][1]) // 2
+        keep_to = end if index == count - 1 else (bounds[index + 1][0] + end) // 2
+        plan.append(Chunk(start, end, keep_from, keep_to))
+    return plan
+
+
+def emissions_long(waveform: torch.Tensor, window: float = 30.0, overlap: float = 2.0,
+                   score=None) -> tuple[torch.Tensor, float]:
+    """Score audio of any length, one window at a time, and join the results.
+
+    Each window is scored with context on both sides and then trimmed back to the part it was
+    best placed to judge, so the surviving frames tile the recording exactly once. The frame
+    duration is measured from the joined result rather than assumed, which keeps the arithmetic
+    honest even though the windows do not divide the audio evenly.
+
+    `score` exists so the joining can be tested without loading 1.2 GB of weights.
+    """
+    score = score or emissions
+    plan = plan_chunks(waveform.size(0), window, overlap)
+    if not plan:
+        raise ValueError("no audio to score")
+
+    kept = []
+    for chunk in plan:
+        log_probs, _ = score(waveform[chunk.start:chunk.end])
+        frames = log_probs.size(1)
+        width = chunk.end - chunk.start
+        first = round((chunk.keep_from - chunk.start) / width * frames)
+        last = round((chunk.keep_to - chunk.start) / width * frames)
+        kept.append(log_probs[:, first:last])
+
+    joined = torch.cat(kept, dim=1)
+    return joined, waveform.size(0) / joined.size(1) / SAMPLE_RATE
