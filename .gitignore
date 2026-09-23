@@ -114,3 +114,10 @@ data/research/
 
 # MkDocs build output for the research site (source is research/docs/)
 research/site/
+
+# Mirrored taptajivanam lecture audio (~4 GB across 100 lectures), re-fetchable at any time
+# with `python scripts/taptajivanam_mirror.py fetch`. The transcripts and meta.json beside it
+# ARE versioned: about 1 MB in total, and they are what every measurement refers to.
+data/lectures/*/audio.mp3
+data/lectures/*/audio.wav
+data/lectures/*/*.part
