@@ -55,6 +55,9 @@ average length, which every cost figure multiplies.
 - [The method, and what is still missing](methodology-2026-09-23.md) — the five-stage pipeline,
   what each stage is measured to buy, and the three structural gaps that would stop it working.
 
+- [Where the verses come from](verse-corpus-sourcing-2026-09-23.md) — GRETIL is the answer for
+  Sanskrit and there is no answer for Bengali; plus what an LLM may and may not do here.
+
 **Measured findings** — what was actually run and scored.
 
 - [What the eight purposes measured](melbourne-reference-eight-point-findings-2026-09-22.md) —
