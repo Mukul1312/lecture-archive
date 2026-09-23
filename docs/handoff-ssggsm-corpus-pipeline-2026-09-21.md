@@ -1230,6 +1230,42 @@ invariants on every run of both pipelines, on the finished result rather than in
 path - a word placed before its predecessor or past the end of the recording is a page that
 highlights the wrong line and reports nothing.
 
+#### The versioned modules, and how to run them
+
+All in `scripts/` (NOT the gitignored `data/reference/`), all in `.venv-indic`, **106 tests**.
+Prefix every command with `PYTHONIOENCODING=utf-8`.
+
+| module | what it is | tests |
+|---|---|---:|
+| `transcript_accuracy.py` | the scorer; `edit_sites`, `indic_language`, `strip_speaker_label` | — |
+| `transcript_select.py` | ROVER + `overrule_where_confident` (the one that works) | 19 |
+| `verse_match.py` | phonetic verse retrieval with the passage-identity margin | 16 |
+| `verse_cache.py` | source-URL-backed verse cache, fuzzy recall | 13 |
+| `kksongs_mirror.py` | `index\|fetch\|corpus` for the 25,687-line songbook | 10 |
+| **`forced_align.py`** | text → CTC targets, spans, chunking, invariants | **55** |
+| **`align_lecture.py`** | times a verified cue transcript end to end | — |
+| **`timing_check.py`** | agreement against the timestamped systems, with the control | **10** |
+| **`flex_timed.py`** | flex decoded with its segment boundaries kept, then aligned | — |
+
+```
+# time a verified transcript (34 min for 512 cues)
+.venv-indic/Scripts/python.exe -m scripts.align_lecture   "data/reference/MELBOURNE_vs_90-85_aligned-review.json"   "data/reference/90-11-14 SB12.10.2 MEL 90-85.mp3"   data/reference/analysis/word-timings-mmsfa.json
+
+# check it against the systems that emit their own word times
+.venv-indic/Scripts/python.exe -m scripts.timing_check   data/reference/analysis/word-timings-mmsfa.json
+
+# flex WITH timestamps (drop --until for the whole lecture: ~40 min decode + ~25 align)
+.venv-indic/Scripts/python.exe -m scripts.flex_timed   data/reference/melbourne-cut.wav out.json --lang bn --mode mixed --until 300
+
+# the fast suites
+.venv-indic/Scripts/python.exe -m unittest discover -s tests/forced_align -t .
+.venv-indic/Scripts/python.exe -m unittest discover -s tests/timing_check -t .
+```
+
+⚠ The full repository suite reports **33 errors under `.venv-indic`** — all missing third-party
+modules (scipy 13, the shelved `heritage_production` 13, hypothesis 4, librosa 3), none related
+to this work. The repo keeps five venvs for exactly this reason.
+
 #### Still open
 
 1. **~100 hand-marked onsets**, turning agreement into accuracy.

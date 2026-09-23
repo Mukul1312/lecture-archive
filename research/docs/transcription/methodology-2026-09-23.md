@@ -118,21 +118,45 @@ product.
     **The local sources instead:** Whisper's `p` (working now); **flex's own token scores** —
     it decodes through HuggingFace `generate()`, so `output_scores=True` yields per-token
     log-probabilities for a small wrapper change and no per-lecture cost; and the **forced
-    aligner** needed anyway for timestamps, whose per-word acoustic score covers every word
-    uniformly, including those from a system with no native confidence.
+    aligner**, which now exists and whose per-word acoustic score covers every word uniformly —
+    including words from a system with no native confidence of its own. That score is real but
+    unproven as a *correctness* signal: it says how cleanly the audio matched the letters it was
+    told to find, not whether those were the right letters.
 
-!!! danger "2. The finished transcript has no timings"
-    **flex produces plain text with no timestamps at all.** Only Whisper emits word times. So a
-    transcript assembled by choosing across three systems has no timing for most of its words —
-    and the deliverable is read-while-listening.
+!!! success "2. The timings exist now — built, measured, and honest about what it proves"
+    **This was the largest structural gap and it is closed.** Full write-up:
+    [Giving every word a time](forced-alignment-2026-09-23.md).
 
-    The fix is a **forced-alignment stage** that takes the final text and the audio and produces
-    word onsets. It is standard, and it is not in the plan. It also has to survive 60–90 minute
-    inputs and code-switched text.
+    It was worse than the page originally said. flex emits no timestamps, and **neither does
+    Sarvam** — 263 rows, every time null, each "word" a whole utterance. Two of the nine systems
+    could not drive a read-along page, not one.
 
-    Worse, **absolute timing accuracy has never been measured for anything.** We know only that
-    Whisper's word times agree across models and do not drift — agreement is not correctness.
-    There is still no hand-marked ground truth; roughly 100 marked word onsets would settle it.
+    `scripts/forced_align.py` takes the known text and the audio and finds the one path through
+    the frames that spells it. All 512 verified cues, **6,365 words, 34 minutes on CPU, no
+    failures**. Against the systems that do emit times, median onset difference:
+
+    | | English | Sanskrit | Bengali |
+    |---|---:|---:|---:|
+    | vs ElevenLabs | **0.03s** | **0.02s** | 0.05s |
+    | vs Whisper | 0.07s | 0.06s | 0.70s |
+    | **the control: those systems vs EACH OTHER** | **0.06s** | | |
+
+    **The control is what makes the number readable.** Three commercial systems agree with one
+    another to 0.06s; the aligner sits inside that spread and beats it against ElevenLabs.
+
+    It also survives the long-input problem, by not having one. **flex's timings are discarded,
+    not missing** — `transcribe_long` cuts at pauses into ≤30s pieces, decodes each, then
+    `" ".join(out)` throws the boundaries away. Keeping them turns a one-pass alignment needing
+    a ~12 GB backtrack matrix into per-piece alignments where **no chunk boundary is ever
+    guessed**. Proved on a five-minute slice: 470 words, every invariant holding.
+
+    **What is still open, and it is the original point.** These are *agreement* figures, not
+    accuracy — nothing here shows the aligner is correct to a tolerance, only that it keeps
+    company with three independent systems. **The ~100 hand-marked onsets still settle it**, and
+    remain the honest next step. Two further limits: the disagreement tail sits at cue edges
+    (20% of edge words over 1s out, against 6% deep inside a cue), and **alignment confidence is
+    not transcription confidence** — where a recogniser misheard, the span will look perfectly
+    monotonic and well-scored while pointing at the wrong audio.
 
 !!! danger "3. There is no verse corpus to retrieve from"
     Stage 3 assumes a database of Sanskrit verses **and Bengali padāvalī**. It does not exist
@@ -192,8 +216,9 @@ product is readable text with capitals, sentence breaks, paragraphing and IAST f
    call), so two of the three local systems carry confidence rather than one. Whisper's is
    already working and bought two points of English.
 2. **Decide where the verse corpus comes from.** Nothing in stage 3 can start until it exists.
-3. **Design the forced-alignment stage**, and hand-mark ~100 word onsets so timing can finally
-   be measured rather than assumed.
+3. **Hand-mark ~100 word onsets.** The forced-alignment stage is built and measured; what it
+   has is agreement with other systems, not accuracy. This is the one measurement that turns it
+   into a guarantee — and it is cheap.
 4. **Verify a second lecture.** Everything rests on one, and the one check we have disagreed.
 5. **Decide the gitignore question**, so the tools survive.
 

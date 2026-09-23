@@ -150,7 +150,22 @@ own way of going wrong and the same way of looking fine.
 | `scripts/timing_check.py` | agreement against the timestamped systems, with the control |
 | `scripts/flex_timed.py` | flex decoded with its segment boundaries kept, then aligned |
 
-57 tests, none needing the 1.2 GB model.
+**65 tests, none needing the 1.2 GB model** — the alphabet is copied into the module so the
+tokenising rules can be tested offline, and `check_dictionary()` fails loudly if that copy ever
+drifts from the installed model's.
+
+All of it runs in `.venv-indic`, on CPU. Prefix every command with `PYTHONIOENCODING=utf-8`.
+
+```bash
+# time a verified transcript — 34 minutes for 512 cues
+.venv-indic/Scripts/python.exe -m scripts.align_lecture   "data/reference/MELBOURNE_vs_90-85_aligned-review.json"   "data/reference/90-11-14 SB12.10.2 MEL 90-85.mp3"   data/reference/analysis/word-timings-mmsfa.json
+
+# reproduce the table above
+.venv-indic/Scripts/python.exe -m scripts.timing_check   data/reference/analysis/word-timings-mmsfa.json
+
+# flex, with timestamps (drop --until for a whole lecture)
+.venv-indic/Scripts/python.exe -m scripts.flex_timed   data/reference/melbourne-cut.wav out.json --lang bn --mode mixed --until 300
+```
 
 ## Still open
 

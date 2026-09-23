@@ -22,10 +22,15 @@ Every earlier improvement — a bigger model, turning off Whisper's no-speech sk
 local systems — moved *words* while leaving *stops* flat. ElevenLabs is the first change that
 reduces the work itself.
 
+**Read-along is no longer blocked on timing.** Two of the nine systems — flex and Sarvam —
+emit no word times at all, so the transcript had no way to be followed while listening. Forced
+alignment now supplies a start and end for every word, agreeing with the paid systems
+[more closely than they agree with each other](forced-alignment-2026-09-23.md).
+
 **Still open:** whether to spend ~$760 on ElevenLabs alone, or ~$2,000 for the three-way
-combination that recovers the most speech. Before any spend: verify the word timestamps the
-read-along needs, test the chosen route on a second lecture, and measure the corpus's real
-average length, which every cost figure multiplies.
+combination that recovers the most speech. Before any spend: hand-mark ~100 word onsets so the
+timings can be stated as accuracy rather than agreement, test the chosen route on a second
+lecture, and measure the corpus's real average length, which every cost figure multiplies.
 
 ## What the work established
 
@@ -48,6 +53,13 @@ average length, which every cost figure multiplies.
    study, and over-correction erases the verbatim speech this archive exists to preserve.
 7. **Public benchmarks have mispredicted this corpus three times out of three** — `large-v3-turbo`,
    Indic-Transcribe-flex and Deepgram all ranked well elsewhere and did badly here.
+8. **A transcript carries writing that was never spoken**, and forced alignment cannot decline a
+   word — it finds a speaker label or an editorial `[verse]` anyway, in audio belonging to the
+   words on either side, which are then placed wrongly too. 43 of 512 cues here open with a
+   speaker label; the next lecture in the queue carries 60 phantom words in brackets.
+9. **Measure the library, do not reason about it.** MMS_FA's output is already log-probabilities
+   with the star at probability 1, so `exp()` sums to 2 — a second normalisation looks like a
+   no-op, leaves every timestamp untouched, and silently halves every confidence score.
 
 ## The pages
 
