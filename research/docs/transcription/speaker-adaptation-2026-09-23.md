@@ -112,13 +112,33 @@ search (test-clean 2.81 → 2.31 WER, biased words 9.86 → 5.66, ordinary words
 
 Independent of adaptation entirely:
 
-> **The whole 4,708-hour archive can be transcribed on a rented GPU for $25–90, in about five
-> hours of wall-clock.**
+> **A bulk transcription pass on a rented GPU costs $25–90 and about five days, against
+> roughly six months of continuous laptop time.**
 
-Verified against provider benchmarks (large-v3-turbo int8: RTX A5000 at 38× real time and
-$0.0071 per audio-hour; L40S at 58×). The current plan is ~70 days of laptop time. And a
-fine-tuned or base model **runs afterwards exactly where the current one runs** — CTranslate2
-converts fine-tuned checkpoints, so adoption implies no ongoing GPU spend.
+The arithmetic: 4,708 audio-hours ÷ 38.1× real time = **124 GPU-hours**, at $0.0071 per
+audio-hour on an RTX A5000 — about **$33 and 5.1 days on one GPU**. An L40S at 58.3× gives 3.4
+days for ~$88. Renting several GPUs divides the days and leaves the price alone, because you
+pay per GPU-hour either way.
+
+A fine-tuned or base model **runs afterwards exactly where the current one runs** —
+CTranslate2 converts fine-tuned checkpoints — so adoption implies no ongoing GPU spend.
+
+!!! warning "Two things that could make this figure wrong for us"
+    **The benchmark is for a model this corpus has already rejected.** Those speeds are
+    `large-v3-turbo` at int8 — distilled to four decoder layers and quantised. We measured
+    turbo on Gurudeva's audio and it was far worse at Sanskrit than plain `medium`. The
+    benchmark's own disclaimers say "single-stream only, no concurrency or batching" and,
+    decisively, **"Accuracy is not measured. These are speed and cost figures only."** There
+    is no published throughput figure for the models we would actually run, and the consensus
+    approach needs **three** of them, so triple the GPU-hours.
+
+    **Storage can exceed the compute bill.** 4,708 hours as 16 kHz mono WAV is roughly 0.5 TB.
+    At $0.07/GB/month that is ~$38/month — more than the entire $25–90 compute estimate. It
+    stays a minor line item only if the audio lives on the provider for days rather than
+    months. A stopped pod's volume disk also bills at **double** the running rate.
+
+    And the 4,708-hour figure itself rests on an **unverified average lecture length** — the
+    same open item that every cost estimate in this project multiplies.
 
 Cost is not the constraint anywhere in this problem. The real cost of the labelled-data route
 is **human**: a comparable study needed ten native speakers over 25 working days. Producing
@@ -128,8 +148,9 @@ ten verbatim-verified hours here is 60–100 volunteer hours.
 
 ## What to do
 
-1. **Rent a GPU for a bulk pass now.** $25–90 and five hours against 70 laptop-days. This is
-   independent of every other decision on this page.
+1. **Price a bulk GPU pass properly, then probably do it.** ~$33 and five days on one GPU
+   against months of laptop time — but benchmark the models we would actually run first, since
+   the published figure is for a distilled model we rejected on accuracy.
 2. **Do not fine-tune yet.** Hallucination into silence, segmentation collapse and
    non-verbatim drift each attack something this archive cannot trade away, and the pseudo-
    labels we can generate cover the audio the models already handle.
