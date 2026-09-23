@@ -89,34 +89,61 @@ class Match:
 
     verse: str
     score: float
-    margin: float          # how far ahead of the next best verse
+    margin: float          # how far ahead of the best candidate from a DIFFERENT passage
     index: int
+    passage: str = ""      # which song or chapter it belongs to, when known
 
 
 class VerseIndex:
     """A corpus of printed verses, searchable by a garbled recognition of one."""
 
-    def __init__(self, verses: list[str], gram: int = 3) -> None:
+    def __init__(self, verses: list[str], gram: int = 3,
+                 passages: list[str] | None = None) -> None:
+        """``passages`` names the song or chapter each entry belongs to.
+
+        A real corpus is indexed as overlapping windows, so the second-ranked candidate is
+        usually the same passage at another length. Naming the owner lets the margin compare
+        the winner with a genuine rival instead of with a copy of itself.
+        """
         self.verses = list(verses)
         self.gram = gram
+        if passages is not None and len(passages) != len(self.verses):
+            raise ValueError("one passage name per verse")
+        self.passages = list(passages) if passages is not None else []
         self._profiles = [_grams(skeleton(v), gram) for v in self.verses]
 
     def __len__(self) -> int:
         return len(self.verses)
 
-    def rank(self, heard: str, top: int = 5) -> list[Match]:
-        """Every verse, best first. Useful for inspecting why a match was or was not made."""
+    def _passage(self, i: int) -> str:
+        return self.passages[i] if self.passages else str(i)
+
+    def rank(self, heard: str, top: int = 5, min_length: float = 0.0) -> list[Match]:
+        """Every verse, best first. Useful for inspecting why a match was or was not made.
+
+        ``min_length`` drops candidates far shorter than the query. Containment scoring lets a
+        three-word window score 1.0 against a ten-word query, which is not evidence of
+        anything; requiring a candidate to be a fair share of the query's length removes that.
+        """
         profile = _grams(skeleton(heard), self.gram)
         if not profile or not self._profiles:
             return []
-        scored = sorted(((_similarity(profile, p), i) for i, p in enumerate(self._profiles)),
+        wanted = min_length * len(heard.split())
+        scored = sorted(((_similarity(profile, p), i) for i, p in enumerate(self._profiles)
+                         if len(self.verses[i].split()) >= wanted),
                         key=lambda pair: (-pair[0], pair[1]))
-        best = scored[0][0]
-        return [Match(self.verses[i], score, score - (scored[1][0] if len(scored) > 1 else 0.0)
-                      if score == best else 0.0, i)
+        if not scored:
+            return []
+        top_score, top_passage = scored[0][0], self._passage(scored[0][1])
+        # The margin is over the best RIVAL - the best candidate belonging to some other
+        # passage - so overlapping windows of the winner cannot cancel it out.
+        rival = next((s for s, i in scored if self._passage(i) != top_passage), 0.0)
+        return [Match(self.verses[i], score, (top_score - rival) if score == top_score else 0.0,
+                      i, self._passage(i))
                 for score, i in scored[:top]]
 
-    def find(self, heard: str, min_score: float = 0.30, min_margin: float = 0.25) -> Match | None:
+    def find(self, heard: str, min_score: float = 0.30, min_margin: float = 0.25,
+             min_length: float = 0.55) -> Match | None:
         """The verse this is, or nothing.
 
         ``min_score`` is how much of the hypothesis must be accounted for before any verse is
@@ -133,13 +160,18 @@ class VerseIndex:
         |       0.15 |        36 |     1 |       97% |    59% |
         |       0.25 |        34 |     0 |      100% |    58% |
 
+        On the real 84,075-window KKSongs corpus, passage identity is what makes the margin
+        mean anything at all: Bengali coverage went 27% (single lines) -> 13% (overlapping
+        windows, margin cancelled by duplicates) -> **67%** (windows, margin over a different
+        song, length check). The ranking was correct throughout; only the confidence was not.
+
         **The default is 0.25: never wrong, 58% of verses recovered.** Dropping vowels from the
         skeleton is what made that affordable — before it, being never wrong cost all but 47%.
         For an archive of somebody's teaching, a verse of scripture attributed to him wrongly is
         not worth three extra verses recovered, so the strict end is the right default and the
         caller lowers it deliberately.
         """
-        ranked = self.rank(heard, top=2)
+        ranked = self.rank(heard, top=2, min_length=min_length)
         if not ranked:
             return None
         best = ranked[0]
