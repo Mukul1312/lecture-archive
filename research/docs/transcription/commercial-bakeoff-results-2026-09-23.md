@@ -9,6 +9,12 @@
 > 523 stops, or a 21% reduction, predates the fix. **Corrected again** after every
 > disagreement was adjudicated (`who-is-wrong-adjudication-2026-09-23.md`): two more
 > reference faults were repaired, and the figures below are the current ones.
+>
+> **The Sanskrit column below is Sanskrit AND Bengali.** The scorer's Indic track counts any
+> word written with diacritics, and Bengali transliteration carries as many as Sanskrit. Split
+> out (`sanskrit-and-bengali-2026-09-23.md`), ElevenLabs is **second-best at Sanskrit** rather
+> than poor, Deepgram gets **100%** of Bengali wrong, and flex `bn mixed` leads because it is
+> the only system that handles Bengali at all.
 
 Nine transcription systems, three local and three hosted plus three combinations, measured on
 the Melbourne reference with one scorer. This is the first work in the project that reduces

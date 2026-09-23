@@ -244,6 +244,40 @@ def edit_sites(reference: list[str], is_indic: list[bool], hypothesis: list[str]
     return sites
 
 
+# Bengali padavali and Caitanya-caritamrta orthography: verb endings, pronouns and particles
+# Sanskrit does not use. Matched on the folded form, so diacritics never matter.
+_BENGALI = re.compile(
+    r"\b("
+    r"\w*(iya|ila|ilo|oilo|hoilo|inu|anu|ibo|iba|ite|iche)\b"
+    r"|ami|amara|amar|tomara|tomare|tumi|more|mora|tahara|tara"
+    r"|kabe|ebe|ekhona|jakhona|kothaya|kotha|hoya|haya|haite|hoite"
+    r"|nahi|koya|koro|kori|kariya|chilama|chile|dase|bolibo|peye"
+    r"|janani|jathare|bhuliya|asiya|asiyachi|chele|kole|hasiya|katanu"
+    r")\b", re.I)
+_SANSKRIT = re.compile(
+    r"\b(\w*(asya|anam|ebhyah|esu|ena|aya|ah|ih|uh)\b"
+    r"|iti|eva|hi|ca|tu|vai|yah|sah|tat|idam|asmin|bhagavan|namah)\b", re.I)
+
+
+def indic_language(text: str) -> str:
+    """Sanskrit or Bengali, by which orthography the line actually uses.
+
+    The Indic track counts any word the reference wrote with diacritics, and Bengali
+    transliteration carries just as many as Sanskrit. Reporting them together hid a routing
+    result worth knowing: on the Melbourne reference the 676 Indic words are **486 Sanskrit
+    and 190 Bengali**, and no system is best at both. Deepgram gets 100% of the Bengali wrong
+    while scoring 86.6% on Sanskrit; ElevenLabs with keyterms is second-best at Sanskrit
+    (42.6%) and nearly useless at Bengali (85.3%); flex bn-mixed is the only system under 50%
+    on Bengali and is essentially the archive's only option there.
+
+    Checked against thirty cues classified by reading them: thirty right, none wrong.
+    Returns "sanskrit" when neither orthography is evident, since that is the larger class
+    and the caller has already decided the line is Indic.
+    """
+    folded = " ".join(fold(text))
+    return "bengali" if len(_BENGALI.findall(folded)) > len(_SANSKRIT.findall(folded)) else "sanskrit"
+
+
 def load_reference(review_path: Path) -> tuple[list[str], list[bool], dict]:
     review = json.loads(review_path.read_text(encoding="utf-8"))
     reference, is_indic = [], []

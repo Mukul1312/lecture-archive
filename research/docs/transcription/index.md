@@ -12,7 +12,8 @@ what will the correcting cost?
 | | best system | what it gives |
 | --- | --- | --- |
 | English (≈88% of the words) | **ElevenLabs Scribe v2** | 10.5% wrong against Whisper's 17.6% |
-| Sanskrit and names | **flex `bn mixed`**, then Sarvam | 38.6% and 45.9% against Whisper's 62.1% |
+| Sanskrit | **fused**, or ElevenLabs + keyterms | 36.8% and 42.6% — *see the correction below* |
+| Bengali | **flex `bn mixed`, and nothing else** | 49.5%; every other system is over 55% |
 | Fewest words lost | **all three combined** | 405 dropped against Whisper's 746 |
 | Fewest corrections | **ElevenLabs alone** | **459 stops against Whisper's 627 — 27% less labour** |
 
@@ -73,6 +74,9 @@ average length, which every cost figure multiplies.
   retrieval is the established answer.
 - [Should we fine-tune on his voice?](speaker-adaptation-2026-09-23.md) — speaker adaptation,
   its three failure modes for a verbatim archive, and the one finding worth more than it.
+- [The "Sanskrit" column was two languages](sanskrit-and-bengali-2026-09-23.md) — 676 Indic words
+  are 486 Sanskrit and 190 Bengali, and no system is best at both. **Corrects several earlier
+  claims.**
 - [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md) — all 483
   remaining disagreements judged one at a time, with every claim against the reference put to
   a sceptic. **72% are genuinely the model's mistake.**
