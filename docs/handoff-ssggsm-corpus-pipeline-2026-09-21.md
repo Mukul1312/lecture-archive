@@ -1070,9 +1070,10 @@ composes to NFC.
 3. **Pull wisdomlib's Caitanya-bhagavata** (complete, four scripts) and GRETIL's Bhagavatam
    (14,067 verses, CC BY-NC-SA, but 584 of 844 long-metre verses duplicate a half-verse -
    regression-test the dedup on SB 3.9.10, which is one of our own citations).
-4. **Forced alignment** - still the structural gap. flex emits NO timestamps, so a transcript
-   assembled across three systems has timing for a minority of its words, and read-along
-   alignment IS the product.
+4. ~~**Forced alignment** - still the structural gap.~~ **DONE in 10.33.** It was worse than
+   written: Sarvam emits no word times either, so two systems could not drive read-along, not
+   one. What remains is ~100 hand-marked onsets, to state the result as accuracy rather than
+   agreement.
 5. **A second verified lecture.** Everything still rests on one.
 
 ### 10.32 The "Sanskrit" column was two languages (2026-09-23)
