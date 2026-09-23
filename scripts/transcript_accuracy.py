@@ -10,15 +10,24 @@ counted as invented words.
 
 Two tracks are reported because they measure different things:
 
-* English words are scored strictly: a different word is an error.
+* English words are strict: a different word is an error.
 * Sanskrit and names — written with diacritics in the reference and in rough
   romanisation by the recogniser — are scored by closeness. "śrī" heard as "shri"
   is recognition, not an error; only a word a reader could not recognise counts.
+
+``expand_contractions``, ``join_orphan_clitics`` and ``strip_speaker_label`` repair
+differences of *writing* that were being counted as differences of *hearing*. They are
+offered here but not applied by this command line, because the runs it has already scored
+(the Whisper matrix) were measured without them; the Melbourne bake-off applies all three
+through ``data/reference/melbourne_bakeoff.normalise``. Figures from the two are therefore
+not directly comparable — see ``docs/error-text-analysis-2026-09-23.md``.
 """
 
 from __future__ import annotations
 
 import argparse
+import bisect
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 import json
 from pathlib import Path
@@ -32,6 +41,46 @@ NEAR_MATCH_RATIO = 0.8
 # Romanisation differences that carry no meaning: aspirates, sibilants, v/w/b, doubled letters.
 _SKELETON = ((("sh", "s"), ("ch", "c"), ("kh", "k"), ("gh", "g"), ("th", "t"), ("dh", "d"),
               ("ph", "p"), ("bh", "b"), ("jh", "j"), ("ee", "i"), ("oo", "u"), ("w", "b"), ("v", "b")))
+
+
+# Contractions carry no difference of hearing: a corrector does not stop at "he's" for
+# "he is". Both sides are expanded the same way, so the ambiguous ones ("'s" as a
+# possessive, "'d" as had or would) turn into the same odd text on both sides and
+# never score as an error.
+_CONTRACTIONS = ((r"n[’']t\b", " not"), (r"[’']ll\b", " will"), (r"[’']ve\b", " have"),
+                 (r"[’']re\b", " are"), (r"[’']m\b", " am"), (r"[’']s\b", " is"),
+                 (r"[’']d\b", " would"))
+# Words that begin a line and end in a colon without anyone being named: he reads these aloud.
+_NOT_SPEAKERS = {"translation", "purport", "synonyms", "note", "text", "verse", "chapter"}
+_SPEAKER = re.compile(r"^\s*([A-Z][\w.]*(?: [A-Z][\w.]*){0,3})\s*:\s*")
+
+
+def expand_contractions(text: str) -> str:
+    """Write contractions out in full, the same way in the reference and in the transcript."""
+    for pattern, replacement in _CONTRACTIONS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def strip_speaker_label(text: str) -> str:
+    """Remove a leading "Name:" from a subtitle cue - a note about who speaks, not speech."""
+    match = _SPEAKER.match(text)
+    if match and match.group(1).lower() not in _NOT_SPEAKERS:
+        return text[match.end():]
+    return text
+
+
+# Some recognisers write the clitic as a word of its own ("isn t", "he ll"). That is a
+# defect one regular expression repairs, not a word misheard, so it is normalised in the
+# same spirit as digits and bracketed annotations. The reference has already been
+# expanded above and contains none of these, so the rule only reaches the transcript.
+def join_orphan_clitics(text: str) -> str:
+    """Repair contractions a recogniser split into two words."""
+    text = re.sub(r"\b(\w+)n t\b", r"\1 not", text, flags=re.IGNORECASE)
+    for short, long in (("ll", "will"), ("ve", "have"), ("re", "are"),
+                        ("m", "am"), ("s", "is"), ("d", "would")):
+        text = re.sub(r"(?<=\w )" + short + r"\b", long, text, flags=re.IGNORECASE)
+    return text
 
 
 def fold(text: str) -> list[str]:
@@ -127,6 +176,71 @@ def score(reference: list[str], is_indic: list[bool], hypothesis: list[str]) -> 
             unrescued = [reference[i] for i in range(i1, i2) if i not in rescued]
             tally["examples_wrong"].append((" ".join(unrescued), " ".join(hypothesis[j1:j2])))
     return tally
+
+
+@dataclass
+class EditSite:
+    """One place a corrector must stop and type: a contiguous stretch got wrong.
+
+    This, not the error-word count, is what tracks correction time: five words lost in
+    one breath is one stop, five words lost apart is five. The surrounding reference
+    words travel with the site so a reader can judge it without opening the audio.
+    """
+
+    index: int                  # where in the reference the stop begins
+    kind: str                   # "wrong" | "dropped" | "invented"
+    reference: list[str]        # what he said, minus romanisations a reader would accept
+    heard: list[str]            # what the recogniser wrote here
+    before: list[str] = field(default_factory=list)
+    after: list[str] = field(default_factory=list)
+    sanskrit_distance: int = 999   # words to the nearest Sanskrit word or name
+    wrong: int = 0
+    dropped: int = 0
+    invented: int = 0
+
+
+def _sanskrit_distance(positions: list[int], i1: int, i2: int) -> int:
+    if not positions:
+        return 999
+    best = 999
+    for i in range(i1, max(i2, i1 + 1)):
+        k = bisect.bisect_left(positions, i)
+        for j in (k - 1, k):
+            if 0 <= j < len(positions):
+                best = min(best, abs(i - positions[j]))
+    return best
+
+
+def edit_sites(reference: list[str], is_indic: list[bool], hypothesis: list[str],
+               context: int = 6) -> list[EditSite]:
+    """Every place the transcript departs from the reference, as a corrector meets it.
+
+    The counts inside each site match ``score``: the same rescue rule, so the totals
+    add up to the same wrong, missing and inserted words.
+    """
+    positions = [i for i, x in enumerate(is_indic) if x]
+    sites = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, reference, hypothesis, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        rescued = _rescue_near_matches(reference, is_indic, hypothesis, i1, i2, j1, j2) if tag == "replace" else set()
+        remaining_reference = (i2 - i1) - len(rescued)
+        remaining_heard = (j2 - j1) - len(rescued)
+        if not remaining_reference and not remaining_heard:
+            continue     # only romanisations a reader would accept: nothing to type
+        wrong = min(remaining_reference, remaining_heard)
+        dropped = max(0, remaining_reference - remaining_heard)
+        invented = max(0, remaining_heard - remaining_reference)
+        sites.append(EditSite(
+            index=i1,
+            kind="wrong" if wrong else "dropped" if dropped else "invented",
+            reference=[reference[i] for i in range(i1, i2) if i not in rescued],
+            heard=list(hypothesis[j1:j2]),
+            before=reference[max(0, i1 - context):i1],
+            after=reference[i2:i2 + context],
+            sanskrit_distance=_sanskrit_distance(positions, i1, i2),
+            wrong=wrong, dropped=dropped, invented=invented))
+    return sites
 
 
 def load_reference(review_path: Path) -> tuple[list[str], list[bool], dict]:

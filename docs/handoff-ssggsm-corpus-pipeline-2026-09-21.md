@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **The steward's decision** (§10.27, `docs/commercial-bakeoff-results-2026-09-23.md`): ElevenLabs alone (fewest stops, ~$760) or the three-way combination (most complete, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, and measure the corpus average length so the cost stops being a guess |
+| **Next action** | **The steward's route decision**, on corrected numbers (10.28): ElevenLabs alone (470 stops, ~$760) or all three (523 stops but 476 dropped words against 738, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, measure the corpus average length, and extend the closeness rule to the glossary |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -794,6 +794,59 @@ batch flow).
   ElevenLabs' free month, Rs 66 of Sarvam's Rs 100, $0.29 of Deepgram's $200.
 - **Still unmeasured**: a second reference for these systems, word-timestamp accuracy for the
   read-along, whether flex's Sanskrit strength generalises, and the corpus average length.
+
+### 10.28 Reading the mistakes: the scoring was unfair, the ranking was right (2026-09-23)
+
+Full write-up: **`docs/error-text-analysis-2026-09-23.md`**. Tool:
+`data/reference/error_text.py` (`sites`, `patterns`, `compare`, `passages`); reports in
+`data/reference/bakeoff/errors/`. The stop count now lives in
+`scripts/transcript_accuracy.edit_sites`, pinned by tests; before it was changed it
+reproduced every published figure exactly, which is what licensed changing it.
+
+**Three scoring faults, found by printing the errors, all now fixed on both sides:**
+unspoken speaker labels ("Mr Peter:" opens 41 cues), contractions ("he is" vs "he's"), and
+clitics a recogniser split off ("isn t" - `flex en native` writes no apostrophes at all).
+Everything re-scored. **The ranking did not change; every figure improved.**
+
+| system | WER | English | dropped | stops |
+|---|---:|---:|---:|---:|
+| Whisper medium, skip rule off | 27.5% | 18.7% | 829 | 636 |
+| flex bn mixed | 27.0% | 21.4% | 651 | 765 |
+| Sarvam Saaras v4 verbatim | 22.7% | 15.9% | 637 | 609 |
+| **ElevenLabs Scribe v2** | 21.1% | 11.9% | 827 | **470** |
+| ElevenLabs + 50 keyterms | 20.5% | 11.7% | 738 | 487 |
+| **All three combined** | **19.1%** | **10.7%** | **476** | 523 |
+
+Reference 6,799 -> 6,698 words. **ElevenLabs now makes 26% fewer stops than Whisper**, not
+21%. `docs/commercial-bakeoff-results-2026-09-23.md` has been corrected throughout.
+
+**Where the labour actually is, now that it can be read:**
+
+- **55% of remaining stops are one word for one word.** Not lost paragraphs - `at` -> `of`,
+  `these` -> `this`, `them` -> `thee`, 487 times a lecture.
+- **Three-fifths of the labour is plain English with no Sanskrit near it** (279 of 487 stops,
+  6.4 per 100 words). Verse is the densest at 11.7 per 100 words but is only 6% of the words.
+  The Sanskrit is where the rate is worst; the English is where the hours are.
+- **Ten stretches, 184 words (2.7% of the lecture), are lost by EVERY system** - Bengali songs
+  and chanted verse, the longest 41 words of Bhaktivinoda Thakura. But a 41-word blackout is
+  ONE stop, so this is only ~7 stops: **a completeness problem, not a labour problem**. They
+  are quotations, so the fix is retrieval from print, not a better recogniser. This is the
+  measured case for the verse and padavali indexes.
+- **9.8% of words defeat all four systems**; at least one is right on 90.2%. flex contributes
+  390 errors no other system makes (most idiosyncratic); ElevenLabs 109 (least).
+- **The reference is not clean either.** 42 of ElevenLabs' 487 stops are words a reader would
+  still recognise: reference typos (`puport`, `commiting`, `deficity` x3), the subtitler
+  tidying Gurudeva's Indian English (`are` -> is, `these` -> this - the machines are the
+  verbatim ones), and romanisations of names the reference wrote without diacritics. At **34
+  places all three independent systems wrote the same word and the reference disagrees**.
+  Not repaired - it needs judgement - but it means every system is somewhat better than even
+  the corrected table shows.
+- **Keyterms destroy the language markers.** Plain ElevenLabs writes `[singing]` x15 and
+  `[speaking Bangla]` x12; with keyterms both vanish into a generic `[foreign language]` x43.
+  Take the markers from a plain pass.
+
+**Next mechanical fix:** let the closeness rule apply to any word in the archive's glossary,
+not only to words the reference happened to write with diacritics (~2% off every system).
 
 ---
 
