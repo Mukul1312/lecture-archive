@@ -2,7 +2,8 @@
 
 **Everything this project had measured came from one lecture.** The official archive at
 taptajivanam.com carries **112 lectures, 100 of them with both audio and a published
-transcript** — 413,812 words. This is the run that puts the pipeline against all of it.
+transcript** — 413,812 words. **78 of them could be fetched whole**, carrying 318,571 words, and
+this is the run that puts the pipeline against those.
 
 It is a harder test than Melbourne, and deliberately so. The Melbourne reference arrived already
 cut into cues a human had timed, so every alignment was handed a few seconds of audio and the
@@ -23,10 +24,15 @@ The first lecture through the pipeline:
 | speed | **1.56× real time** on CPU |
 
 It opens on `"I thank you, one and all, for your…"` at 0.2 s and closes on `"Jaya Srila Gurudeva
-ki jaya!"` at 493.5 s. The second lecture through, four times longer, did better still:
-**2,333 of 2,337 words placed — 100%** — 24 minutes of audio in 12.7, at 1.9× real time. The transcript's own rate — **88 words per minute** — matches the 91
-measured on the one other lecture we have, which is the first evidence that these published
-transcripts are not heavily abridged.
+ki jaya!"` at 493.5 s.
+
+The second lecture through was four times longer and did better still: **2,333 of 2,337 words
+placed — 100%** — 24 minutes of audio in 12.7, at 1.9× real time.
+
+Their speaking rates, **88 and 91 words per minute**, agree with each other and with the one
+other lecture in the repository. That is the first evidence that these published transcripts are
+not heavily abridged: a transcript missing large stretches would imply a rate far below what the
+recording can support.
 
 ## How, given there is nothing to start from
 
