@@ -376,3 +376,28 @@ def emissions_long(waveform: torch.Tensor, window: float = 30.0, overlap: float 
 
     joined = torch.cat(kept, dim=1)
     return joined, waveform.size(0) / joined.size(1) / SAMPLE_RATE
+
+
+def problems(spans: list[WordSpan], duration: float | None = None) -> list[str]:
+    """Everything wrong with a finished alignment, in plain words.
+
+    Read-along fails quietly. A word placed before the one before it, or past the end of the
+    recording, produces a page that highlights the wrong line and no error anywhere. These are
+    the invariants that must hold however the spans were produced - one long pass, cue by cue,
+    or segment by segment with offsets added back - which is exactly why they are checked on the
+    result rather than inside any one of those paths.
+    """
+    found = []
+    backwards = sum(1 for a, b in zip(spans, spans[1:]) if b.start < a.start)
+    if backwards:
+        found.append(f"{backwards} words start before the word before them")
+    inverted = sum(1 for s in spans if s.end < s.start)
+    if inverted:
+        found.append(f"{inverted} words end before they start")
+    if any(s.start < 0 for s in spans):
+        found.append(f"{sum(1 for s in spans if s.start < 0)} words start before the recording")
+    if duration is not None:
+        past = sum(1 for s in spans if s.end > duration + 0.5)
+        if past:
+            found.append(f"{past} words end after the recording does")
+    return found

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import torch
 
-from scripts.forced_align import SAMPLE_RATE, align, emissions, to_seconds
+from scripts.forced_align import SAMPLE_RATE, align, emissions, problems, to_seconds
 
 REPO = Path(__file__).resolve().parents[1]
 FLEX = REPO / "data/models/indic-transcribe-flex"
@@ -113,6 +113,13 @@ def time_words(wav: torch.Tensor, segments: list[Segment], to_iast=None) -> list
     if failures:
         print(f"  {len(failures)} of {len(segments)} segments could not be aligned: "
               f"{failures[:2]}")
+
+    # Segment offsets are added back one segment at a time, so a mistake there shows up only in
+    # the joined result - as a page that highlights the wrong line and says nothing.
+    from scripts.forced_align import WordSpan
+    joined = [WordSpan(w["word"], w["segment"], w["start"], w["end"], w["score"]) for w in timed]
+    for complaint in problems(joined, duration=wav.size(0) / SAMPLE_RATE):
+        print(f"  WRONG: {complaint}")
     return timed
 
 

@@ -21,7 +21,7 @@ import sys
 import time
 from dataclasses import asdict
 
-from scripts.forced_align import align_window, spoken_words
+from scripts.forced_align import align_window, problems, spoken_words
 
 # Cue boundaries mark where one caption should give way to the next, which is close to but not
 # the same as where a word begins. A little air on each side lets the aligner find a word that
@@ -55,6 +55,14 @@ def align_cues(review_path: str, audio_path: str) -> dict:
                   f"{rate * (len(cues) - done) / 60:.1f} min left", flush=True)
 
     aligned = sum(len(c["words"]) for c in out)
+    # Every cue was aligned in its own window, so only the joined sequence can show a cue
+    # placed out of order or a word pushed outside the recording.
+    from scripts.forced_align import WordSpan
+    joined = [WordSpan(w["word"], w["index"], w["start"], w["end"], w["score"])
+              for cue in out for w in cue["words"]]
+    complaints = problems(joined)
+    for complaint in complaints:
+        print(f"  WRONG: {complaint}")
     return {
         "what_this_is": "Word-level timings for a verified transcript, by CTC forced alignment.",
         "model": "torchaudio MMS_FA (wav2vec2, 1100+ languages, romanised alphabet)",
@@ -64,6 +72,7 @@ def align_cues(review_path: str, audio_path: str) -> dict:
         "cues": out,
         "words_aligned": aligned,
         "cues_that_failed": failures,
+        "invariants_violated": complaints,
         "wall_seconds": round(time.time() - started, 1),
     }
 
