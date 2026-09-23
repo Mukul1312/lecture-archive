@@ -54,6 +54,12 @@ def skeleton(text: str) -> str:
     for source, target in _FOLD:
         plain = plain.replace(source, target)
     plain = plain.translate(_VOWELS)
+    # Vowels go last, and they are most of what was left: in the folded text "a" alone was 27%
+    # of all characters and "i" another 14%, so two letters that discriminate almost nothing
+    # were carrying 41% of the signal. Dropping them raised the mean margin between the right
+    # verse and the runner-up from 0.245 to 0.286 at identical recall — and margin, not score,
+    # is what survives the corpus growing from 59 verses to 20,000.
+    plain = re.sub(r"[aeiou]", "", plain)
     out: list[str] = []
     for ch in plain.replace(" ", ""):
         if not out or out[-1] != ch:
@@ -110,7 +116,7 @@ class VerseIndex:
                       if score == best else 0.0, i)
                 for score, i in scored[:top]]
 
-    def find(self, heard: str, min_score: float = 0.30, min_margin: float = 0.10) -> Match | None:
+    def find(self, heard: str, min_score: float = 0.30, min_margin: float = 0.25) -> Match | None:
         """The verse this is, or nothing.
 
         ``min_score`` is how much of the hypothesis must be accounted for before any verse is
@@ -122,13 +128,16 @@ class VerseIndex:
 
         | min_margin | attempted | wrong | precision | recall |
         |-----------:|----------:|------:|----------:|-------:|
-        |       0.00 |        58 |    18 |       69% |    68% |
-        |       0.05 |        43 |     6 |       86% |    63% |
-        |       0.10 |        37 |     1 |       97% |    61% |
-        |       0.25 |        28 |     0 |      100% |    47% |
+        |       0.05 |        45 |     7 |       84% |    64% |
+        |       0.10 |        41 |     6 |       85% |    59% |
+        |       0.15 |        36 |     1 |       97% |    59% |
+        |       0.25 |        34 |     0 |      100% |    58% |
 
-        The default sits at 0.10: one wrong verse in 37 attempts, against recognition that
-        delivers essentially none of them. Raise it to 0.25 to be never wrong.
+        **The default is 0.25: never wrong, 58% of verses recovered.** Dropping vowels from the
+        skeleton is what made that affordable — before it, being never wrong cost all but 47%.
+        For an archive of somebody's teaching, a verse of scripture attributed to him wrongly is
+        not worth three extra verses recovered, so the strict end is the right default and the
+        caller lowers it deliberately.
         """
         ranked = self.rank(heard, top=2)
         if not ranked:
@@ -144,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verses", required=True, type=Path, help="one printed verse per line")
     parser.add_argument("--hypothesis", required=True, help="what the recogniser heard")
     parser.add_argument("--min-score", type=float, default=0.30)
-    parser.add_argument("--min-margin", type=float, default=0.10)
+    parser.add_argument("--min-margin", type=float, default=0.25)
     parser.add_argument("--show", type=int, default=3, help="how many candidates to print")
     args = parser.parse_args(argv)
 
