@@ -80,22 +80,40 @@ class Agreement:
     deltas: list[float]
 
 
-def onset_deltas(ours: list[tuple[str, float]], theirs: list[tuple[str, float]],
-                 languages: list[str]) -> dict[str, list[float]]:
+# How far outside its own cue a system's timestamp may fall and still plausibly be the same
+# utterance. Beyond this the two are different occurrences of a word that happens to be spelled
+# the same, and their difference measures nothing.
+SAME_UTTERANCE = 2.0
+
+
+def onset_deltas(ours: list[tuple], theirs: list[tuple[str, float]],
+                 languages: list[str], same_region: bool = True) -> dict[str, list[float]]:
     """Signed onset differences for words two sources agree on, grouped by language.
 
     Matching is by text, not position: both sides misheard plenty, and a word only counts when
     the sequence aligner pairs it one to one. That keeps the measurement to words where "the
     same word" is a claim worth making.
+
+    Spelling alone is not enough, though. `ei` and `nāma` are two letters long and recur all
+    through a Bengali song, so the sequence matcher will cheerfully pair our `ei` with one
+    twenty-five seconds away and report a twenty-five second error. Those pairs are not
+    disagreements about timing; they are different occurrences of the same word. When the
+    reference entry carries the bounds of its own cue, a pair is dropped unless the other
+    system's timestamp falls inside it - which is a claim about identity, not about agreement,
+    and so cannot flatter the result.
     """
-    matcher = SequenceMatcher(None, [w for w, _ in ours], [w for w, _ in theirs], autojunk=False)
+    matcher = SequenceMatcher(None, [w[0] for w in ours], [w for w, _ in theirs], autojunk=False)
     by_language: dict[str, list[float]] = {}
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag != "equal":
             continue
         for step in range(i2 - i1):
-            by_language.setdefault(languages[i1 + step], []).append(
-                ours[i1 + step][1] - theirs[j1 + step][1])
+            mine, other = ours[i1 + step], theirs[j1 + step]
+            if same_region and len(mine) > 2:
+                low, high = mine[2], mine[3]
+                if not (low - SAME_UTTERANCE <= other[1] <= high + SAME_UTTERANCE):
+                    continue
+            by_language.setdefault(languages[i1 + step], []).append(mine[1] - other[1])
     return by_language
 
 
@@ -135,7 +153,9 @@ def compare(timings: dict, cut: CutMap) -> tuple[list[Agreement], list[Agreement
             folded = fold(word["word"])
             if len(folded) != 1:          # a token the scorer would not count either
                 continue
-            ours.append((folded[0], word["start"]))
+            # The cue bounds travel with the word so a pair can be checked for being the
+            # same utterance at all, not merely the same spelling.
+            ours.append((folded[0], word["start"], cue["start"], cue["end"]))
             languages.append(language_of(word["word"], line))
 
     systems = {}
@@ -148,6 +168,16 @@ def compare(timings: dict, cut: CutMap) -> tuple[list[Agreement], list[Agreement
     against_us = [Agreement(name, language, deltas)
                   for name, theirs in systems.items()
                   for language, deltas in onset_deltas(ours, theirs, languages).items()]
+    loose = [Agreement(name + " (any pairing)", language, deltas)
+             for name, theirs in systems.items()
+             for language, deltas in onset_deltas(ours, theirs, languages,
+                                                  same_region=False).items()]
+    # Only worth showing where dropping the mispairings actually changed something.
+    strict = {(row.system, row.language): len(row.deltas) for row in against_us}
+    against_us += [row for row in loose
+                   if row.language != "english"
+                   and strict.get((row.system.replace(" (any pairing)", ""), row.language))
+                   != len(row.deltas)]
 
     # For the control the languages must be labelled on the first system's own words, since the
     # reference is not one of the two being compared.
@@ -157,7 +187,7 @@ def compare(timings: dict, cut: CutMap) -> tuple[list[Agreement], list[Agreement
         for second in range(first + 1, len(names)):
             a, b = systems[names[first]], systems[names[second]]
             labels = ["english"] * len(a)   # the control is about clock agreement, not language
-            for language, deltas in onset_deltas(a, b, labels).items():
+            for language, deltas in onset_deltas(a, b, labels, same_region=False).items():
                 among_them.append(Agreement(f"{names[first]} vs {names[second]}",
                                             language, deltas))
     return against_us, among_them
