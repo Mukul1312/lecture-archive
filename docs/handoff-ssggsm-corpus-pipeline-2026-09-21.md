@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Read `data/research/prabhupadavani/MORNING-REPORT-prabhupadavani.md`** (written overnight by `run_tonight.py`, §10.25): Whisper against Indic-Transcribe-flex in two configurations on a second corpus, with the code-switching breakdown. Then the steward's decisions listed in §10.25. The day's findings are mapped in §10.25; the four new write-ups are in `docs/` |
+| **Next action** | **Melbourne bake-off running** (§10.26, started 2026-09-23 09:42): Whisper against Indic-Transcribe-flex on Gurudeva's own audio, report at `data/reference/MELBOURNE-BAKEOFF-REPORT.md`. Prabhupadavani is done: Whisper won overall but flex dropped 27% fewer words, so the pairing to test next is Whisper + flex with plain vote-counting. The steward's other open decisions are in §10.25 |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -711,6 +711,39 @@ Each has its own write-up; this is the map:
 - flex `lang=sa` and `lang=hi` mangle plain English into Devanagari; only `en` and
   `bn mode=mixed` are worth scoring.
 - The transliteration library leaves Bengali's nukta behind; `run_flex.py` strips it.
+
+### 10.26 Prabhupadavani results, and the Melbourne bake-off (2026-09-23)
+
+The overnight runner finished all three stages by 02:12 with no intervention.
+Report: `data/research/prabhupadavani/MORNING-REPORT-prabhupadavani.md`.
+
+| system | WER | English | Sanskrit+Bengali | dropped | wrong | invented | speed |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **whisper-medium-noskip** | **17.2%** | **13.5%** | **27.6%** | 835 | 941 | 315 | 2.30x |
+| flex-en-native | 18.6% | 13.8% | 33.1% | **608** | 1,256 | 395 | 1.97x |
+| flex-bn-mixed | 20.5% | 15.9% | 35.0% | 711 | 1,402 | 374 | 1.94x |
+
+**Whisper won overall, including on Sanskrit and Bengali** — the opposite of what flex's
+design promised. But **flex dropped 27% fewer words** (608 against 835): it hears more and
+writes it wrong, where Whisper stays silent. Dropped words are the error class no text-level
+fix can repair, so flex looks like a complement rather than a replacement, which is the case
+for combining two recognisers (plain ROVER first, per §10.24).
+
+**The code-switching gradient barely appears on this corpus.** English wrong next to a
+Sanskrit word against far from one: Whisper 17.2% vs 14.4%, flex-en 24.3% vs 13.2%. On
+Melbourne the same measurement is 49.8% vs 14.7%. Three candidate explanations, untested:
+cleaner audio; a different speaker; and — the actionable one — **Prabhupadavani audio is
+pre-cut at subtitle boundaries**, so a model never has to recover mid-phrase. If that is the
+cause, cutting Gurudeva's audio at phrase boundaries before decoding should reduce the damage
+at switch points.
+
+**So flex had not been tested where the problem lives.** Started 2026-09-23 09:42:
+`data/reference/run_melbourne_bakeoff.py` (stages in `melbourne_bakeoff.py`), writing
+`data/reference/MELBOURNE-BAKEOFF-REPORT.md`. To keep it fair to a system with no word
+timestamps, all three decode the same **cut** audio: the reference span minus the 3.4 minutes
+of never-subtitled speech (66.4 minutes in 11 pieces, `melbourne-cut.wav`), and scoring is
+text-only for everyone with the same apostrophe and number normalisations. Whisper is re-run
+on that audio rather than reusing its earlier timestamped output. About two hours.
 
 ---
 
