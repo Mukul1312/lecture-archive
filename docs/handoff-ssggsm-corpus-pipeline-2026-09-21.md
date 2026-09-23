@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Hand-mark ~100 word onsets** so forced alignment can be stated as accuracy rather than agreement (10.33). Then run `flex_timed.py` over a full lecture, and re-split the earlier verse-retrieval figures by language |
+| **Next action** | **Resume `align_archive`** (10.34) - it walks the 100-lecture archive and is resumable; then read `SUMMARY.json` for coverage across lectures. That, plus ~100 hand-marked onsets, turns the one-lecture dependency and the agreement-not-accuracy caveat into settled questions |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -1300,6 +1300,62 @@ it.
    between words belongs to neither. Published figures swing several fold on this choice.
 4. **Alignment confidence is not transcription confidence.** Where flex misheard, the span will
    look monotonic and well-scored while pointing at the wrong audio.
+
+### 10.34 The whole archive, not one lecture (2026-09-23, overnight)
+
+**Write-up: `research/docs/transcription/archive-alignment-2026-09-23.md`.**
+This answers the top item of 10.33's "before scaling" list.
+
+**taptajivanam.com has 112 lectures, 100 with BOTH audio and a published transcript**
+(413,812 words). Mirrored with `scripts/taptajivanam_mirror.py plan|fetch` - resumable, pages
+come from the triage cache so none is fetched twice, audio downloads spaced 2s.
+
+**These transcripts are a harder and more honest test than Melbourne**: paragraphs, with **no
+timings and no diarisation**, so alignment places them from nothing rather than inside cues a
+human already bounded.
+
+**`scripts/align_archive.py` walks a prose transcript onto its recording.** A window of audio is
+offered FEWER words than could fit (55 wpm floor against 88-91 measured) and the list is closed
+with a **star**; the words land, the star absorbs the overflow, and the last word placed starts
+the next window. No boundary is ever guessed, and a bad step shows as a collapsed score rather
+than silent drift. Costs ~1.6x re-scoring of window tails.
+
+First lecture: **718/728 words (99%), score 0.525, all invariants holding, 0.2-493.6s of 493.6s,
+1.56x real time.** Its 88 wpm matches the 91 on the other lecture - first evidence these
+published transcripts are not heavily abridged.
+
+**The star's purpose turned out to be different from what I built it for.** CTC's blank ALREADY
+absorbs a gap, so neighbouring words were not being stretched. What blank cannot do is say so.
+The star leaves a span: **147 seconds absorbed in the first window alone** is audio the published
+transcript does not account for, and it is now a number rather than a silence.
+
+#### ⚠ What this corpus CANNOT do
+
+**Never quote a WER against these transcripts unqualified.** They omit questioner turns, so a
+recogniser is charged for words it heard correctly (`colab/README.md` records this). **43 of the
+100 record no other speaker** - measure recognition on those. And they are edited, not verbatim:
+Melbourne's *verified* subtitle file was still at fault in 14.9% of disagreements.
+
+#### Traps hit while building it
+
+1. **Two page templates.** Older is `dir="ltr"` + justified; newer drops `dir`.
+   `fetch_lecture.extract_transcript` knows only the old one and silently loses a third of the
+   corpus. `taptajivanam_mirror.transcript_of` tries both.
+2. **MP3 filenames contain SPACES.** urllib raises `InvalidURL`, which is **neither URLError nor
+   OSError**, so it escaped the except clause and killed the first run.
+3. **6 lectures serve audio by JavaScript** - no static `<source>`; they need a headless fetch.
+4. **A 7-minute window through `emissions()` is 21,000 frames** - quadratic attention, ~1.8 GB
+   per head. `emissions_long` exists for this and I had not used it.
+
+#### Running and resuming
+
+```
+python scripts/taptajivanam_mirror.py fetch                         # resumable
+.venv-indic/Scripts/python.exe -m scripts.align_archive             # resumable
+.venv-indic/Scripts/python.exe -m scripts.align_archive --report    # SUMMARY.json
+```
+At 1.56x real time the full 78 hours is ~50 hours of CPU: a job that spans nights. Each lecture
+is written as it finishes and finished ones are skipped.
 
 ---
 

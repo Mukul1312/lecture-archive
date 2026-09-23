@@ -100,6 +100,9 @@ lecture, and measure the corpus's real average length, which every cost figure m
 - [Giving every word a time](forced-alignment-2026-09-23.md) — `flex` and Sarvam emit no
   timestamps at all, and read-along needs one per word. Forced alignment supplies them, and
   agrees with three commercial systems **more closely than they agree with each other**.
+- [The whole archive, timed](archive-alignment-2026-09-23.md) — the official archive has **100
+  lectures with audio and a published transcript**, so the one-lecture dependency need not stand.
+  Their prose has no timings and no diarisation, which makes placing it the harder test.
 
 **Surveys** — what exists, before anything was run.
 
