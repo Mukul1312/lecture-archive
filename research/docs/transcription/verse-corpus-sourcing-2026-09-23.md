@@ -12,9 +12,9 @@ on licensing rather than coverage.** One rejection ran in the archive's favour.
 | | status |
 |---|---|
 | **Sanskrit verse** | **Solved.** GRETIL, explicitly licensed, complete Bhāgavatam |
-| **Bengali padāvalī** | **Not solved, and not nearly.** No openly-licensed corpus exists anywhere |
-| **Caitanya-caritāmṛta / -bhāgavata** | No clean machine-readable text |
-| **An LLM's role** | May **label** and **choose**. Must never **produce** |
+| **Bengali padāvalī** | **KKSongs**, mirrored, with a permission request — lyrics only, never the purports |
+| **Caitanya-caritāmṛta / -bhāgavata** | No download exists; **resolved by search, cached permanently** |
+| **An LLM's role** | May **label**, **choose**, and **search**. Must never **produce** |
 
 ---
 
@@ -151,13 +151,71 @@ points**.
 
 ---
 
+---
+
+## The resolution: search builds the corpus, it does not run per lecture
+
+The steward's objection to the above is correct and changes the design. **An LLM that
+*searches* is not an LLM that *produces*** — it returns a located quotation with a source,
+which is a different act from recalling one from weights. And it reaches what no download
+can: **Caitanya-caritāmṛta and Caitanya-bhāgavata have no machine-readable text anywhere**, so
+no amount of GRETIL work covers them.
+
+The cost objection that killed Deepgram-as-confidence does not apply here, and the reason is
+worth stating precisely. Measured on our reference: 59 verse occurrences, **53 distinct** — so
+caching within a lecture saves almost nothing. But that is the wrong unit. He teaches from a
+fixed canon across 3,766 lectures, quoting the same verses over and over. **Keyed by
+skeleton, each distinct verse is looked up once, ever.** The cache fills quickly, and the
+marginal cost per lecture falls towards zero.
+
+So search is not an alternative to building a corpus. **It is how the corpus gets built** for
+the texts that cannot be downloaded — incrementally, driven by what he actually quotes rather
+than by indexing 14,067 verses he may never cite.
+
+### The shape that keeps the archive's posture intact
+
+1. **Local index first**, from GRETIL, for Bhāgavatam and Gītā. Free, deterministic, auditable,
+   and it will answer most lookups.
+2. **Search only on a miss**, for Caitanya-caritāmṛta, Caitanya-bhāgavata and anything else the
+   index lacks.
+3. **Every result must arrive with a source URL**, and the URL is checked against an allowlist.
+   This is the one guard that matters: without it a search may return **vedabase**, and BBT
+   text would enter the corpus silently — undoing the entire licence analysis above.
+4. **Cache by skeleton, permanently.** A verse resolved once is never looked up again, and the
+   cache becomes the archive's own corpus, with provenance attached to every entry.
+5. **Never accept text without a source.** A result the model produced rather than found is
+   refused, which is the same rule as the matcher's abstention.
+
+---
+
+## Songs: KKSongs, decided
+
+The steward's decision is to rely on KKSongs.org, which is reasonable — it is the only clean
+machine-readable Bengali source that exists, and the alternative measured 19.5% correct.
+
+One distinction to hold onto while mirroring it, because it is the difference between usable
+and unshippable:
+
+| | |
+|---|---|
+| **the songs themselves** | Bhaktivinoda Ṭhākura died in 1914 — the compositions are long out of copyright |
+| **KKSongs' transliteration and arrangement** | their work; no licence stated, hence the permission request |
+| **`/authors/purports/`** | **BBT and Prabhupāda material — not KKSongs' to give.** Never follow these links |
+
+Take the romanised lyrics, the Bengali-script pages where they exist, and the header metadata.
+Nothing else.
+
 ## What to do next
 
 1. **Fetch GRETIL, deduplicate, index.** Sanskrit is unblocked today. Regression-test the
    deduplication on SB 3.9.10.
 2. **Rewrite `skeleton()` to select rare letters** rather than fold toward common ones, and
    re-measure retrieval at realistic corpus size.
-3. **Check Sanskrit Wikisource** (better licence, solves Gītā 18) and the `gaudiyakirtan`
-   repository (the one promising Bengali lead). An hour each.
-4. **Write to KKSongs** for permission, since the Bengali half has no licensed alternative.
-5. **Pilot LLM span detection** on the reference lecture — and only as offsets.
+3. **Mirror KKSongs** — lyrics, Bengali-script pages and header metadata only, never the
+   purports — and send the permission note in parallel.
+4. **Build the search-and-cache layer** for Caitanya-caritāmṛta, Caitanya-bhāgavata and
+   anything else the index misses: source URL required, allowlist enforced, cached by skeleton
+   so each verse is resolved once ever.
+5. **Check Sanskrit Wikisource** (better licence, solves Gītā 18) and the `gaudiyakirtan`
+   repository. An hour each.
+6. **Pilot LLM span detection** on the reference lecture — and only as offsets.
