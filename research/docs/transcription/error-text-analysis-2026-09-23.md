@@ -1,5 +1,20 @@
 # Reading the mistakes, not the rates (2026-09-23)
 
+!!! warning "Partly superseded the same day"
+    Every remaining disagreement was then adjudicated one at a time — see
+    [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md).
+    Two things here did not survive it:
+
+    - **The claim that the reference abridges verses is withdrawn.** The reference quotes
+      BG 18.66 and SB 12.8.40 in full and correctly. The edit sites were fragments of long
+      verse quotations, and the context window hid the rest. The machines were mishearing
+      chanted Sanskrit.
+    - **The numbers below are superseded.** Two further reference faults were found and
+      repaired (speaker labels appearing mid-cue, and bracketed editorial text), so the
+      reference is now 6,613 words and ElevenLabs makes 459 stops against Whisper's 627.
+
+    Everything else stands, and the ranking has not moved.
+
 The nine-system bake-off said *how much* each system gets wrong. It could not say *what*,
 and so it could not say whether a given mistake is fixable by routing to another system, by
 a glossary, by a regular expression — or not at all. This is what the errors actually say

@@ -11,10 +11,10 @@ what will the correcting cost?
 
 | | best system | what it gives |
 | --- | --- | --- |
-| English (≈88% of the words) | **ElevenLabs Scribe v2** | 11.7% wrong against Whisper's 18.7% |
+| English (≈88% of the words) | **ElevenLabs Scribe v2** | 10.5% wrong against Whisper's 17.6% |
 | Sanskrit and names | **flex `bn mixed`**, then Sarvam | 38.6% and 45.9% against Whisper's 62.1% |
-| Fewest words lost | **all three combined** | 476 dropped against Whisper's 829 |
-| Fewest corrections | **ElevenLabs alone** | **470 stops against Whisper's 636 — 26% less labour** |
+| Fewest words lost | **all three combined** | 405 dropped against Whisper's 746 |
+| Fewest corrections | **ElevenLabs alone** | **459 stops against Whisper's 627 — 27% less labour** |
 
 The measure that matters is **edit sites**: the number of places a corrector must stop and type.
 Every earlier improvement — a bigger model, turning off Whisper's no-speech skip rule, fusing two
@@ -34,14 +34,18 @@ average length, which every cost figure multiplies.
 2. **More than half the remaining labour is single-word fixes in plain English**, not lost
    paragraphs and not Sanskrit. The Sanskrit is where the error *rate* is worst; the English is
    where the *hours* are.
-3. **Keyterm prompting works only inside the recogniser.** Fifty Sanskrit names cut ElevenLabs'
+3. **About 72% of the remaining errors are genuinely the model's.** Of the rest, 15% are the
+   reference's own fault and 13% are nobody's — spelling and romanisation variants a corrector
+   would never stop for. Mishearing chanted Sanskrit is the largest recoverable class, which is
+   the measured case for combining systems rather than buying ElevenLabs alone.
+4. **Keyterm prompting works only inside the recogniser.** Fifty Sanskrit names cut ElevenLabs'
    Sanskrit errors by 8 points. The same list failed as a Whisper prompt and as a post-correction
    pass.
-4. **184 words a lecture are lost by every system** — Bengali songs and chanted verse. They are
+5. **184 words a lecture are lost by every system** — Bengali songs and chanted verse. They are
    quotations, so the fix is retrieval from print, not a better recogniser.
-5. **Never let a language model rewrite a transcript.** It degrades transcripts in every published
+6. **Never let a language model rewrite a transcript.** It degrades transcripts in every published
    study, and over-correction erases the verbatim speech this archive exists to preserve.
-6. **Public benchmarks have mispredicted this corpus three times out of three** — `large-v3-turbo`,
+7. **Public benchmarks have mispredicted this corpus three times out of three** — `large-v3-turbo`,
    Indic-Transcribe-flex and Deepgram all ranked well elsewhere and did badly here.
 
 ## The pages
@@ -56,6 +60,9 @@ average length, which every cost figure multiplies.
   result.**
 - [Reading the mistakes, not the rates](error-text-analysis-2026-09-23.md) — printing the errors
   word by word, which found three faults in the scoring itself and moved where the labour is.
+- [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md) — all 483
+  remaining disagreements judged one at a time, with every claim against the reference put to
+  a sceptic. **72% are genuinely the model's mistake.**
 
 **Surveys** — what exists, before anything was run.
 

@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **The steward's route decision**, on corrected numbers (10.28): ElevenLabs alone (470 stops, ~$760) or all three (523 stops but 476 dropped words against 738, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, measure the corpus average length, and extend the closeness rule to the glossary |
+| **Next action** | **The steward's route decision**, now on thrice-corrected numbers (10.29): ElevenLabs alone (459 stops, ~$760) or all three (509 stops but 405 dropped words against 665, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, measure the corpus average length, extend the closeness rule to the glossary, and adjudicate each system's own errors before this reference judges a second lecture |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -847,6 +847,63 @@ Reference 6,799 -> 6,698 words. **ElevenLabs now makes 26% fewer stops than Whis
 
 **Next mechanical fix:** let the closeness rule apply to any word in the archive's glossary,
 not only to words the reference happened to write with diacritics (~2% off every system).
+
+### 10.29 Are the models wrong, or is our reference? (2026-09-23)
+
+Full write-up: **`research/docs/transcription/who-is-wrong-adjudication-2026-09-23.md`**.
+Tools: `data/reference/error_text.py dossier` and `data/reference/adjudication.py`; verdicts
+in `data/reference/bakeoff/errors/adjudication.json`.
+
+All 483 of the best system's remaining disagreements were judged one at a time - from
+independent agreement between six systems, from published scripture, and from sense. Every
+verdict of "the reference is wrong" went to a second reader told to REFUTE it and to default
+to refuted. **That pass overturned 50 of 122 claims (41%).**
+
+| verdict | sites | share |
+|---|---:|---:|
+| **the model is wrong** | 349 | **72.3%** |
+| the reference is wrong | 72 | 14.9% |
+| nobody is wrong (spelling, romanisation) | 61 | 12.6% |
+
+**The models ARE mostly making real mistakes.** Their own errors: mishearing English 136,
+**mishearing Sanskrit 101**, writing a word nobody said 63. The Sanskrit class is the largest
+recoverable one, which is the measured case for the combination over ElevenLabs alone.
+
+**What is genuinely wrong with the reference:** dropped words 33 (`all sorts || religion`
+missing "of"), tidied grammar 21 (the machines are the verbatim ones), typos 12 (`puport`,
+`commiting`, `embarassed`), editorial text nobody spoke 6 (`(Laughter)`, `(inaudible reply)`,
+`(SB 3.25.42)`).
+
+**Two more scorer repairs, both found by the adjudication:**
+1. `strip_speaker_label` removed only a LEADING label; 6 cues carry a second label mid-cue
+   (16 words). Now every line-initial label is removed.
+2. The reference writes editorial notes in ROUND brackets and the scorer stripped only square
+   ones. Now both. Reference 6,698 -> **6,613 words**.
+
+| system | WER first -> now | stops first -> now |
+|---|---|---|
+| Whisper medium, skip rule off | 28.8% -> **26.6%** | 666 -> **627** |
+| Sarvam Saaras v4 verbatim | 23.8% -> **21.9%** | 633 -> **600** |
+| **ElevenLabs Scribe v2** | 22.5% -> **20.2%** | 523 -> **459** |
+| ElevenLabs + keyterms | 22.0% -> **19.8%** | 543 -> **474** |
+| **All three combined** | 20.5% -> **18.3%** | 579 -> **509** |
+
+**The ranking has not moved across three rounds of correction.** ElevenLabs now makes **27%
+fewer stops than Whisper**, against the 21% first published. Every repair enlarged the gap.
+
+**TWO CLAIMS OF MINE WITHDRAWN, both caught by the adjudication:**
+- **The reference does NOT abridge verses.** It quotes BG 18.66 and SB 12.8.40 in full and
+  correctly; the edit sites were fragments of long quotations and the context window hid the
+  rest. The machines were mishearing chanted Sanskrit.
+- **The first adjudication run was fed faulty evidence** for insertions (the record's "heard"
+  field swept in the machine's rendering of the NEXT reference word, so every insertion looked
+  like a duplicate). Judges called 116 sites alignment artifacts on that basis; the honest
+  figure is 8. The run was discarded and repeated. A "mechanical confirmation" I ran used the
+  same broken field and confirmed nothing.
+
+**Known limit:** reference faults were found by adjudicating only ElevenLabs' sites, so other
+systems' discounts are lower bounds and the per-system table flatters ElevenLabs. Settle it
+before using this reference to judge a second lecture, not before the route decision.
 
 ---
 

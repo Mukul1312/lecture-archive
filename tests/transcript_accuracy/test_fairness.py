@@ -83,6 +83,18 @@ class SpeakerLabelTests(unittest.TestCase):
         self.assertEqual(strip_speaker_label("Purport: conditioned souls"),
                          "Purport: conditioned souls")
 
+    def test_a_second_speaker_inside_one_cue_is_removed_too(self):
+        # A cue often holds both sides of an exchange, one per line. Stripping only the
+        # first label left the second scored against every system: 6 cues, 16 words.
+        self.assertEqual(
+            strip_speaker_label("Mr Peter: Why the Holy Name?\nGour Govinda Swami: Yes."),
+            "Why the Holy Name?\nYes.")
+
+    def test_a_label_on_a_later_line_is_removed_when_the_first_line_has_none(self):
+        self.assertEqual(
+            strip_speaker_label("In this kali yuga. You do not know?\nMr Peter: No."),
+            "In this kali yuga. You do not know?\nNo.")
+
     def test_a_colon_in_the_middle_of_a_line_is_left_alone(self):
         self.assertEqual(strip_speaker_label("he said this: fear comes from the second"),
                          "he said this: fear comes from the second")

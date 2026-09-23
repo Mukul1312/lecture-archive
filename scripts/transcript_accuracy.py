@@ -52,7 +52,9 @@ _CONTRACTIONS = ((r"n[’']t\b", " not"), (r"[’']ll\b", " will"), (r"[’']ve\
                  (r"[’']d\b", " would"))
 # Words that begin a line and end in a colon without anyone being named: he reads these aloud.
 _NOT_SPEAKERS = {"translation", "purport", "synonyms", "note", "text", "verse", "chapter"}
-_SPEAKER = re.compile(r"^\s*([A-Z][\w.]*(?: [A-Z][\w.]*){0,3})\s*:\s*")
+# A cue often carries both sides of an exchange, one speaker to a line, so the label is
+# matched at the start of any line rather than only the first.
+_SPEAKER = re.compile(r"(?:(?<=\n)|\A)[ \t]*([A-Z][\w.]*(?: [A-Z][\w.]*){0,3})[ \t]*:[ \t]*")
 
 
 def expand_contractions(text: str) -> str:
@@ -63,11 +65,10 @@ def expand_contractions(text: str) -> str:
 
 
 def strip_speaker_label(text: str) -> str:
-    """Remove a leading "Name:" from a subtitle cue - a note about who speaks, not speech."""
-    match = _SPEAKER.match(text)
-    if match and match.group(1).lower() not in _NOT_SPEAKERS:
-        return text[match.end():]
-    return text
+    """Remove every "Name:" that opens a line - a note about who speaks, not speech."""
+    def drop(match: re.Match) -> str:
+        return "" if match.group(1).lower() not in _NOT_SPEAKERS else match.group(0)
+    return _SPEAKER.sub(drop, text)
 
 
 # Some recognisers write the clitic as a word of its own ("isn t", "he ll"). That is a

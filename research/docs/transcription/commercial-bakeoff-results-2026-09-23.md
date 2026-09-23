@@ -6,7 +6,9 @@
 > ("he's" for "he is") and split clitics ("isn t"). All three are now normalised on both
 > sides, every system has been re-scored, and **the ranking did not change** - but every
 > figure below improved. The tables here are the corrected ones. Anything quoting 666 or
-> 523 stops, or a 21% reduction, predates the fix.
+> 523 stops, or a 21% reduction, predates the fix. **Corrected again** after every
+> disagreement was adjudicated (`who-is-wrong-adjudication-2026-09-23.md`): two more
+> reference faults were repaired, and the figures below are the current ones.
 
 Nine transcription systems, three local and three hosted plus three combinations, measured on
 the Melbourne reference with one scorer. This is the first work in the project that reduces
@@ -29,11 +31,12 @@ which systems belong in the pipeline.
   - contractions are written out in full on both sides ("he's" and "he is" become the same
     two words), and a clitic a recogniser split off is rejoined (`flex en native` writes
     "isn t", "he ll");
-  - speaker labels are removed from the reference ("Mr Peter:" opens 41 cues and nobody
-    says it aloud);
+  - the subtitler's own writing is removed from the reference: speaker labels ("Mr Peter:"
+    opens 41 cues, and 6 more carry a second label mid-cue) and bracketed editorial text
+    ("(Laughter)", "(inaudible reply)", the verse citations "(SB 3.25.42)");
   - numbers under 1,000 are spelt out (some systems write "3 hours", the reference "three");
   - bracketed annotations are removed (`[singing]`, `[speaking Bangla]`, `[laughs]`).
-- **Reference:** 6,698 scored tokens from the steward's verified review, 6,022 English and
+- **Reference:** 6,613 scored tokens from the steward's verified review, 6,022 English and
   676 Sanskrit or names (counts differ slightly from earlier documents because of the
   normalisations above).
 
@@ -47,17 +50,17 @@ correction time; error words do not, as the eight-point findings established.
 
 | system | WER | English | Sanskrit | dropped | wrong | invented | **edit sites** | speed |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Whisper medium, skip rule off | 27.5% | 18.7% | 62.1% | 829 | 716 | 294 | 636 | 2.0x |
-| Deepgram Nova-3 `en-IN` | 33.4% | 22.9% | 89.5% | 1,488 | 493 | 259 | 643 | **517x** |
-| flex `en native` | 25.1% | 18.9% | 41.9% | 609 | 812 | 260 | 664 | 1.4x |
-| flex `bn mixed` | 27.0% | 21.4% | **38.6%** | 651 | 899 | 261 | 765 | 1.8x |
-| Sarvam Saaras v4 `verbatim` | 22.7% | 15.9% | 45.9% | 637 | 632 | 254 | 609 | 118x |
-| Sarvam `verbatim` + 50 keyterms | 23.0% | 16.2% | 43.5% | 636 | 631 | 274 | 644 | 125x |
-| **ElevenLabs Scribe v2** | 21.1% | 11.9% | 61.1% | 827 | 303 | 280 | **470** | 104x |
-| ElevenLabs + 50 keyterms | 20.5% | 11.7% | 53.1% | 738 | 325 | 311 | 487 | 114x |
-| ElevenLabs + Sarvam | **19.1%** | 10.8% | 43.3% | 510 | 434 | 332 | 513 | - |
-| ElevenLabs + flex | **19.2%** | 11.0% | 42.9% | 555 | 396 | 336 | 520 | - |
-| **All three combined** | **19.1%** | **10.7%** | 41.7% | **476** | 449 | 351 | 523 | - |
+| Whisper medium, skip rule off | 26.6% | 17.6% | 62.1% | 746 | 717 | 296 | 627 | 2.0x |
+| Deepgram Nova-3 `en-IN` | 32.8% | 21.8% | 89.5% | 1,414 | 485 | 270 | 636 | **517x** |
+| flex `en native` | 24.2% | 17.8% | 41.9% | 527 | 812 | 263 | 651 | 1.4x |
+| flex `bn mixed` | 26.2% | 20.3% | **38.6%** | 568 | 900 | 263 | 752 | 1.8x |
+| Sarvam Saaras v4 `verbatim` | 21.9% | 14.8% | 45.9% | 559 | 628 | 261 | 600 | 118x |
+| Sarvam `verbatim` + 50 keyterms | 22.1% | 15.0% | 43.5% | 556 | 629 | 279 | 634 | 125x |
+| **ElevenLabs Scribe v2** | 20.2% | 10.7% | 61.1% | 747 | 301 | 285 | **459** | 104x |
+| ElevenLabs + 50 keyterms | 19.8% | 10.5% | 53.4% | 665 | 320 | 323 | 474 | 114x |
+| ElevenLabs + Sarvam | **18.3%** | 9.6% | 43.6% | 439 | 427 | 346 | 499 | - |
+| ElevenLabs + flex | 18.5% | 9.8% | 43.2% | 482 | 391 | 348 | 506 | - |
+| **All three combined** | **18.3%** | **9.5%** | 42.0% | **405** | 442 | 365 | 509 | - |
 
 ### English errors by distance from the nearest Sanskrit word
 
@@ -65,13 +68,13 @@ The steward's code-switching finding, tested across every system:
 
 | system | next to it | 2–3 words | 4–10 words | far away |
 |---|---:|---:|---:|---:|
-| Deepgram | 62.1% | 34.7% | 21.4% | 15.2% |
-| Whisper medium | 51.4% | 26.1% | 18.1% | 12.5% |
-| flex `bn mixed` | 48.6% | 31.1% | 20.3% | 15.9% |
-| ElevenLabs | 44.3% | 21.1% | 8.7% | 6.6% |
-| Sarvam + keyterms | 42.6% | 25.8% | 14.9% | 10.8% |
-| ElevenLabs + keyterms | 41.0% | 21.4% | 9.3% | 6.4% |
-| All three combined | **35.7%** | 20.0% | 8.8% | **5.9%** |
+| Deepgram | 61.4% | 32.0% | 19.7% | 14.6% |
+| Whisper medium | 50.6% | 23.4% | 16.4% | 11.9% |
+| flex `bn mixed` | 47.4% | 28.5% | 18.8% | 15.3% |
+| ElevenLabs | 43.3% | 17.9% | 6.9% | 6.0% |
+| Sarvam + keyterms | 41.7% | 23.0% | 13.2% | 10.2% |
+| ElevenLabs + keyterms | 40.4% | 18.2% | 7.5% | 5.8% |
+| All three combined | **35.0%** | 16.8% | 7.0% | **5.3%** |
 
 **No system escapes the effect; better systems suffer less.** Every one of them is three to
 five times more likely to err beside a Sanskrit word than away from one.
@@ -80,7 +83,7 @@ five times more likely to err beside a Sanskrit word than away from one.
 
 ### 1. The first result measured in the steward's hours
 
-ElevenLabs cuts edit sites from 636 to **470, a 26% reduction**. Every earlier improvement —
+ElevenLabs cuts edit sites from 627 to **459, a 27% reduction**. Every earlier improvement —
 a bigger model, the no-speech skip rule, combining two local systems — moved error words while
 leaving the number of stops flat. Across ~3,766 lectures, ~690 stops each, roughly 2.6 million
 review decisions, a quarter is a very large number of hours.
@@ -103,12 +106,12 @@ Each system added recovers more lost speech and costs about ten more stops:
 
 | combination | dropped words | Sanskrit | edit sites |
 |---|---:|---:|---:|
-| ElevenLabs alone | 827 | 61.1% | 470 |
-| + keyterms | 738 | 53.1% | 487 |
-| + Sarvam | 510 | 43.3% | 513 |
-| + flex as well | **476** | **41.7%** | 523 |
+| ElevenLabs alone | 747 | 61.1% | 459 |
+| + keyterms | 665 | 53.4% | 474 |
+| + Sarvam | 439 | 43.6% | 499 |
+| + flex as well | **405** | **42.0%** | 509 |
 
-Even the three-way combination still makes **18% fewer stops than Whisper alone**. The method
+Even the three-way combination still makes **19% fewer stops than Whisper alone**. The method
 is deterministic: keep the base system's words, and insert the other system's words only where
 the base wrote nothing. It cannot hallucinate, and it is the baseline the research said any
 language model must beat before it earns a place.
@@ -151,12 +154,12 @@ Per 3,450 audio hours, on the unverified 55-minute average:
 
 | route | price per hour | corpus | edit sites per lecture |
 |---|---|---|---:|
-| Whisper on this laptop | free (~70 days of running) | — | 636 |
-| **ElevenLabs Scribe v2** | $0.22 | **~$760** | 470 |
-| ElevenLabs + keyterms | $0.27 | ~$910 | 487 |
-| Sarvam Saaras v4 | ₹30 (~$0.34) | ~$1,180 | 644 |
-| ElevenLabs + Sarvam, both | — | ~$2,000 | 513 |
-| All three (flex runs locally) | — | ~$2,000 + ~9–15 laptop-days | 523 |
+| Whisper on this laptop | free (~70 days of running) | — | 627 |
+| **ElevenLabs Scribe v2** | $0.22 | **~$760** | 459 |
+| ElevenLabs + keyterms | $0.27 | ~$910 | 474 |
+| Sarvam Saaras v4 | ₹30 (~$0.34) | ~$1,180 | 634 |
+| ElevenLabs + Sarvam, both | — | ~$2,000 | 499 |
+| All three (flex runs locally) | — | ~$2,000 + ~9–15 laptop-days | 509 |
 
 Against roughly 2.6 million review decisions, a quarter fewer stops is worth far more than $760.
 
