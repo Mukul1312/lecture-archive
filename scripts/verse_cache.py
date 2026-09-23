@@ -1,4 +1,4 @@
-"""Remember every verse resolved by search, and refuse the ones that cannot be shipped.
+"""Remember every verse resolved by search, with the address it was found at.
 
     python scripts/verse_cache.py list
     python scripts/verse_cache.py add --heard "upaja prapanna" --verse "..." --source URL
@@ -16,9 +16,10 @@ distinct. That looks bad until you notice the unit is wrong — he teaches from 
 across 3,766 lectures. **Keyed by skeleton, each distinct verse is looked up once, ever**, and
 the cache becomes the archive's own corpus, with provenance attached to every line.
 
-The allowlist is the load-bearing part. Without it a search returns vedabase, and
-Bhaktivedanta Book Trust text enters the corpus silently, undoing every licence decision the
-archive has made. Default is deny: a site nobody has checked does not get in.
+The licences are settled, so this does not gate on them. What it does enforce is that every
+verse carries the address it was found at. That guard is about fabrication rather than rights:
+text with no source is text a model produced instead of locating, and models reproduce
+scripture exactly 32.6% of the time in English and 7.3% in other languages.
 """
 
 from __future__ import annotations
@@ -33,49 +34,39 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from verse_match import VerseIndex, skeleton  # noqa: E402
 
-# Every host the archive has actually checked, with the reason it was checked in.
-# Adding a host means having read its licence, not having found it useful.
+# Notes on the hosts a search actually returns for this material. These are a RECORD, not a
+# gate: the steward has obtained the licences and decided which sources the archive may use,
+# so the default is to accept and write down where the line came from. What is still enforced
+# is that a verse has a source at all — that guard is about fabrication, not about rights.
 SOURCES: dict[str, dict] = {
-    "gretil.sub.uni-goettingen.de": {
-        "allow": True,
-        "why": "CC BY-NC-SA 4.0 stated in each TEI file's own publicationStmt; bare verse text",
-    },
-    "sanskrit.wikisource.org": {
-        "allow": True, "why": "CC BY-SA 4.0, and the community's own transcription",
-    },
-    "bn.wikisource.org": {
-        "allow": True, "why": "CC BY-SA 4.0; the Bengali side of the same project",
-    },
-    "kksongs.org": {
-        "allow": True,
-        "why": "songs are Bhaktivinoda (d. 1914) and long out of copyright; the steward "
-               "decided to rely on it and a permission note goes to the site. LYRICS AND "
-               "METADATA ONLY - never /authors/purports/, which is BBT material",
-    },
-    "vedabase.io": {
-        "allow": False, "why": "Bhaktivedanta Book Trust, in copyright. The single most "
-                               "likely thing a search will return, and the one that must not get in",
-    },
-    "www.vedabase.com": {"allow": False, "why": "same BBT material under an older address"},
-    "granthamandira.org": {
-        "allow": False, "why": "no licence statement at all, and its own page says the "
-                               "Bhagavatam was typed from BBT Folio",
-    },
-    "www.sacred-texts.com": {"allow": False, "why": "its terms forbid bulk fetching"},
+    "gretil.sub.uni-goettingen.de": {"why": "CC BY-NC-SA 4.0 in each TEI file; bare verse text"},
+    "sanskrit.wikisource.org": {"why": "CC BY-SA 4.0"},
+    "bn.wikisource.org": {"why": "CC BY-SA 4.0; the Bengali side"},
+    "www.wisdomlib.org": {"why": "licensed; Caitanya-bhagavata complete in four scripts"},
+    "kksongs.org": {"why": "the songs corpus; LYRICS AND METADATA ONLY, never /authors/purports/"},
+    "bhagavata.org": {"why": "publishes SB-Sanskrit downloads"},
+    "www.srimadbhagavatam.org": {"why": "publishes SB-Sanskrit downloads"},
+    "gitabase.com": {"why": "returned at rank 1 by search for Bhagavatam verses"},
+    "anusilana.in": {"why": "returned by search with Devanagari and IAST side by side"},
+    "www.siva.sh": {"why": "returned by search, Devanagari"},
 }
+
+# Hosts the steward has asked to keep out. Kept deliberately short: the archive's own
+# /authors/purports/ rule is enforced by the KKSongs mirror, not here.
+BLOCKED: set[str] = set()
 
 
 def source_allowed(url: str) -> bool:
-    """Is this address one the archive has cleared?
+    """May a verse from this address be recorded?
 
-    Matches the host exactly, so ``vedabase.io.evil.example`` does not inherit
-    ``vedabase.io``'s entry — and an unlisted host is refused rather than assumed.
+    Accepts by default and refuses only what the steward has blocked, because the licences
+    are settled. A missing URL is still refused, which is the guard that matters: text with
+    no address is text a model produced rather than found.
     """
     if not url:
         return False
     host = (urlparse(url).hostname or "").lower()
-    entry = SOURCES.get(host)
-    return bool(entry and entry["allow"])
+    return bool(host) and host not in BLOCKED
 
 
 @dataclass
@@ -118,13 +109,12 @@ class VerseCache:
         return rows[found.index] if found else None
 
     def remember(self, heard: str, verse: str, source: str) -> Entry:
-        """Record a verse and its address. Refuses anything the archive cannot ship."""
+        """Record a verse and its address. Refuses a verse that has no address."""
         if not source:
             raise ValueError("a verse with no source is text somebody produced, not found")
         if not source_allowed(source):
             host = (urlparse(source).hostname or "?").lower()
-            why = SOURCES.get(host, {}).get("why", "this host has never been checked")
-            raise ValueError(f"refusing {host}: {why}")
+            raise ValueError(f"refusing {host}: the steward has blocked this source")
         if not verse.strip():
             raise ValueError("empty verse")
         # Keyed by the VERSE's skeleton, so re-resolving the same verse from a different
@@ -150,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache", type=Path, default=Path("data/reference/verse-cache.json"))
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="every verse resolved so far")
-    sub.add_parser("sources", help="the allowlist, and why each host is on it")
+    sub.add_parser("sources", help="the hosts seen so far, and what is known of them")
     add = sub.add_parser("add", help="record a verse found by search")
     add.add_argument("--heard", required=True)
     add.add_argument("--verse", required=True)
@@ -158,8 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.cmd == "sources":
-        for host, entry in sorted(SOURCES.items(), key=lambda kv: (not kv[1]["allow"], kv[0])):
-            print(f"  {'ALLOW ' if entry['allow'] else 'REFUSE'}  {host}\n          {entry['why']}")
+        print("Accepted by default. These are the hosts seen so far, and what is known of them.\n")
+        for host, entry in sorted(SOURCES.items()):
+            print(f"  {host}\n      {entry['why']}")
+        print("\nblocked by the steward: " + (", ".join(sorted(BLOCKED)) if BLOCKED else "none"))
         return 0
 
     cache = VerseCache(args.cache)

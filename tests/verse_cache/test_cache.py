@@ -1,9 +1,11 @@
-"""The cache that becomes the corpus, and the allowlist that keeps it shippable.
+"""The cache that becomes the corpus, and the provenance it insists on.
 
-Verses are resolved by search once and remembered forever, keyed by the same phonetic
-skeleton the matcher uses, so a different garbling of the same verse finds the same entry.
-The allowlist is the load-bearing part: without it a search can return vedabase, and
-Bhaktivedanta Book Trust text would enter the archive's corpus silently.
+Verses are resolved by search once and remembered forever. Lookup is fuzzy, through the
+matcher's own index, because no two recognisers garble a verse the same way.
+
+The licences are settled, so sources are recorded rather than gated. What is still enforced
+is that a verse has an address at all: text with no source is text a model produced instead
+of locating, and models reproduce scripture exactly 32.6% of the time in English.
 """
 
 import json
@@ -11,32 +13,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.verse_cache import SOURCES, VerseCache, source_allowed
+from scripts.verse_cache import BLOCKED, SOURCES, VerseCache, source_allowed
 
 VERSE = "prapanno 'smy aṅghri-mūlaṁ te prapannābhaya-daṁ hare"
 HEARD = "upaja prapanna asmiyangri malam ti prapanna bhaya dum hari"
 OTHER_GARBLING = "upaya prapanna asamiyam ghrmalanti prapanna bhayadam hari"
 
 
-class AllowlistTests(unittest.TestCase):
-    def test_a_licensed_source_is_allowed(self):
+class SourceTests(unittest.TestCase):
+    def test_a_known_source_is_accepted(self):
         self.assertTrue(source_allowed("https://gretil.sub.uni-goettingen.de/gretil/corpustei/x.xml"))
 
-    def test_vedabase_is_refused_because_it_is_bbt(self):
-        self.assertFalse(source_allowed("https://vedabase.io/en/library/sb/3/9/10/"))
+    def test_an_unlisted_source_is_accepted_too(self):
+        # The licences are settled; this is a record, not a gate.
+        self.assertTrue(source_allowed("https://www.wisdomlib.org/hinduism/book/x"))
 
-    def test_an_unknown_site_is_refused_by_default(self):
-        # Default deny: a source nobody has checked the licence of does not get in.
-        self.assertFalse(source_allowed("https://some-random-blog.example/verse"))
+    def test_a_source_the_steward_blocked_is_refused(self):
+        BLOCKED.add("blocked.example")
+        try:
+            self.assertFalse(source_allowed("https://blocked.example/verse"))
+        finally:
+            BLOCKED.discard("blocked.example")
 
-    def test_the_subdomain_cannot_be_used_to_sneak_past(self):
-        self.assertFalse(source_allowed("https://vedabase.io.evil.example/x"))
+    def test_something_that_is_not_a_url_is_refused(self):
+        self.assertFalse(source_allowed("I remember this verse"))
 
-    def test_every_listed_source_carries_a_reason(self):
+    def test_every_noted_source_says_what_is_known_of_it(self):
         for host, entry in SOURCES.items():
             with self.subTest(host=host):
-                self.assertTrue(entry.get("why"), f"{host} has no stated reason")
-                self.assertIn(entry.get("allow"), (True, False))
+                self.assertTrue(entry.get("why"), f"{host} has no note")
 
 
 class CacheTests(unittest.TestCase):
@@ -60,9 +65,13 @@ class CacheTests(unittest.TestCase):
     def test_a_verse_never_seen_is_a_miss(self):
         self.assertIsNone(self.cache.recall("do you understand mr peter"))
 
-    def test_a_forbidden_source_is_refused_and_nothing_is_stored(self):
-        with self.assertRaises(ValueError):
-            self.cache.remember(HEARD, VERSE, "https://vedabase.io/en/library/sb/3/9/10/")
+    def test_a_blocked_source_is_refused_and_nothing_is_stored(self):
+        BLOCKED.add("blocked.example")
+        try:
+            with self.assertRaises(ValueError):
+                self.cache.remember(HEARD, VERSE, "https://blocked.example/x")
+        finally:
+            BLOCKED.discard("blocked.example")
         self.assertIsNone(self.cache.recall(HEARD))
 
     def test_a_verse_with_no_source_is_refused(self):
