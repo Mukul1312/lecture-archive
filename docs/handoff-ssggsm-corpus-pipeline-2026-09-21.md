@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Build per-word selection across systems** (10.30): the ceiling is 93.1% against the best single system's 85.1%, and current fusion only fills silence rather than replacing wrong words. Then verse/song retrieval for the 458 words nobody gets. Also: decide the `data/reference/` gitignore question, recompute 10.29's shared-failure figure, verify word timestamps, and test on a second lecture |
+| **Next action** | **Finish the KKSongs mirror and re-measure verse retrieval at real corpus size** (10.31). Then flex token scores, the wisdomlib/GRETIL pulls, and forced alignment - which is still the structural gap, because flex emits no timestamps and read-along alignment is the product |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -964,6 +964,116 @@ excludes wholesale for a licensing reason that applies to the archive.org audio 
 subtitles, not to our own code. Twenty-plus scripts are affected, including the verifiers
 that check published figures. The steward has been asked twice and has not yet decided; ask
 once and act on the answer.
+
+### 10.31 The pipeline, built and measured (2026-09-23)
+
+**Read `research/docs/transcription/methodology-2026-09-23.md` first** - the five stages and
+the honest list of what is missing. Everything below is code in `scripts/` (VERSIONED, unlike
+the analysis tools under the gitignored `data/reference/`), with tests.
+
+| what | where | tests |
+|---|---|---|
+| per-word selection between recognisers | `scripts/transcript_select.py` | 19 |
+| verse retrieval from a garbled hypothesis | `scripts/verse_match.py` | 11 |
+| the cache that becomes the corpus | `scripts/verse_cache.py` | 13 |
+| the KKSongs song mirror | `scripts/kksongs_mirror.py` | 10 |
+
+#### Stage 2, the English spine: confidence beat voting
+
+**Plain ROVER voting LOST.** Against its own pivot it fixed 33 words and broke 75, net -42.
+By setting: plain English net ZERO, mixed Sanskrit -30, verse -12. **A correction to 10.30:**
+the 92.4% figure is a ceiling requiring an ORACLE that knows which system is right. Voting
+has no such signal, so it captures none of the headroom; counting "two of three are right" as
+recoverable was misleading, because those are mostly words the pivot already had.
+
+**Confidence is the missing signal, and Whisper already emits it.** Its per-word probability
+sat unused in the decode output. Checked before building on it: lowest-confidence quarter
+**49.6% correct**, highest quarter **98.5%**. Using it to overrule the best single local
+system (`overrule_where_confident`, threshold 0.50):
+
+| | WER | English | Sanskrit |
+|---|---:|---:|---:|
+| **confidence-gated** | **23.7%** | **15.1%** | 48.4% |
+| flex-en-native alone | 24.2% | 17.8% | 41.9% |
+| gap-filling fusion | 24.7% | 17.1% | 41.9% |
+
+Best local English measured, by two points. Threshold swept with the lecture split in half;
+the gain holds on the unseen half (77.6% -> 78.7%) but smaller than on the fitted half.
+
+**Deepgram is OUT as the second confidence source** - it would cost **$904** across the corpus
+against **$759** for ElevenLabs as an outright better transcriber, and a confidence signal
+runs on every lecture forever. The local replacements: **flex decodes through HuggingFace
+`generate()`, so `output_scores=True` yields per-token log-probabilities** for a small wrapper
+change and nothing per lecture (NOT YET BUILT - this is the next slice); and the forced
+aligner needed anyway for timestamps scores every word uniformly.
+
+#### Stage 3, the quotations: retrieval works, and refuses
+
+`verse_match.py` matches a garbled hypothesis against printed verses on a phonetic skeleton.
+Measured against the 59 verse lines of the verified reference, three local recognisers:
+
+| min_margin | attempted | wrong | precision | recall |
+|---:|---:|---:|---:|---:|
+| 0.05 | 45 | 7 | 84% | 64% |
+| 0.15 | 36 | 1 | 97% | 59% |
+| **0.25 (default)** | 34 | **0** | **100%** | **58%** |
+
+**Dropping vowels from the skeleton is what made never-wrong affordable** - before it, 100%
+precision cost all but 47% recall. Measured: after folding, "a" alone was 27% of all
+characters and "i" another 14%, two letters carrying 41% of the signal while discriminating
+nothing. Consonants-only raised the mean margin 0.245 -> 0.286. Rare-letter signatures won
+recall by 3 points but are not separable from noise at 59 verses.
+
+**The default is the never-wrong end**, because a verse of scripture wrongly attributed to him
+is not worth three extra verses recovered.
+
+#### The corpus: search builds it, the cache IS it
+
+The steward's insight, and it reframed the design: **an LLM that SEARCHES is not an LLM that
+PRODUCES**, and search reaches what no download can - Caitanya-caritamrta and
+Caitanya-bhagavata have no machine-readable text anywhere. The cost objection that killed
+Deepgram does not apply because this is not per-lecture: 59 verse occurrences but 53 distinct
+in one lecture, yet he teaches a fixed canon across 3,766 lectures, so **each distinct verse
+is resolved once ever** and the marginal cost falls to zero.
+
+**Sources are a RECORD, not a gate.** The steward has the licences and asked not to gate on
+them. What is still enforced is that **a verse with no source URL is refused** - that guard is
+about fabrication, not rights: models reproduce scripture exactly 32.6% of the time in English
+and 7.3% in other languages.
+
+**Measured with the real Exa key: search bridges MILD garbling and fails HEAVY.**
+`bhayam dvitiya vinivesatah syat` -> found at rank 1. `upaja prapanna asmiyangri malam ti` ->
+missed, returned three different "prapanna" texts. `ahani aprutartakarona nisini soyana` ->
+missed badly, returned Sinhala pop music. So search is a fallback that works about half the
+time, and downloadable text (GRETIL, wisdomlib) is worth more than it first appeared.
+
+#### KKSongs mirror
+
+`kksongs_mirror.py index|fetch|corpus`. **1,437 song addresses collected**; the fetch was
+running when this was written (~40 min at 0.35 s/page, resumable, `data/reference/kksongs/`).
+Plain HTTP - the pages are static Word-export HTML, so no scraping service and no credits.
+Only the LYRICS section is taken; `/authors/purports/` is refused outright as BBT material.
+
+Two parsing traps the tests exist to hold: the pages wrap long lines with **real newlines
+inside the text**, so line structure lives in the tags (getting it backwards halved every
+lyric line); and diacritics arrive as **combining** marks via numeric entities, so the parser
+composes to NFC.
+
+#### What to do next, in order
+
+1. **Finish the KKSongs fetch**, run `corpus`, and **re-measure retrieval against thousands of
+   lines rather than 59**. That is the number that says whether this design survives. Expect
+   recall to fall - the Sikh Kirtan analogue reports Recall@1 of 21.5-31.9% against 141k lines
+   - and precision to hold, since it comes from the margin rule.
+2. **Extract flex's token scores** (`output_scores=True`), so two of three local systems carry
+   confidence rather than one.
+3. **Pull wisdomlib's Caitanya-bhagavata** (complete, four scripts) and GRETIL's Bhagavatam
+   (14,067 verses, CC BY-NC-SA, but 584 of 844 long-metre verses duplicate a half-verse -
+   regression-test the dedup on SB 3.9.10, which is one of our own citations).
+4. **Forced alignment** - still the structural gap. flex emits NO timestamps, so a transcript
+   assembled across three systems has timing for a minority of its words, and read-along
+   alignment IS the product.
+5. **A second verified lecture.** Everything still rests on one.
 
 ---
 
