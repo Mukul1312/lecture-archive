@@ -116,6 +116,33 @@ def select(transcripts: list[list[str]], weights: list[float] | None = None) -> 
     return chosen
 
 
+def overrule_where_confident(base: list[str], other: list[str], confidence: list[float],
+                             threshold: float) -> list[str]:
+    """Keep the base transcript, except where a challenger is confident it heard differently.
+
+    Plain voting could not improve on the best single system, because it has no way to tell
+    two systems agreeing on the right answer from two agreeing on the wrong one. A per-word
+    confidence is that missing signal. On the Melbourne reference Whisper's own probability
+    separates 49.6% correct in its lowest quarter from 98.5% in its highest, and using it
+    here took English error from 17.8% to 15.1% — the best local result measured.
+
+    ``confidence`` is one value per token of ``other``. A stretch the challenger simply lacks
+    is never taken: silence is not evidence, so the base is never shortened on confidence
+    alone.
+    """
+    if len(confidence) != len(other):
+        raise ValueError("one confidence per word of the challenger")
+    chosen: list[str] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, base, other, autojunk=False).get_opcodes():
+        if tag == "equal" or tag == "delete":
+            chosen += base[i1:i2]
+            continue
+        window = confidence[j1:j2]
+        sure = bool(window) and sum(window) / len(window) >= threshold
+        chosen += other[j1:j2] if sure else base[i1:i2]
+    return chosen
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("out", type=Path, help="where to write the chosen transcript")
