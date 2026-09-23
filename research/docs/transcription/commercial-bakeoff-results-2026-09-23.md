@@ -1,7 +1,7 @@
 # The nine-system bake-off on Gurudeva's own lecture (2026-09-23)
 
 > **Corrected the same day.** Reading the errors word by word
-> (`docs/error-text-analysis-2026-09-23.md`) found that the scoring was charging the
+> (`error-text-analysis-2026-09-23.md`) found that the scoring was charging the
 > recognisers for three things they had not done: unspoken speaker labels, contractions
 > ("he's" for "he is") and split clitics ("isn t"). All three are now normalised on both
 > sides, every system has been re-scored, and **the ranking did not change** - but every
@@ -191,7 +191,7 @@ laptop time.
 
 ## Where the remaining mistakes are
 
-Printed and classified in **`docs/error-text-analysis-2026-09-23.md`**: more than half of
+Printed and classified in **`error-text-analysis-2026-09-23.md`**: more than half of
 every remaining stop is one word swapped for one word; three-fifths of the labour is plain
 English with no Sanskrit near it; ten stretches totalling 184 words (Bengali songs and
 chanted verse) are lost by every system and are recoverable only by retrieval from print;

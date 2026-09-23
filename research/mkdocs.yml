@@ -1,0 +1,96 @@
+site_name: Lecture Archive Research
+site_description: >-
+  Measured research behind the archive's transcription, Odia and audio-enhancement work.
+  Each topic states its answer first, then the evidence behind it.
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tooltips
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Transcription:
+      - transcription/index.md
+      - Measured findings:
+          - What the eight purposes measured: transcription/melbourne-reference-eight-point-findings-2026-09-22.md
+          - The nine-system bake-off: transcription/commercial-bakeoff-results-2026-09-23.md
+          - Reading the mistakes, not the rates: transcription/error-text-analysis-2026-09-23.md
+      - Surveys:
+          - "Beyond Whisper: open ASR models": transcription/open-asr-model-survey-2026-09-22.md
+          - Commercial speech-to-text services: transcription/commercial-asr-survey-2026-09-22.md
+          - The steward's Indic links, judged: transcription/indic-links-survey-2026-09-22.md
+          - What language models can and cannot do: transcription/llm-roles-for-transcription-2026-09-22.md
+      - Ground truth:
+          - The 1985 transcripts are not reproducible: transcription/ggsm-transcript-reproducibility-2026-08-27.md
+  - Odia:
+      - odia/index.md
+      - Odia ASR and intelligibility metrics: odia/odia-asr-and-intelligibility-metrics-2026-07-31.md
+      - Odia to Odia + English, system design: odia/odia-dual-output-system-design-2026-08-28.md
+      - Measured findings and corrections: odia/odia-design-measured-corrections-2026-08-28.md
+      - Cost estimate and bid strategy: odia/odia-transcription-bid-estimate-2026-07-25.md
+  - Audio enhancement:
+      - enhancement/index.md
+      - Enhancement pipeline research: enhancement/enhance-pipeline-research-2026-07-31.md
+      - How to analyse a recording: enhancement/enhance-analysis-methodology-research-2026-07-31.md
+      - Beyond DeepFilterNet, generative restoration: enhancement/generative-restoration-research-2026-08-02.md
+      - How much separation DFN3 has available: enhancement/dfn3-multiframe-ceiling-measurements-2026-08-31.md
+      - Mel-spectral processing and voice anatomy: enhancement/mel-spectral-and-voice-anatomy-research-2026-08-31.md
+      - Noisy-source data preparation: enhancement/noisy-source-dataprep-research.md
+      - Clip segmentation policy: enhancement/clip-segmentation-policy.md
+  - Voice cloning (history):
+      - voice-cloning/index.md
+      - The ML concepts behind the clone: voice-cloning/ggs-clone-concepts-research.md
+      - Project findings and state: voice-cloning/project-findings.md
+      - Identity verification and robustness: voice-cloning/identity-verification.md
+      - The voice dissimilarity gate: voice-cloning/voice-dissimilarity-gate-2026-07-20.md
+      - LoRA fine-tuning research: voice-cloning/lora-finetune-research-2026-07-07.md
+      - VoxCPM2 markup and prosody control: voice-cloning/voxcpm2-markup-research-2026-07-08.md
+      - Prosody for English to Hindi dubbing: voice-cloning/prosody-dubbing-research-2026-07-08.md
+      - The expressiveness experiment: voice-cloning/narration-expressiveness-experiment-2026-07-09.md
+      - Narration cost analysis: voice-cloning/narration-cost-analysis-2026-07-20.md
+  - Hindi clone (history):
+      - hindi/index.md
+      - Plan and state: hindi/hindi-clone-plan.md
+      - State handoff, 2026-07-06: hindi/hindi-clone-state-2026-07-06.md
+      - Picking the Hindi transcriber: hindi/hindi-asr-model-research.md
+      - Clean-Hindi extraction pipeline: hindi/hindi-extraction-pipeline-research.md
+      - Reviewing the Hindi transcripts: hindi/transcription-review-2026-07-24.md

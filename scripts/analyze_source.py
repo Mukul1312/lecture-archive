@@ -9,7 +9,7 @@ peak + % clipped samples, a rough noise floor and SNR (p90-p10 of frame energy),
 
 This is only the ACOUSTIC half. The CONTENT half — speaker diarization (GGS-vs-questioner share) and
 ASR language-ID (how much is actually Hindi vs Odia/Sanskrit/English/chanting) — needs models on a pod;
-see docs/hindi-clone-plan.md. Run this first: it is free and it sizes the trainable pool.
+see research/docs/hindi/hindi-clone-plan.md. Run this first: it is free and it sizes the trainable pool.
 
 RUN:  python scripts/analyze_source.py                    # all data/hi/lectures/*/audio.mp3
       python scripts/analyze_source.py path/to/audio.mp3 ...

@@ -39,7 +39,7 @@ import librosa
 ROOT = Path(__file__).resolve().parent.parent
 EPS = 1e-8
 
-# ---- clip-shape targets (from docs/clip-segmentation-policy.md + the human export) ----
+# ---- clip-shape targets (from research/docs/enhancement/clip-segmentation-policy.md + the human export) ----
 MIN_SEC, MAX_SEC, TARGET_SEC = 5.0, 15.0, 10.5
 MAX_INTRA_GAP = 2.2        # a clip may hold a pause up to this; bigger = hard break (verse/skip/alignment loss)
 SNAP_WIN = 0.50            # search radius when snapping a cut to measured silence

@@ -2,7 +2,7 @@
 enhance_diagnose.py — Stage 0 for the enhancement pipeline: characterise a recording's DEFECTS
 before any tool is chosen.
 
-Implements the diagnostic checklist from docs/enhance-analysis-methodology-research-2026-07-31.md,
+Implements the diagnostic checklist from research/docs/enhancement/enhance-analysis-methodology-research-2026-07-31.md,
 in the industry "deepest damage first" order (iZotope RX convention):
 
   1 INTEGRITY   clipped samples + flat-top runs, DC offset, dropouts   <- deepest; later stages magnify it

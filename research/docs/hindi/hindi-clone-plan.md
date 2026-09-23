@@ -1,8 +1,8 @@
 # GGSM Hindi Voice-Clone — Plan & State
 
 Durable plan for extending the finished **English** clone to a **Hindi** clone of Gour Govinda Swami
-Mahārāja. Companion to [project-findings.md](project-findings.md) (English) and
-[identity-verification.md](identity-verification.md). Seva; license unconstrained.
+Mahārāja. Companion to [project-findings.md](../voice-cloning/project-findings.md) (English) and
+[identity-verification.md](../voice-cloning/identity-verification.md). Seva; license unconstrained.
 
 Created: 2026-07-01. Research-verified (primary sources cited inline).
 **Status (updated 2026-07-02):** **VoxCPM2-Hindi is a GO.** Content pass run (he's ~solo in all 4 lectures;
@@ -37,7 +37,7 @@ Folder: `audio.iskcondesiretree.com/.../His_Holiness_Gour_Govinda_Swami/Hindi_Le
 - **4 MP3s, flat, no transcripts.** `GGM_Hindi_Lecture-01…04.mp3`, ~107 MB total.
 - Static PHP file-index (Andromeda 1.9.3.6) — plain server-rendered HTML, **stable path-based URLs**, no
   auth, `Accept-Ranges: bytes` (resumable), `robots.txt` empty. **A stdlib HTTP scraper suffices** — no
-  firecrawl/headless. → [scripts/fetch_idt.py](../scripts/fetch_idt.py).
+  firecrawl/headless. → scripts/fetch_idt.py (`scripts/fetch_idt.py`).
 - **Measured (fetched 2026-07-01, `fetch_idt.py` → `data/hi/lectures/`):** **4.47 h** — L01 78.8min, L02
   49.5min, L03 71.6min, L04 68.3min; all **56 kbps MP3, ~4 kHz effective bandwidth** (old narrowband masters).
   Closer to the user's "~5 h" than first estimated. Either way it's **enough** — the English clone trained on
@@ -169,7 +169,7 @@ New pods were capacity-limited, so tomorrow may need a fresh pod (re-`pod_setup.
 
 ## 7. Open questions / caveats
 
-- **Devanagari vs romanized** frontend — untested; the probe answers it ([finetune-plan.md](../finetune-plan.md)
+- **Devanagari vs romanized** frontend — untested; the probe answers it (finetune-plan.md (`docs/finetune-plan.md`)
   flags the tokenizer as zh+en-centric).
 - **Base-model Hindi ceiling** — WER 19.7 + issue #288 mean base artifacts could cap quality even after
   LoRA. Audition (probe) before committing.
@@ -184,12 +184,12 @@ New pods were capacity-limited, so tomorrow may need a fresh pod (re-`pod_setup.
 
 | Script | Purpose |
 |---|---|
-| [scripts/fetch_idt.py](../scripts/fetch_idt.py) | Stdlib scraper: enumerate the ISKCON DT Hindi folder → download 4 mp3s into `data/hi/lectures/` |
-| [scripts/analyze_source.py](../scripts/analyze_source.py) | Acoustic-quality triage (duration/speech%/loudness/clip%/SNR/effective-bandwidth), local CPU |
-| [cloud/content_triage.py](../cloud/content_triage.py) | Content pass / viability gate: diarization + ECAPA cluster-pick + Whisper language-ID → GGS-min & Hindi-min (trainable pool) |
-| [cloud/extract_hindi.py](../cloud/extract_hindi.py) | Cut confident-Hindi (hi+ur) spans → 210 sentence clips + Whisper-draft transcripts (`clips_hi/` + `train_hi.jsonl`) |
-| [scripts/build_hi_review.py](../scripts/build_hi_review.py) | Local transcript-review gallery: play + edit Devanagari + drop + ⭐ref, autosave, download corrected/ref JSONL |
-| [cloud/probe_hi.py](../cloud/probe_hi.py) | De-risk probe (single ref): base VoxCPM2 Hindi audition (Devanagari/romanized × hifi/plain × seeds) |
-| [cloud/probe_hi_refs.py](../cloud/probe_hi_refs.py) | Multi-ref VoxCPM2 Hindi probe from `probe_refs.jsonl` (refs × sentences × seeds) — the GO/no-go |
-| [scripts/build_probe_gallery.py](../scripts/build_probe_gallery.py) | Audition page for the probe takes (real ref vs generated, per reference) |
-| [cloud/score_probe_refs.py](../cloud/score_probe_refs.py) | Reference scorer: ECAPA cos-to-centroid representativeness + per-ref output identity |
+| scripts/fetch_idt.py (`scripts/fetch_idt.py`) | Stdlib scraper: enumerate the ISKCON DT Hindi folder → download 4 mp3s into `data/hi/lectures/` |
+| scripts/analyze_source.py (`scripts/analyze_source.py`) | Acoustic-quality triage (duration/speech%/loudness/clip%/SNR/effective-bandwidth), local CPU |
+| cloud/content_triage.py (`cloud/content_triage.py`) | Content pass / viability gate: diarization + ECAPA cluster-pick + Whisper language-ID → GGS-min & Hindi-min (trainable pool) |
+| cloud/extract_hindi.py (`cloud/extract_hindi.py`) | Cut confident-Hindi (hi+ur) spans → 210 sentence clips + Whisper-draft transcripts (`clips_hi/` + `train_hi.jsonl`) |
+| scripts/build_hi_review.py (`scripts/build_hi_review.py`) | Local transcript-review gallery: play + edit Devanagari + drop + ⭐ref, autosave, download corrected/ref JSONL |
+| cloud/probe_hi.py (`cloud/probe_hi.py`) | De-risk probe (single ref): base VoxCPM2 Hindi audition (Devanagari/romanized × hifi/plain × seeds) |
+| cloud/probe_hi_refs.py (`cloud/probe_hi_refs.py`) | Multi-ref VoxCPM2 Hindi probe from `probe_refs.jsonl` (refs × sentences × seeds) — the GO/no-go |
+| scripts/build_probe_gallery.py (`scripts/build_probe_gallery.py`) | Audition page for the probe takes (real ref vs generated, per reference) |
+| cloud/score_probe_refs.py (`cloud/score_probe_refs.py`) | Reference scorer: ECAPA cos-to-centroid representativeness + per-ref output identity |

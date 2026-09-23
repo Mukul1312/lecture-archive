@@ -86,7 +86,7 @@ Grouped as `AMPERE_16` (A4000, A4500, RTX 4000, RTX 2000), `AMPERE_24` (L4, A500
 ### Project's own historical figure
 
 RunPod A5000 at **~$0.27/hour** plus **~$2.80/month** for a 40 GB network volume in EU-SE-1
-(`docs/project-findings.md` section 6). Almost certainly Community Cloud pricing.
+(`research/docs/voice-cloning/project-findings.md` section 6). Almost certainly Community Cloud pricing.
 
 ---
 
@@ -216,13 +216,13 @@ Source: this repository. These are measurements, not estimates.
 | `.worktrees/` | 41 GB | `du -sh` |
 | Per-job working sets | Rupanuga 19 GB, Haladhara 12 GB, SPAD 8.1 GB | `du -sh` |
 | Deliverable sizes | FLAC 204,757,230 B; MP3 65,992,365 B | `ls -la` |
-| RunPod baseline | $0.27/h A5000 + $2.80/mo 40 GB (EU-SE-1) | `docs/project-findings.md` s6 |
+| RunPod baseline | $0.27/h A5000 + $2.80/mo 40 GB (EU-SE-1) | `research/docs/voice-cloning/project-findings.md` s6 |
 
 ---
 
 ## 9. Odia bid figures
 
-Source: `docs/odia-transcription-bid-estimate-2026-07-25.md` (FX 1 USD = 96.72 INR).
+Source: `research/docs/odia/odia-transcription-bid-estimate-2026-07-25.md` (FX 1 USD = 96.72 INR).
 
 | Figure | Value |
 |---|---|

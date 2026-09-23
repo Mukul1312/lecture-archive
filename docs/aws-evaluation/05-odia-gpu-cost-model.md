@@ -5,7 +5,7 @@ bid. The spread between cheapest and most expensive provider is roughly **$60–
 engagement** — under 0.1%.
 
 Source for all corpus and bid figures:
-`docs/odia-transcription-bid-estimate-2026-07-25.md`.
+`research/docs/odia/odia-transcription-bid-estimate-2026-07-25.md`.
 
 ---
 

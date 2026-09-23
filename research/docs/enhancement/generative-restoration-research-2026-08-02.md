@@ -10,7 +10,7 @@ the suppression-vs-damage trade-off was near-linear (r = −0.95) and **nothing 
 dangerous.** The failure mode they introduce is invisible to every instrument we have and to the one
 human we have.
 
-**Related:** [enhance-analysis-methodology-research-2026-07-31.md](enhance-analysis-methodology-research-2026-07-31.md) · [odia-asr-and-intelligibility-metrics-2026-07-31.md](odia-asr-and-intelligibility-metrics-2026-07-31.md)
+**Related:** [enhance-analysis-methodology-research-2026-07-31.md](enhance-analysis-methodology-research-2026-07-31.md) · [odia-asr-and-intelligibility-metrics-2026-07-31.md](../odia/odia-asr-and-intelligibility-metrics-2026-07-31.md)
 
 ---
 

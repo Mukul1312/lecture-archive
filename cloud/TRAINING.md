@@ -1,7 +1,7 @@
 # GGS voice clone — VoxCPM2 LoRA training runbook
 
 Everything is prepped. This turns your 140 hand-reviewed clips into a fine-tuned model you can hear.
-All numbers are from VoxCPM's own fine-tuning guide (cited in [docs/clip-segmentation-policy.md](../docs/clip-segmentation-policy.md)).
+All numbers are from VoxCPM's own fine-tuning guide (cited in [research/docs/enhancement/clip-segmentation-policy.md](../research/docs/enhancement/clip-segmentation-policy.md)).
 
 ## What's ready
 - **Dataset:** `data/out/lecture1/final/clips/` (140 wavs, 16k mono, ~25 min) + `final/train.jsonl` (clean text).

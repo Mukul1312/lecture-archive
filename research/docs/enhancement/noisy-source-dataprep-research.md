@@ -1,6 +1,6 @@
 # Noisy-source cloning data-prep — research pass (the 0.74 ECAPA plateau)
 
-*Source-verified 2026-06-30 via a deep-research harness (5 angles → 24 sources → 112 claims → 25 adversarially verified, 2/3-refute kill rule → **16 confirmed, 9 refuted**). Full output: `tasks/wp49iafav.output`. This pass deliberately searched the **GPT-SoVITS / CosyVoice / Fish-Speech** neighborhood + papers/READMEs — the cone a prior `voxcpm+lora+train` code-search was structurally blind to. Supersedes nothing in [tts-dataprep-pipeline.md](tts-dataprep-pipeline.md); it adds the noisy-source layer.*
+*Source-verified 2026-06-30 via a deep-research harness (5 angles → 24 sources → 112 claims → 25 adversarially verified, 2/3-refute kill rule → **16 confirmed, 9 refuted**). Full output: `tasks/wp49iafav.output`. This pass deliberately searched the **GPT-SoVITS / CosyVoice / Fish-Speech** neighborhood + papers/READMEs — the cone a prior `voxcpm+lora+train` code-search was structurally blind to. Supersedes nothing in tts-dataprep-pipeline.md (`docs/tts-dataprep-pipeline.md`); it adds the noisy-source layer.*
 
 ## The question
 Why is the GGS clone plateaued at **~0.74 ECAPA-TDNN cosine on unseen-content** sentences (140 clips, lecture 1), and what cheap data-side levers could move it?

@@ -5,7 +5,7 @@
 denoising has eaten words. I proposed ASR round-trip WER to fill that gap and started building it.
 **Verdict: that plan was invalid, and the literature says so unambiguously.**
 
-**Related:** [enhance-analysis-methodology-research-2026-07-31.md](enhance-analysis-methodology-research-2026-07-31.md) · [odia-transcription-bid-estimate-2026-07-25.md](odia-transcription-bid-estimate-2026-07-25.md)
+**Related:** [enhance-analysis-methodology-research-2026-07-31.md](../enhancement/enhance-analysis-methodology-research-2026-07-31.md) · [odia-transcription-bid-estimate-2026-07-25.md](odia-transcription-bid-estimate-2026-07-25.md)
 
 ---
 
@@ -220,7 +220,7 @@ pilot signal for the bid.
 - [AI4Bharat/IndicConformerASR (GitHub)](https://github.com/AI4Bharat/IndicConformerASR) — direct `.nemo` download for the monolingual Odia model.
 - [AI4Bharat ASR overview](https://ai4bharat.iitm.ac.in/areas/asr/) — IndicWav2Vec / IndicWhisper / IndicConformer lineage; Vistaar benchmark.
 - [Objective Quality and Intelligibility Prediction for Users of Assistive Listening Devices (PMC4452133)](https://pmc.ncbi.nlm.nih.gov/articles/PMC4452133/) — SRMR-CI matches STOI without needing a reference.
-- Prior in-repo research (not re-verified here): `docs/odia-transcription-bid-estimate-2026-07-25.md` — Whisper 125.6% WER on Odia; IndicConformer 20.6% clean; Azure 35.1% / Sarvam 35.8% degraded; ~30% post-editing crossover.
+- Prior in-repo research (not re-verified here): `odia-transcription-bid-estimate-2026-07-25.md` — Whisper 125.6% WER on Odia; IndicConformer 20.6% clean; Azure 35.1% / Sarvam 35.8% degraded; ~30% post-editing crossover.
 
 ## Rerun Inputs
 

@@ -30,7 +30,7 @@ authority.
 
 | Legacy area | Why it must not cross into Lane B |
 |---|---|
-| `scripts/hi/voice_gate.py`, `scripts/hi/vd_analyze.py`, `docs/voice-dissimilarity-gate-2026-07-20.md` | They intentionally enforce the old opposite goal: output must be dissimilar from SSGGSM. That remains relevant to Lane A only. |
+| `scripts/hi/voice_gate.py`, `scripts/hi/vd_analyze.py`, `research/docs/voice-cloning/voice-dissimilarity-gate-2026-07-20.md` | They intentionally enforce the old opposite goal: output must be dissimilar from SSGGSM. That remains relevant to Lane A only. |
 | `scripts/hi/build_casting_site.py`, `scripts/hi/build_casting_gallery.py` casting assertions | They state that the historical voice will not be used and candidates were screened for dissimilarity. UI ideas are reusable; those assertions and verdicts are not. |
 | `scripts/gate_takes.py`, `scripts/assemble_diary.py` automatic identity/calmness selection | They let metrics reject or select speech. ADR-0006 makes qualified Odia listening authoritative for Lane B. |
 | `scripts/hi/asr_check.py` | It runs Hindi Whisper/CER against Hindi passages and fixed paths. It is not an Odia correctness gate. |

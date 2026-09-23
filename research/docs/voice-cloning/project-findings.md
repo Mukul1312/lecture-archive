@@ -3,7 +3,7 @@
 > **Historical implementation record:** This documents the earlier VoxCPM2/LoRA route;
 > it is not the current production workflow. The authorized SSGGSM Odia baseline and
 > its narrow scope are now governed by
-> [ADR-0006](decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md), with
+> ADR-0006 (`docs/decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md`), with
 > implementation proposed in the linked Cartesia production design. Nothing below is
 > deleted because its experimental evidence remains useful. In particular, the old
 > "license unconstrained" statement below is historical shorthand, not current authority

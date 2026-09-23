@@ -14,6 +14,23 @@ does not add more media or rewrite the published baseline. See
 [External audio assets](docs/external-audio-assets.md) for the expected local
 paths and publication policy.
 
+## Research site
+
+The detailed research reports are an MkDocs site in [`research/`](research/), organised by topic
+with an answer-first overview for each: transcription, Odia, audio enhancement, and the
+superseded voice-cloning and Hindi-clone work. The Markdown also reads fine on its own in
+`research/docs/`.
+
+```powershell
+cd research
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m mkdocs serve
+```
+
+`docs/` keeps what is project state rather than research: handoffs, the decision records, the
+AWS evaluation and the implementation plans.
+
 ## Narration moved to `narrator-voice`
 
 Narrator Voice — the local narration studio for authorized SSGGSM Odia diary narration

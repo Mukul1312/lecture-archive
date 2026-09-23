@@ -2,7 +2,7 @@
 odia_check.py — MEASURE how much of GGS's speech is actually ODIA (vs Hindi/English/...).
 
 The content triage used Whisper LID, which has NO Odia label, so its Hindi/Odia split is untrustworthy
-(see docs/hindi-extraction-pipeline-research.md). facebook/mms-lid-256 DOES have an `ory` (Odia) label,
+(see research/docs/hindi/hindi-extraction-pipeline-research.md). facebook/mms-lid-256 DOES have an `ory` (Odia) label,
 so we run it over GGS-only speech windows to get a trustworthy language breakdown — specifically to
 TEST the hypothesis "spoken Odia is rare" with a real number.
 

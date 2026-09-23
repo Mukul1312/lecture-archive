@@ -3,7 +3,7 @@
 **Date:** 2026-07-03 · **Method:** firecrawl deep-research, 4 parallel sourced agents (accent-robust LID · singing/kirtana detection · code-switch & TTS-data · TTS-data pipelines/contrarian).
 **Question:** how to extract CLEAN accented-Hindi speech (for VoxCPM2 voice-clone training) from GGSM's noisy religious lectures — where he's a native-Odia speaker lecturing *in Hindi* (heavy Odia accent), heavily code-switched with English, and Bengali/Odia appears **only in sung kirtana/bhajan** (spoken Odia is rare).
 
-Companion to [hindi-asr-model-research.md](hindi-asr-model-research.md), [noisy-source-dataprep-research.md](noisy-source-dataprep-research.md), [hindi-clone-plan.md](hindi-clone-plan.md).
+Companion to [hindi-asr-model-research.md](hindi-asr-model-research.md), [noisy-source-dataprep-research.md](../enhancement/noisy-source-dataprep-research.md), [hindi-clone-plan.md](hindi-clone-plan.md).
 
 ---
 

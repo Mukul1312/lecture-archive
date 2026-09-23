@@ -8,7 +8,7 @@ passage. The same listener later reported word-cutting at this setting; Mukul ac
 trade-off knowingly. Worth a spot-check of the output before committing the remaining parts.
 
 Stages, in the "deepest damage first" order the restoration literature converges on
-(docs/enhance-analysis-methodology-research-2026-07-31.md):
+(research/docs/enhancement/enhance-analysis-methodology-research-2026-07-31.md):
 
   0 DECODE     float32, NO clamping. 64 kbps MP3 decodes ABOVE full scale (peaks to 1.86 in this
                source); clamping there destroys real peaks and manufactures flat-topped "clipping".

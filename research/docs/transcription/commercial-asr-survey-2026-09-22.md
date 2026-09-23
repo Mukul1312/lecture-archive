@@ -1,6 +1,6 @@
 # Deepgram and other commercial speech-to-text services (2026-09-22)
 
-Companion to `docs/open-asr-model-survey-2026-09-22.md`. The steward asked about Deepgram.
+Companion to `open-asr-model-survey-2026-09-22.md`. The steward asked about Deepgram.
 It is a paid API, so the questions are what its free credit covers, what its terms say,
 and how it compares with the commercial services that also offer free allowances.
 

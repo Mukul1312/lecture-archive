@@ -179,7 +179,7 @@ rents GPUs decides by file existence and modification time.
 
 ### 4.4 Model choice for Odia is consequential, not a preference
 
-`docs/odia-transcription-bid-estimate-2026-07-25.md` line 161, on *degraded
+`research/docs/odia/odia-transcription-bid-estimate-2026-07-25.md` line 161, on *degraded
 field* Odia:
 
 | System | WER |
@@ -198,10 +198,10 @@ environment is pinned harder than the model.
 
 ### 4.5 Compute is not the dominant cost
 
-- `docs/odia-transcription-bid-estimate-2026-07-25.md` line 49 — *"Compute is a
+- `research/docs/odia/odia-transcription-bid-estimate-2026-07-25.md` line 49 — *"Compute is a
   rounding error. GPU + API + LLM for the entire 1,952-hour corpus is ~$6k —
   about 1% of [the bid]."*
-- `docs/narration-cost-analysis-2026-07-20.md` line 11 — *"This decision should
+- `research/docs/voice-cloning/narration-cost-analysis-2026-07-20.md` line 11 — *"This decision should
   not be made on price. The amounts are too small to matter."*
 
 **One asymmetry must be stated, because it is easy to misread the above.**
@@ -318,7 +318,7 @@ Invariants:
   sample size**, and below three completed runs it returns the literal word
   `unmeasured` and refuses to emit a number. A confident wrong estimate is
   worse than none when about to rent a pod.
-  (`docs/narration-cost-analysis-2026-07-20.md` carries an *"Unverified figure
+  (`research/docs/voice-cloning/narration-cost-analysis-2026-07-20.md` carries an *"Unverified figure
   — assumed, not measured"* warning on the line item that dominates its own
   total. This invariant is the antidote.)
 - `coverage` is **derived from judgement rows** — judged seconds over total
@@ -1019,7 +1019,7 @@ minutes; five clips decided it, recovering 37 seconds of lost content and
 removing four fabrications.*
 
 *One limitation found in passing, recorded in
-`docs/ggsm-transcript-reproducibility-2026-08-27.md`: the output is **not
+`research/docs/transcription/ggsm-transcript-reproducibility-2026-08-27.md`: the output is **not
 bit-reproducible**. faster-whisper's int8 CPU inference is non-deterministic over
 long audio -- the same 21-minute clip run twice gave 196 vs 197 segments. The
 recorded configuration is reproducible; the transcript is not, so its digest

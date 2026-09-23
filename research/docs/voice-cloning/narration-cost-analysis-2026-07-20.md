@@ -3,11 +3,11 @@
 > **Historical provider analysis:** These July 2026 Hindi assumptions and prices are
 > retained as dated evidence, but their provider recommendation does not govern the
 > current authorized SSGGSM Odia workflow. See
-> [ADR-0006](decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md),
-> [ADR-0008](decisions/0008-lane-b-production-boundaries.md),
-> [ADR-0012](decisions/0012-narrator-voice-v1-is-a-minimum-local-studio.md) and the
-> [v4 minimum design](superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md).
-> The [v3 production design](superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md)
+> ADR-0006 (`docs/decisions/0006-authorized-cartesia-ivc-for-ssggsm-odia-narration.md`),
+> ADR-0008 (`docs/decisions/0008-lane-b-production-boundaries.md`),
+> ADR-0012 (`docs/decisions/0012-narrator-voice-v1-is-a-minimum-local-studio.md`) and the
+> v4 minimum design (`docs/superpowers/specs/2026-09-03-cartesia-odia-narration-minimum-local-studio-v4-design.md`).
+> The v3 production design (`docs/superpowers/specs/2026-09-02-cartesia-odia-narration-production-v3-design.md`)
 > remains historical full-scope evidence.
 
 *Budget note for the Hindi diary & lecture-teaching Shorts. Written to be presentable to seniors.*

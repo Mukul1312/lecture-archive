@@ -313,7 +313,7 @@ improvement, since `cos(original, candidate)` is maximised by doing nothing. It 
 Blind ladder testing settled it. **Locked: DeepFilterNet3 `--atten-lim 24`** (~22.4 dB reduction),
 chosen by Mukul with the word-cutting trade-off at that level explicitly accepted. Production pipeline:
 `scripts/enhance_part.py`. Intelligibility research that ruled out every automated substitute for a
-human Odia ear: [odia-asr-and-intelligibility-metrics-2026-07-31.md](odia-asr-and-intelligibility-metrics-2026-07-31.md).
+human Odia ear: [odia-asr-and-intelligibility-metrics-2026-07-31.md](../odia/odia-asr-and-intelligibility-metrics-2026-07-31.md).
 
 ---
 

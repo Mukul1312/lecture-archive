@@ -306,7 +306,7 @@ Two things learned already:
 
 > **Superseded 2026-09-22:** these figures came from a scorer that dropped the heard words of 16
 > cues while still scoring their reference words. Corrected table and the fix:
-> `docs/melbourne-reference-eight-point-findings-2026-09-22.md`. The ranking and the choice did not change.
+> `research/docs/transcription/melbourne-reference-eight-point-findings-2026-09-22.md`. The ranking and the choice did not change.
 
 | configuration | English wrong | Sanskrit unrecognisable | WER | wall | speed |
 |---|---:|---:|---:|---:|---:|
@@ -449,13 +449,13 @@ fixed with a test, all six configurations are re-scored, and the old scores are 
 `data/reference/analysis/accuracy-before-scorer-fix/`.
 
 Everything measured, point by point, with the verifier's corrections applied:
-**`docs/melbourne-reference-eight-point-findings-2026-09-22.md`.**
+**`research/docs/transcription/melbourne-reference-eight-point-findings-2026-09-22.md`.**
 
 ### 10.18 Beyond Whisper: open ASR survey (2026-09-22)
 
 The steward pointed out that only Whisper had been considered. A five-sweep survey with a
 verifier (run `wf_4e095424-673`, script `.agents/workflows/open-asr-model-survey.js`)
-produced **`docs/open-asr-model-survey-2026-09-22.md`**. In short:
+produced **`research/docs/transcription/open-asr-model-survey-2026-09-22.md`**. In short:
 
 - Before any model swap, turn off faster-whisper's verified 30 s skip rule
   (`no_speech_threshold=None`). It was on in all six matrix runs.
@@ -471,7 +471,7 @@ produced **`docs/open-asr-model-survey-2026-09-22.md`**. In short:
 ### 10.19 Deepgram and other commercial services (2026-09-22)
 
 The steward asked about Deepgram. Survey with a verifier (run `wf_659d3dd8-130`):
-**`docs/commercial-asr-survey-2026-09-22.md`**.
+**`research/docs/transcription/commercial-asr-survey-2026-09-22.md`**.
 
 - Deepgram: $200 free credit; Nova-3 costs ~$890 for the corpus (~$1,160 with keyterms),
   possibly doubled by stereo billing. It fetches archive.org URLs itself and has useful
@@ -539,7 +539,7 @@ or missing; 2-3 words 24.8%; 4-10 words 16.8%; over 10 words 14.7%.
 
 ### 10.22 The steward's 34 Indic links (2026-09-22)
 
-Read at source and verified (run `wf_b39c2eed-460`): **`docs/indic-links-survey-2026-09-22.md`**.
+Read at source and verified (run `wf_b39c2eed-460`): **`research/docs/transcription/indic-links-survey-2026-09-22.md`**.
 For SSGGSM, the find is **Prabhupadavani** (arXiv 2201.11391): 94 h of English devotional
 lectures with code-mixed Sanskrit and Bengali, romanised with diacritics and counted per
 language. It is a second, independent benchmark for the trilingual code-switching problem
@@ -594,7 +594,7 @@ and `HF_TOKEN` is in `.env.local` (git-ignored).
 ### 10.24 What language models can do here (2026-09-22)
 
 The steward pointed out that GPU rental and licences are available, so neither may be used
-to dismiss a model. Re-judged on capability: **`docs/llm-roles-for-transcription-2026-09-22.md`**
+to dismiss a model. Re-judged on capability: **`research/docs/transcription/llm-roles-for-transcription-2026-09-22.md`**
 (run `wf_40a9456e-3c0`). In short:
 
 - **Free-form LLM correction of transcripts is the most replicated failure in the
@@ -666,7 +666,7 @@ Each has its own write-up; this is the map:
 
 1. **The scorer had a bug** that made every published figure too pessimistic; fixed with a
    test. Corrected baseline for medium: English 19.5%, Sanskrit 58.7%, WER 27.7% (§10.17,
-   `docs/melbourne-reference-eight-point-findings-2026-09-22.md`).
+   `research/docs/transcription/melbourne-reference-eight-point-findings-2026-09-22.md`).
 2. **Whisper's no-speech skip rule** discards whole 30 s windows and was on in every earlier
    run. Turning it off is the new baseline: **English 19.3%, Sanskrit 55.8%, 706 dropped
    words** (§10.21). Batched decoding is 43% faster but loses the chanted verse (§10.21).
@@ -677,17 +677,17 @@ Each has its own write-up; this is the map:
 4. **The missing words are located** (§10.24): 92% sit inside cues, not in never-subtitled
    stretches; the rate is 7.7% plain English, 13.4% mixed, 17.7% verse. The worst individual
    cues are Bengali songs and Sanskrit verses.
-5. **Open ASR survey** (`docs/open-asr-model-survey-2026-09-22.md`): Parakeet TDT and
+5. **Open ASR survey** (`research/docs/transcription/open-asr-model-survey-2026-09-22.md`): Parakeet TDT and
    Qwen3-ASR shortlisted, but both are monolingual, which finding 3 makes a liability here.
-6. **Commercial survey** (`docs/commercial-asr-survey-2026-09-22.md`): Deepgram supports
+6. **Commercial survey** (`research/docs/transcription/commercial-asr-survey-2026-09-22.md`): Deepgram supports
    Bengali and Indian English separately but cannot switch between them in one request, so it
    is a router target, not a code-switching model. ElevenLabs Scribe v2 and Speechmatics have
    better independent evidence. Rights permission received 2026-09-22; vendor training stays
    off.
-7. **The steward's 34 Indic links** (`docs/indic-links-survey-2026-09-22.md`): the find is
+7. **The steward's 34 Indic links** (`research/docs/transcription/indic-links-survey-2026-09-22.md`): the find is
    Prabhupadavani; IndicTrans2 and Indic-Transcribe-core for the Odia seva; nothing new for
    narrator-voice.
-8. **Language models** (`docs/llm-roles-for-transcription-2026-09-22.md`): never let one
+8. **Language models** (`research/docs/transcription/llm-roles-for-transcription-2026-09-22.md`): never let one
    rewrite a transcript; text-only correction has a 10.6% WER floor here; the safe jobs are
    choosing between two recognisers (baseline: plain ROVER), word-language tagging,
    punctuation by token classification, and Odia translation.
@@ -748,7 +748,7 @@ on that audio rather than reusing its earlier timestamped output. About two hour
 ### 10.27 The nine-system bake-off (2026-09-23) — the hosted services win
 
 Full write-up, with method, costs and practical notes:
-**`docs/commercial-bakeoff-results-2026-09-23.md`**. All nine decoded the same 66.4-minute cut
+**`research/docs/transcription/commercial-bakeoff-results-2026-09-23.md`**. All nine decoded the same 66.4-minute cut
 audio and were scored by one text-only scorer with three shared normalisations (apostrophes,
 numbers, bracketed annotations). Clients: `data/reference/melbourne_bakeoff.py` (local + fuse
 + score) and `data/reference/commercial_bakeoff.py` (`.venv-api`; Deepgram and ElevenLabs over
@@ -797,7 +797,7 @@ batch flow).
 
 ### 10.28 Reading the mistakes: the scoring was unfair, the ranking was right (2026-09-23)
 
-Full write-up: **`docs/error-text-analysis-2026-09-23.md`**. Tool:
+Full write-up: **`research/docs/transcription/error-text-analysis-2026-09-23.md`**. Tool:
 `data/reference/error_text.py` (`sites`, `patterns`, `compare`, `passages`); reports in
 `data/reference/bakeoff/errors/`. The stop count now lives in
 `scripts/transcript_accuracy.edit_sites`, pinned by tests; before it was changed it
@@ -818,7 +818,7 @@ Everything re-scored. **The ranking did not change; every figure improved.**
 | **All three combined** | **19.1%** | **10.7%** | **476** | 523 |
 
 Reference 6,799 -> 6,698 words. **ElevenLabs now makes 26% fewer stops than Whisper**, not
-21%. `docs/commercial-bakeoff-results-2026-09-23.md` has been corrected throughout.
+21%. `research/docs/transcription/commercial-bakeoff-results-2026-09-23.md` has been corrected throughout.
 
 **Where the labour actually is, now that it can be read:**
 

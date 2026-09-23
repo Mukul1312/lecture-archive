@@ -2,7 +2,7 @@
 build_floor_set.py — assemble the REAL-speaker floor for the voice dissimilarity gate.
 
 The gate (voice_gate.py) is uncalibrated without an answer to "what does a genuinely DIFFERENT
-Indian male score against his centroid?" — caveat C2 in docs/identity-verification.md. This builds
+Indian male score against his centroid?" — caveat C2 in research/docs/voice-cloning/identity-verification.md. This builds
 that set from AI4Bharat Kathbath (CC0, ungated on the e2enetworks object store).
 
 Input is a BYTE RANGE of testunk_audio.tar, not the whole 2.2 GB file — Hindi sits in one

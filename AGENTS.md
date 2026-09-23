@@ -32,5 +32,9 @@
 - This repository holds lecture transcription (`scripts/ggsm_transcription/`),
   lecture audio enhancement (`scripts/youtube_enhance/`), the shelved
   `heritage_production` package, the Hindi clone work and the research scripts.
+- Detailed research reports live in the MkDocs site at `research/` (`research/docs/<topic>/`),
+  each topic opening with an answer-first `index.md`. Add new research there, not to `docs/`,
+  and list it in the `nav` in `research/mkdocs.yml`. `docs/` keeps project state: handoffs,
+  decision records, the AWS evaluation and implementation plans.
 - The narration decision records, designs and plans under `docs/` remain here as
   history. The copies in `narrator-voice` are the maintained ones.

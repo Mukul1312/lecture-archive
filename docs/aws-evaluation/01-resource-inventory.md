@@ -69,7 +69,7 @@ cleaning tier** filled it to 100% — VRAM ~21/24 GB fits three — but yielded 
 throughput, because the workload is compute-bound rather than idle-bound. More parallelism
 past ~3 processes does not help.
 
-**Evidence:** `docs/project-findings.md` section 10.
+**Evidence:** `research/docs/voice-cloning/project-findings.md` section 10.
 
 ---
 
@@ -84,7 +84,7 @@ could not restart because the host was full, and the RunPod MCP integration coul
 network volume to a pod. The workaround was to deploy a fresh pod onto the volume via the web
 console each time — instant, because nothing needed re-downloading.
 
-**Evidence:** `docs/project-findings.md` section 6.
+**Evidence:** `research/docs/voice-cloning/project-findings.md` section 6.
 
 **Why it matters:** this is a *stateful environment* pattern, not just a disk. It is the
 closest thing the project has to infrastructure-as-a-persistent-thing, and it is the reason

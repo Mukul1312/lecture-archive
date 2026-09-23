@@ -111,3 +111,6 @@ site-odia-check/audio/
 data/reference/
 data/catalogue/
 data/research/
+
+# MkDocs build output for the research site (source is research/docs/)
+research/site/

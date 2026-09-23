@@ -2,7 +2,7 @@
 build_odia_check_site.py — deployable blind listening page for an ODIA-SPEAKING checker.
 
 Why this exists: our evaluator does not speak Odia. He can judge timbre and accent, but not whether
-denoising has eaten words. Research (docs/odia-asr-and-intelligibility-metrics-2026-07-31.md) closed
+denoising has eaten words. Research (research/docs/odia/odia-asr-and-intelligibility-metrics-2026-07-31.md) closed
 off every automated substitute:
   - ASR round-trip WER is invalid — enhancement degrades ASR in 40/40 configurations regardless of
     human intelligibility, including a 1.3-3.2% penalty on audio with no added noise at all.

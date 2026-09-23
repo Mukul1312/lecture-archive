@@ -9,7 +9,7 @@ Two anchors make the number mean something:
   HIS CEILING  — his lecture-03/04 clips vs a centroid built from lectures 01+02. This is "him on a
                  different day/recording": the score a true match produces. Building centroid and
                  ceiling from DIFFERENT lectures also kills caveat C3 (single-lecture circularity)
-                 in docs/identity-verification.md.
+                 in research/docs/voice-cloning/identity-verification.md.
   CHANCE FLOOR — random unit vectors (~0). Documented as OPTIMISTIC (caveat C2): a real different
                  Indian male speaker scores well above chance, so % -of-span against this floor
                  flatters any candidate. Read the RAW cosine vs the ceiling, not the percentage.

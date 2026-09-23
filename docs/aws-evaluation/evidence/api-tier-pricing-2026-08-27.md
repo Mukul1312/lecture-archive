@@ -165,7 +165,7 @@ they hear the right word and see a wrong one, and carry on. Two consequences:
   reads Odia.
 
 > **Scope correction, twice revised.** This verification was undertaken believing $3.02 sat
-> in a submitted bid. Reading `docs/odia-transcription-bid-estimate-2026-07-25.md` showed it
+> in a submitted bid. Reading `research/docs/odia/odia-transcription-bid-estimate-2026-07-25.md` showed it
 > was **pre-bid** — *"Not yet signed"* — and that its section 2 already called compute *"a
 > rounding error … about 1% of the bid"*. The steward then corrected the premise entirely:
 >

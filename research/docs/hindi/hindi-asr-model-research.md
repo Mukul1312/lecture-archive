@@ -6,7 +6,7 @@
 with **English + Sanskrit code-switch**? These transcripts train a VoxCPM2 LoRA, so text accuracy matters
 for text↔audio alignment.
 
-Companion to [noisy-source-dataprep-research.md](noisy-source-dataprep-research.md),
+Companion to [noisy-source-dataprep-research.md](../enhancement/noisy-source-dataprep-research.md),
 [hindi-clone-plan.md](hindi-clone-plan.md).
 
 ---

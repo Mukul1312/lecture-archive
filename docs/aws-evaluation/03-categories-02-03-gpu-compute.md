@@ -43,7 +43,7 @@ billing history.
 
 This must be weighed against the workflow the project actually uses: deploy a fresh pod onto
 the `voxcpm-vol` network volume from the RunPod web console, and it is *instant* — no
-download, no re-upload, no ticket. `docs/project-findings.md` section 6 records how much pod
+download, no re-upload, no ticket. `research/docs/voice-cloning/project-findings.md` section 6 records how much pod
 friction already cost this project; AWS does not remove that friction, it substitutes a
 slower and more bureaucratic version of it.
 

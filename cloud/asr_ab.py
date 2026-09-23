@@ -3,7 +3,7 @@ asr_ab.py — head-to-head ASR A/B on GGSM's ACTUAL clips (decide by his voice, 
 
 Transcribes the SAME VAD-cut clips (already produced on the pod by extract_hindi_v2) with several Hindi
 ASR models and emits a side-by-side gallery, so we pick the transcriber empirically. Rationale + the model
-shortlist: docs/hindi-asr-model-research.md.
+shortlist: research/docs/hindi/hindi-asr-model-research.md.
 
 --models is comma-separated; each entry is one of:
     whisper:<hf_id>                     Hindi Whisper fine-tune (base gen-config = openai/whisper-large-v2)
@@ -68,7 +68,7 @@ def build_whisper(hf_id, base, dev):
                               WhisperProcessor, GenerationConfig)
     model = WhisperForConditionalGeneration.from_pretrained(hf_id)
     # Many Hindi fine-tunes ship an outdated generation_config (no language map, empty suppress_tokens);
-    # graft a modern base config so generate(language=...) works. See docs/hindi-asr-model-research.md.
+    # graft a modern base config so generate(language=...) works. See research/docs/hindi/hindi-asr-model-research.md.
     model.generation_config = GenerationConfig.from_pretrained(base)
     proc = WhisperProcessor.from_pretrained(hf_id)
     pipe = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,

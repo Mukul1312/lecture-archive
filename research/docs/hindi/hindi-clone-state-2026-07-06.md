@@ -1,7 +1,7 @@
 # GGSM Hindi Clone — State & Handoff (2026-07-06)
 
 Resume point after today's session. Companion to [hindi-clone-plan.md](hindi-clone-plan.md),
-[project-findings.md](project-findings.md), [identity-verification.md](identity-verification.md).
+[project-findings.md](../voice-cloning/project-findings.md), [identity-verification.md](../voice-cloning/identity-verification.md).
 
 ## Headline: a working **zero-shot** Hindi clone + first 3-min diary Short. LoRA deferred.
 

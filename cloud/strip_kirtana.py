@@ -4,7 +4,7 @@ strip_kirtana.py — detect SUNG kirtana/bhajan vs SPOKEN lecture (LANGUAGE-AGNO
 The ear-check proved no language-ID can find the non-Hindi content, but the non-Hindi (Bengali/Odia
 devotional) is SUNG — and singing detectors fire on the acoustics of music, not words. inaSpeechSegmenter
 tags "singing voice as music", so its `music` segments ≈ the sung kirtana we remove, with zero Hindi/Odia
-LID. See docs/hindi-extraction-pipeline-research.md.
+LID. See research/docs/hindi/hindi-extraction-pipeline-research.md.
 
 Runs on a pod with inaSpeechSegmenter (TensorFlow) + ffmpeg. For each lecture it writes a speech/music map
 to content_triage_music.json, prints the speech-vs-sung breakdown, and exports the longest `music` clips to

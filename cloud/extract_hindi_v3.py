@@ -2,7 +2,7 @@
 extract_hindi_v3.py — CLEAN Hindi clip extraction, built on MEASURED ground truth.
 
 Replaces v2's broken Whisper-LID hi-spans (proven garbage: MMS-LID + the ear-check showed no LID can pick
-out his Odia-accented Hindi — see docs/hindi-extraction-pipeline-research.md) with:
+out his Odia-accented Hindi — see research/docs/hindi/hindi-extraction-pipeline-research.md) with:
   BASE  = GGS's diarized speech intervals (content_triage.json `ggs_intervals`) — a SPEAKER decision, reliable
   MINUS = sung kirtana/bhajan (content_triage_music.json `music_segments`, from strip_kirtana / inaSpeech)
   CUT   = Silero-VAD + the FIXED clips_from_speech (no gap-bridging) -> clean 3-15s clips

@@ -57,7 +57,7 @@ cell in this table.
 
 | Area | Reason |
 |---|---|
-| `scripts/hi/voice_gate.py`, `scripts/hi/vd_analyze.py`, `docs/voice-dissimilarity-gate-2026-07-20.md` | They intentionally enforce the opposite SSGGSM identity goal. They remain Lane-A evidence. |
+| `scripts/hi/voice_gate.py`, `scripts/hi/vd_analyze.py`, `research/docs/voice-cloning/voice-dissimilarity-gate-2026-07-20.md` | They intentionally enforce the opposite SSGGSM identity goal. They remain Lane-A evidence. |
 | Casting assertions in `scripts/hi/build_casting_site.py` and `build_casting_gallery.py` | They state that the historical voice will not be used and claim non-resemblance. Only interaction ideas are reusable. |
 | `scripts/gate_takes.py`, `scripts/hi/funnel_diary.py`, automatic selection in `scripts/assemble_diary.py` | Metrics automatically reject/select takes, conflicting with Lane-B human Odia authority. |
 | `scripts/hi/asr_check.py` | Hindi Whisper/CER, fixed paths and back-transcription assumptions do not establish Odia correctness. |

@@ -20,7 +20,7 @@ differences of *writing* that were being counted as differences of *hearing*. Th
 offered here but not applied by this command line, because the runs it has already scored
 (the Whisper matrix) were measured without them; the Melbourne bake-off applies all three
 through ``data/reference/melbourne_bakeoff.normalise``. Figures from the two are therefore
-not directly comparable — see ``docs/error-text-analysis-2026-09-23.md``.
+not directly comparable — see ``research/docs/transcription/error-text-analysis-2026-09-23.md``.
 """
 
 from __future__ import annotations
