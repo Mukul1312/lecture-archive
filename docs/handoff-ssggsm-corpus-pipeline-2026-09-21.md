@@ -18,7 +18,7 @@ by a command or a file on disk; "estimate" and "unverified" are labelled as such
 | **First accuracy number** | **Measured (§10.12), Whisper `small`/beam 1: English 24.9% wrong or missing; Sanskrit 67.9% unrecognisable (217 of 676 recognised); WER 34.2% forgiving romanisation, 36.4% strict.** Harness: `scripts/transcript_accuracy.py` |
 | **Subtitle timings** | The synced file is wrong mid-lecture (§10.4). **A validated re-timed file now exists:** `data/reference/MELBOURNE_vs_90-85_aligned.srt` (update 2026-09-21, §10.11) |
 | **Whisper word-timing run** | **Done:** 5,951 words in 826 s (~5.1× real time). Long-form decoding **silently skipped speech** (e.g. 11:19–11:49); 30 gaps ≥6 s were re-decoded as short windows (`melbourne_gapfill.py`, +283 words) → `melbourne-whisper-small-words-gapfilled.jsonl` |
-| **Next action** | **Hosted services win** (§10.27, `docs/commercial-bakeoff-results-2026-09-23.md`): ElevenLabs Scribe v2 cuts edit sites 21% and English errors a third; Sarvam is the Sanskrit specialist; keyterms work inside the recogniser. Decisions for the steward: adopt ElevenLabs (fewest stops) or the ElevenLabs+Sarvam combination (most complete); whether to spend ~$760-2,000 on the corpus. The flex Melbourne run is still finishing and will add two rows |
+| **Next action** | **The steward's decision** (§10.27, `docs/commercial-bakeoff-results-2026-09-23.md`): ElevenLabs alone (fewest stops, ~$760) or the three-way combination (most complete, ~$2,000). Then: verify word timestamps for the read-along, test the chosen route on a second lecture, and measure the corpus average length so the cost stops being a guess |
 | **lecture-archive git** | Pushed through `162843a`; the steward approved pushing on 2026-09-21 |
 | **narrator-voice** | Parked by the steward. Another session is working there (`playground/` is untracked — not ours, do not touch) |
 | **rclone** | **Finished** — no rclone process was running on 2026-09-21 at 22:10. The steward freed the machine for 2–3 h of full-capacity work. (Still never invoke rclone on his behalf.) |
@@ -745,42 +745,55 @@ of never-subtitled speech (66.4 minutes in 11 pieces, `melbourne-cut.wav`), and 
 text-only for everyone with the same apostrophe and number normalisations. Whisper is re-run
 on that audio rather than reusing its earlier timestamped output. About two hours.
 
-### 10.27 The hosted services beat everything local (2026-09-23)
+### 10.27 The nine-system bake-off (2026-09-23) — the hosted services win
 
-Full write-up: **`docs/commercial-bakeoff-results-2026-09-23.md`**. Client:
-`data/reference/commercial_bakeoff.py` (`.venv-api`; Deepgram and ElevenLabs over REST because
-the ElevenLabs SDK cannot install on Windows, Sarvam through its SDK for the batch flow).
+Full write-up, with method, costs and practical notes:
+**`docs/commercial-bakeoff-results-2026-09-23.md`**. All nine decoded the same 66.4-minute cut
+audio and were scored by one text-only scorer with three shared normalisations (apostrophes,
+numbers, bracketed annotations). Clients: `data/reference/melbourne_bakeoff.py` (local + fuse
++ score) and `data/reference/commercial_bakeoff.py` (`.venv-api`; Deepgram and ElevenLabs over
+REST because the ElevenLabs SDK cannot install on Windows, Sarvam through its SDK for the
+batch flow).
 
-| system | WER | English | Sanskrit | dropped | edit sites |
-|---|---:|---:|---:|---:|---:|
-| Whisper medium, skip rule off | 28.8% | 20.3% | 62.1% | 928 | 666 |
-| Deepgram Nova-3 en-IN | 35.0% | 24.9% | 89.5% | 1,584 | 694 |
-| **ElevenLabs Scribe v2** | 22.5% | 13.8% | 61.1% | 922 | **523** |
-| ElevenLabs + 50 keyterms | 22.0% | 13.6% | 53.1% | 832 | 543 |
-| Sarvam Saaras v4 verbatim | 23.8% | 17.4% | 45.9% | 729 | 633 |
-| Sarvam verbatim + keyterms | 24.1% | 17.6% | **43.5%** | 730 | 669 |
-| **ElevenLabs + Sarvam combined** | **20.5%** | **12.7%** | 43.0% | **606** | 567 |
+| system | WER | English | Sanskrit | dropped | edit sites | speed |
+|---|---:|---:|---:|---:|---:|---:|
+| Whisper medium, skip rule off | 28.8% | 20.3% | 62.1% | 928 | 666 | 2.0x |
+| Deepgram Nova-3 en-IN | 35.0% | 24.9% | 89.5% | 1,584 | 694 | 517x |
+| flex en native | 26.5% | 20.6% | 41.9% | 705 | 700 | 1.4x |
+| flex bn mixed | 28.5% | 23.2% | **38.6%** | 749 | 798 | 1.8x |
+| Sarvam Saaras v4 verbatim | 23.8% | 17.4% | 45.9% | 729 | 633 | 118x |
+| Sarvam verbatim + keyterms | 24.1% | 17.6% | 43.5% | 730 | 669 | 125x |
+| **ElevenLabs Scribe v2** | 22.5% | 13.8% | 61.1% | 922 | **523** | 104x |
+| ElevenLabs + 50 keyterms | 22.0% | 13.6% | 53.1% | 832 | 543 | 114x |
+| ElevenLabs + Sarvam | **20.5%** | 12.7% | 43.0% | 606 | 567 | — |
+| ElevenLabs + flex | 20.7% | 12.9% | 42.9% | 649 | 577 | — |
+| **All three combined** | **20.5%** | **12.6%** | 41.4% | **572** | 579 | — |
 
-- **The first change that reduces LABOUR, not just words: ElevenLabs cuts edit sites 21%**
-  (666 -> 523). Model size, the skip rule and local fusion all moved words while leaving stops
+- **The first result measured in the steward's hours: ElevenLabs cuts edit sites 21%**
+  (666 -> 523). Model size, the skip rule and local fusion all moved words while stops stayed
   flat.
-- **Keyterms finally work** - but only inside the recogniser. 50 Sanskrit names cut ElevenLabs'
-  Sanskrit errors 8 points (61.1% -> 53.1%). The same glossary failed as a Whisper prompt and
-  as post-correction.
-- **Sarvam is the Sanskrit specialist** (43.5%) and drops the fewest words of any single
-  system. ElevenLabs is the English specialist. Combining them is the best transcript but not
-  the fewest stops, so the choice depends on whether completeness or labour matters more.
-- **Deepgram is out**: its docs say English mode does not transcribe other languages, and the
-  measurement agrees (89.5% Sanskrit unrecognisable, 1,584 words dropped).
-- **Public benchmarks have now mispredicted this corpus three times out of three** (turbo,
-  flex, Deepgram).
-- ElevenLabs writes Sanskrit in **IAST**, the archive's own convention, and **marks
-  non-English spans** (`[speaking Bangla]`, `[singing]`) - a free detector for verse and song
-  routing.
-- Corpus cost if adopted: ElevenLabs ~$760, +20% with keyterms; Sarvam ~$1,180; both ~$2,000.
-  Against ~2.6M review decisions, a 21% cut in stops is worth far more than $760.
-- Spent today: 2.2 h of ElevenLabs' 4.5 h free month, Rs 66 of Sarvam's Rs 100, $0.29 of
-  Deepgram's $200.
+- **Three specialists, not one winner.** English: ElevenLabs (13.6%). Sanskrit: the Indian
+  models, flex 38.6% and Sarvam 43.5% against Whisper's 62.1%. Fewest dropped words: Sarvam
+  and flex. The steward's trilingual hypothesis in its strongest form.
+- **Combining buys completeness at about ten stops each**: dropped words 922 -> 572 and
+  Sanskrit 61.1% -> 41.4% across the chain, and even the three-way stays 13% below Whisper on
+  stops. The method is deterministic (keep the base, insert the other only where the base
+  wrote nothing), so it cannot hallucinate.
+- **Keyterms work, but only inside the recogniser**: 50 names cut ElevenLabs' Sanskrit 8
+  points. The same list failed as a Whisper prompt (WER worse) and as post-correction (~2
+  points, confident wrong words).
+- **Deepgram is out** (89.5% Sanskrit unrecognisable, 1,584 dropped) though it is 517x real
+  time and has the best-evidenced per-word confidence - possibly useful as an error signal
+  rather than a transcriber.
+- **Public benchmarks have mispredicted this corpus three times out of three** (turbo, flex,
+  Deepgram). Nothing may be adopted on reputation.
+- **Code-switching persists everywhere**: English next to Sanskrit is wrong 36.7% of the time
+  even in the best combination, against 8.3% far from any.
+- **Cost if adopted**: ElevenLabs ~$760 (+20% with keyterms), Sarvam ~$1,180, both ~$2,000,
+  all three ~$2,000 plus 9-15 laptop-days for flex. Spent producing the table: 2.2 h of
+  ElevenLabs' free month, Rs 66 of Sarvam's Rs 100, $0.29 of Deepgram's $200.
+- **Still unmeasured**: a second reference for these systems, word-timestamp accuracy for the
+  read-along, whether flex's Sanskrit strength generalises, and the corpus average length.
 
 ---
 
