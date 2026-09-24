@@ -50,6 +50,7 @@ class Span:
     start: float
     end: float
     words: list[str]
+    score: float = 0.0   # mean acoustic confidence of the alignment across this span
 
 
 def scoreable_spans(words: list[dict], max_gap: float = MAX_GAP,
@@ -73,17 +74,22 @@ def scoreable_spans(words: list[dict], max_gap: float = MAX_GAP,
     spans.append(run)
 
     return [Span(start=group[0]["start"], end=group[-1]["end"],
-                 words=[w["word"] for w in group])
+                 words=[w["word"] for w in group],
+                 score=round(sum(w.get("score", 0.0) for w in group) / len(group), 4))
             for group in spans if len(group) >= min_words]
 
 
 def summarise(spans: list[Span], duration: float) -> dict:
     seconds = sum(s.end - s.start for s in spans)
+    words = sum(len(s.words) for s in spans)
+    # Weighted by words, so a long confident span is not outvoted by a short doubtful one.
+    confidence = (sum(s.score * len(s.words) for s in spans) / words) if words else 0.0
     return {
         "spans": len(spans),
         "scoreable_seconds": round(seconds, 1),
-        "words": sum(len(s.words) for s in spans),
+        "words": words,
         "share_of_audio": round(seconds / duration, 4) if duration > 0 else 0.0,
+        "alignment_confidence": round(confidence, 4),
     }
 
 
