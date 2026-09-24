@@ -33,6 +33,10 @@ KEYTERMS = REPO / "data/reference/keyterms-50.txt"
 # From this repo's own api-tier-pricing-2026-08-27.md, per hour of audio.
 PRICE_PER_HOUR = {"elevenlabs": 0.22, "sarvam": 0.314}
 
+# A gap between lectures. Nine large uploads back to back tripped ElevenLabs' limiter on the
+# first run; nothing here is urgent enough to push a stranger's servers that hard.
+PAUSE_BETWEEN = 15.0
+
 
 def secret(name: str) -> str:
     for line in (REPO / ".env.local").read_text(encoding="utf-8").splitlines():
@@ -57,6 +61,33 @@ def chosen(solo_only: bool = True, limit: int | None = None) -> list[dict]:
 
 def already_done(slug: str, service: str) -> bool:
     return (OUT / service / f"{slug}.json").exists()
+
+
+def with_backoff(call, attempts: int = 5, first_wait: float = 20.0):
+    """Retry a hosted call, waiting longer each time.
+
+    ElevenLabs answers a rate limit with **401 Unauthorized**, which reads as a bad key and is
+    not one. In the first run it produced four successes, a failure, another success, and then
+    five straight failures - a limiter escalating, not a quota emptying. A twenty-second probe
+    afterwards returned 200 on the same key.
+
+    So the fix is patience, not payment. Waiting is also the polite thing: these are somebody
+    else's servers and the archive is not in a hurry.
+    """
+    import time as clock
+    wait = first_wait
+    for attempt in range(attempts):
+        try:
+            return call()
+        except Exception as exc:
+            transient = any(code in str(exc) for code in ("401", "429", "500", "502", "503", "504"))
+            if attempt == attempts - 1 or not transient:
+                raise
+            print(f"    {type(exc).__name__} - waiting {wait:.0f}s then retrying "
+                  f"({attempt + 2} of {attempts})", flush=True)
+            clock.sleep(wait)
+            wait *= 2
+    raise RuntimeError("unreachable")
 
 
 def run_elevenlabs(audio: Path, terms: list[str]) -> dict:
@@ -151,12 +182,14 @@ def main() -> None:
             audio = REPO / lecture["audio"]
             print(f"[{service} {index}/{len(lectures)}] {slug[:44]} "
                   f"({lecture['audio_seconds']/60:.0f} min)", flush=True)
+            time.sleep(PAUSE_BETWEEN)
             started = time.time()
             try:
                 if service == "elevenlabs":
-                    result = run_elevenlabs(audio, terms)
+                    result = with_backoff(lambda: run_elevenlabs(audio, terms))
                 else:
-                    result = run_sarvam(audio, terms, OUT / service / f"{slug}-raw")
+                    result = with_backoff(
+                        lambda: run_sarvam(audio, terms, OUT / service / f"{slug}-raw"))
             except Exception as exc:
                 print(f"    FAILED {type(exc).__name__}: {str(exc)[:110]}", flush=True)
                 continue
