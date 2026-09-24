@@ -22,6 +22,7 @@ either way.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -85,8 +86,33 @@ def summarise(spans: list[Span], duration: float) -> dict:
     }
 
 
+def records_other_speakers() -> dict[str, bool]:
+    """Which transcripts admit that somebody other than Gurudeva spoke.
+
+    This decides how far a lecture can be trusted INSIDE a span, not just at its edges. These
+    transcripts omit questioner turns, and a question of three to ten seconds falls under the gap
+    threshold - so it stays inside a span, invisible, and every word a recogniser correctly hears
+    there is charged against it.
+
+    Measured over the aligned lectures: those recording other speakers carry 6.3 seconds of
+    2-10s gap per minute against 4.3 for those that do not. About two seconds a minute, or
+    roughly 3% of audio, that may be speech with no reference. The sample is small and the
+    difference could be speaking style, so this marks the lectures rather than excluding them.
+    """
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from taptajivanam_mirror import slugify
+    triage = REPO / "data/lecture_triage.tsv"
+    if not triage.exists():
+        return {}
+    return {slugify(r["url"]): float(r["discussion"] or 0) > 0
+            for r in csv.DictReader(triage.read_text(encoding="utf-8").splitlines(),
+                                    delimiter="	")}
+
+
 def manifest() -> dict:
     """Every aligned lecture, with the stretches of it a model may be graded on."""
+    others = records_other_speakers()
     lectures = []
     for path in sorted(ALIGNED.glob("*.json")):
         if path.name == "SUMMARY.json":
@@ -98,12 +124,14 @@ def manifest() -> dict:
             "slug": record["slug"],
             "audio": f"data/lectures/{record['slug']}/audio.mp3",
             "audio_seconds": record["audio_seconds"],
+            "transcript_records_other_speakers": others.get(record["slug"]),
             **summary,
             "spans_detail": [asdict(s) for s in spans],
         })
 
     graded = sum(l["scoreable_seconds"] for l in lectures)
     total = sum(l["audio_seconds"] for l in lectures)
+    solo = [l for l in lectures if l["transcript_records_other_speakers"] is False]
     return {
         "what_this_is": "Stretches of archive audio that have trustworthy reference text.",
         "how": ("from the forced alignment: a span runs word to word, breaking where silence "
@@ -117,6 +145,15 @@ def manifest() -> dict:
         "scoreable_hours": round(graded / 3600, 2),
         "scoreable_share": round(graded / total, 4) if total else 0.0,
         "scoreable_words": sum(l["words"] for l in lectures),
+        "grade_on_these_first": {
+            "why": ("transcripts recording no other speaker: a question of 3-10s falls under the "
+                    "gap threshold and hides inside a span, so the rest carry roughly 3% of audio "
+                    "that may be speech with no reference, biasing against every recogniser"),
+            "lectures": len(solo),
+            "scoreable_hours": round(sum(l["scoreable_seconds"] for l in solo) / 3600, 2),
+            "scoreable_words": sum(l["words"] for l in solo),
+            "slugs": [l["slug"] for l in solo],
+        },
         "detail": lectures,
     }
 
