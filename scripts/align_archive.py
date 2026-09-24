@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -174,6 +175,37 @@ def align_lecture(folder: Path) -> dict | None:
     }
 
 
+def finished(path: Path) -> bool:
+    """True only if the file is there AND readable as a complete record.
+
+    Presence alone is not proof of completion for anything written before the atomic write
+    landed, and re-aligning a lecture is cheaper than carrying a hole in the corpus.
+    """
+    if not path.exists():
+        return False
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        return isinstance(record.get("words"), list) and "audio_seconds" in record
+    except Exception:
+        return False
+
+
+def write_atomically(destination: Path, result: dict) -> None:
+    """Write to a temporary name, then rename onto the destination.
+
+    The resume rule is "a lecture is done if its file exists", and a bare write_text makes that
+    a lie: kill the job mid-write - a spot reclaim, a Ctrl-C, a laptop asleep - and a truncated
+    file is left behind that the next run counts as finished. The lecture is then silently
+    missing from every total, and nothing ever reports it.
+
+    os.replace is atomic on Windows and POSIX alike, so the destination only ever holds a file
+    that was written completely.
+    """
+    temporary = destination.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(temporary, destination)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=None)
@@ -191,7 +223,7 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     folders = sorted(f for f in LECTURES.iterdir()
                      if f.is_dir() and (f / "audio.mp3").exists())
-    todo = [f for f in folders if not (OUT / f"{f.name}.json").exists()][:args.limit]
+    todo = [f for f in folders if not finished(OUT / f"{f.name}.json")][:args.limit]
     print(f"{len(folders)} lectures on disk, {len(todo)} still to align", flush=True)
 
     for index, folder in enumerate(todo, 1):
@@ -203,8 +235,7 @@ def main() -> None:
             continue
         if result is None:
             continue
-        (OUT / f"{folder.name}.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
+        write_atomically(OUT / f"{folder.name}.json", result)
         print(f"    {result['words_placed']:,}/{result['transcript_words']:,} words "
               f"({result['coverage']:.0%}), score {result['mean_score']:.3f}, "
               f"{result['audio_seconds'] / 60:.0f} min in {result['wall_seconds'] / 60:.1f} min"
