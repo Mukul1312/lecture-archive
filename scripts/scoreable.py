@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -110,9 +111,30 @@ def records_other_speakers() -> dict[str, bool]:
                                     delimiter="	")}
 
 
+def duplicate_audio() -> dict[str, str]:
+    """Slugs whose audio is byte-identical to another slug's, mapped to the one kept.
+
+    The archive publishes the same recording under two pages more than once - "only he can lead
+    you" and "only he can lead you bhubaneswar" are the same file and the same transcript, and
+    cc-adi-lila 9.49-51 appears twice with two different transcripts of one recording. Graded
+    without noticing, such a lecture votes twice.
+    """
+    first: dict[str, str] = {}
+    duplicates: dict[str, str] = {}
+    for audio in sorted(REPO.glob("data/lectures/*/audio.mp3")):
+        slug = audio.parent.name
+        digest = hashlib.sha256(audio.read_bytes()).hexdigest()
+        if digest in first:
+            duplicates[slug] = first[digest]
+        else:
+            first[digest] = slug
+    return duplicates
+
+
 def manifest() -> dict:
     """Every aligned lecture, with the stretches of it a model may be graded on."""
     others = records_other_speakers()
+    duplicates = duplicate_audio()
     lectures = []
     for path in sorted(ALIGNED.glob("*.json")):
         if path.name == "SUMMARY.json":
@@ -125,13 +147,17 @@ def manifest() -> dict:
             "audio": f"data/lectures/{record['slug']}/audio.mp3",
             "audio_seconds": record["audio_seconds"],
             "transcript_records_other_speakers": others.get(record["slug"]),
+            "duplicate_of": duplicates.get(record["slug"]),
             **summary,
             "spans_detail": [asdict(s) for s in spans],
         })
 
-    graded = sum(l["scoreable_seconds"] for l in lectures)
-    total = sum(l["audio_seconds"] for l in lectures)
-    solo = [l for l in lectures if l["transcript_records_other_speakers"] is False]
+    # A duplicate stays in the listing so it can be seen, and is kept out of every total so it
+    # cannot vote twice.
+    counted = [l for l in lectures if not l["duplicate_of"]]
+    graded = sum(l["scoreable_seconds"] for l in counted)
+    total = sum(l["audio_seconds"] for l in counted)
+    solo = [l for l in counted if l["transcript_records_other_speakers"] is False]
     return {
         "what_this_is": "Stretches of archive audio that have trustworthy reference text.",
         "how": ("from the forced alignment: a span runs word to word, breaking where silence "
@@ -140,11 +166,12 @@ def manifest() -> dict:
                          "contain speech the transcript never covered"),
         "max_gap_seconds": MAX_GAP,
         "min_words_per_span": MIN_WORDS,
-        "lectures": len(lectures),
+        "lectures": len(counted),
         "audio_hours": round(total / 3600, 2),
         "scoreable_hours": round(graded / 3600, 2),
         "scoreable_share": round(graded / total, 4) if total else 0.0,
-        "scoreable_words": sum(l["words"] for l in lectures),
+        "scoreable_words": sum(l["words"] for l in counted),
+        "duplicates_excluded": [l["slug"] for l in lectures if l["duplicate_of"]],
         "grade_on_these_first": {
             "why": ("transcripts recording no other speaker: a question of 3-10s falls under the "
                     "gap threshold and hides inside a span, so the rest carry roughly 3% of audio "
