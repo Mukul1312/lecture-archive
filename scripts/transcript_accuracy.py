@@ -368,3 +368,71 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# Spoken numbers. The archive writes years ("1977"), grouped thousands ("36,000") and ordinals
+# ("10th"), none of which the Melbourne-era rule reached - it spelled only bare one-to-three
+# digit numbers, because that was all the Melbourne reference contained.
+_ONES = ("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+         "fourteen fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_ORDINALS = {"1": "first", "2": "second", "3": "third", "4": "fourth", "5": "fifth",
+             "6": "sixth", "7": "seventh", "8": "eighth", "9": "ninth", "10": "tenth",
+             "11": "eleventh", "12": "twelfth", "13": "thirteenth", "20": "twentieth"}
+
+
+def spell_number(n: int) -> str:
+    """A number as it would be said. Falls back to the digits when the shape is unusual."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + ("" if n % 10 == 0 else " " + _ONES[n % 10])
+    if n < 1000 and n % 100 == 0:
+        return _ONES[n // 100] + " hundred"
+    if n % 1000 == 0 and n < 1_000_000:
+        return spell_number(n // 1000) + " thousand"
+    return str(n)
+
+
+def spell_numbers(text: str) -> str:
+    """Every written number turned into words, so a recogniser is not marked wrong for saying it.
+
+    A model hears "nineteen seventy-seven" and writes it out; the transcript prints "1977". That
+    is the same words, and charging it as an error measures the typography rather than the
+    machine.
+    """
+    text = re.sub(r"\b(\d{1,3}(?:,\d{2,3})+)\b",
+                  lambda m: spell_number(int(m.group(1).replace(",", ""))), text)
+    text = re.sub(r"\b(\d+)(?:st|nd|rd|th)\b",
+                  lambda m: _ORDINALS.get(m.group(1), spell_number(int(m.group(1)))), text)
+    # A year is said in pairs - "nineteen seventy seven", not "one thousand nine hundred and
+    # seventy seven" - so it needs its own rule or it stays as digits and is charged as an error
+    # against every model. The archive prints 1936, 1967, 1976, 1977 and 1986.
+    text = re.sub(r"\b(1[0-9]|20)([0-9]{2})\b",
+                  lambda m: spell_number(int(m.group(1))) + " "
+                  + (spell_number(int(m.group(2))) if int(m.group(2)) else "hundred"), text)
+    return re.sub(r"\b\d{1,3}\b", lambda m: spell_number(int(m.group())), text)
+
+
+# Editorial asides, in either kind of bracket. Unbounded, unlike the Melbourne-era rule that
+# stopped at 40 and 60 characters: the archive carries a bracketed song citation 85 characters
+# long, and a length limit silently lets the longest ones through.
+_EDITORIAL = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+
+
+def normalise(text: str) -> str:
+    """Text reduced to what was said, on whichever side of the comparison it came from.
+
+    Every rule here removes a difference that is not a mishearing: an editor's aside, a
+    contraction written one way or the other, an apostrophe a recogniser does not emit, a number
+    printed as digits. What remains is what a corrector would actually stop and retype.
+
+    Versioned deliberately. This lived in `data/reference/melbourne_bakeoff.py`, which is
+    gitignored, so the definition of a fair comparison was not in the repository at all.
+    """
+    text = strip_speaker_label(text)
+    text = _EDITORIAL.sub(" ", text)
+    text = expand_contractions(text)
+    text = re.sub(r"[’']", " ", text)
+    text = join_orphan_clitics(text)
+    return spell_numbers(text)
