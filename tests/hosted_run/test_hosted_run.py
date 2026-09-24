@@ -18,6 +18,7 @@ from scripts.hosted_run import (
     HostedFailure,
     SARVAM_PROVEN_CEILING,
     fits_the_budget,
+    remaining_credits,
     retryable,
     too_long_for_sarvam,
 )
@@ -94,3 +95,29 @@ class SarvamCeilingTests(unittest.TestCase):
 
     def test_the_ceiling_sits_between_the_measured_success_and_failure(self):
         self.assertTrue(60.8 * 60 <= SARVAM_PROVEN_CEILING < 86.3 * 60)
+
+
+class BalanceTests(unittest.TestCase):
+    """Two meters on the same account, and the obvious one does not move.
+
+    After two lectures totalling 114.6 minutes, `/v1/user/subscription` still reported
+    `character_count: 0` while `/v1/usage/character-stats` reported 9,168 - which at 80.0
+    credits a minute is exactly what those lectures should have cost. Believing the counter
+    would mean sending an hour of audio at an account holding 832 credits.
+    """
+
+    def test_the_usage_series_is_believed_over_a_counter_that_has_not_moved(self):
+        self.assertEqual(
+            remaining_credits(10_000, 0, {"All": [0.0, 0.0, 9168.0]}), 832)
+
+    def test_a_larger_counter_is_believed_over_the_series(self):
+        # Whichever says more has been spent wins. Skipping a lecture that could have gone is
+        # a smaller error than sending one that will be refused.
+        self.assertEqual(remaining_credits(10_000, 9_500, {"All": [100.0]}), 500)
+
+    def test_several_series_are_added_not_maximised(self):
+        self.assertEqual(
+            remaining_credits(10_000, 0, {"scribe": [4000.0], "tts": [1000.0]}), 5_000)
+
+    def test_an_empty_usage_report_falls_back_to_the_counter(self):
+        self.assertEqual(remaining_credits(10_000, 250, {}), 9_750)

@@ -13,8 +13,13 @@ Scope defaults to the lectures the span manifest names in `grade_on_these_first`
 transcripts recording no other speaker, where a missing questioner turn cannot inflate anyone's
 error rate.
 
-    python scripts/hosted_run.py plan
-    python scripts/hosted_run.py send --service elevenlabs
+Run it with `.venv-api`, which is the only environment here holding both `requests` and the
+Sarvam SDK. Any other interpreter reaches the upload and then fails on the import, which wastes
+nothing but reads exactly like a refusal from Sarvam.
+
+    .venv-api/Scripts/python.exe -m scripts.hosted_run plan
+    .venv-api/Scripts/python.exe -m scripts.hosted_run send --service elevenlabs
+    .venv-api/Scripts/python.exe -m scripts.hosted_run send --service sarvam --slug SLUG
 """
 
 from __future__ import annotations
@@ -33,11 +38,12 @@ KEYTERMS = REPO / "data/reference/keyterms-50.txt"
 # From this repo's own api-tier-pricing-2026-08-27.md, per hour of audio.
 PRICE_PER_HOUR = {"elevenlabs": 0.22, "sarvam": 0.314}
 
-# Measured from ElevenLabs' own quota error rather than from the docs: a 61.0-minute lecture
-# with 50 keyterms needed 4,865 credits. The same hour without keyterms costs about 4,054, so
-# the fifty names that bought eight points of Indic accuracy also cost a fifth more - a line
-# the $760 corpus estimate did not have.
-CREDITS_PER_MINUTE = 79.8
+# Measured twice, and they agree. ElevenLabs' own quota error priced a 61.0-minute lecture
+# with 50 keyterms at 4,865 credits, which is 79.8 a minute; two lectures sent afterwards,
+# 114.6 minutes together, drew 9,168, which is 80.0. The same hour without keyterms costs
+# about 4,054, so the fifty names that bought eight points of Indic accuracy also cost a fifth
+# more - a line the $760 corpus estimate did not have.
+CREDITS_PER_MINUTE = 80.0
 
 # Sarvam accepted 60.8 minutes and refused 86.3. It is duration and not size: the 92-minute
 # refusal is 71 MB, smaller than the 74 MB file that went through. Where between the two the
@@ -124,6 +130,21 @@ def with_backoff(call, attempts: int = 5, first_wait: float = 20.0):
     raise RuntimeError("unreachable")
 
 
+def remaining_credits(limit: int, subscription_counter: int, usage: dict) -> int:
+    """How much of the allowance is left, from the two meters that disagree.
+
+    `/v1/user/subscription` carries `character_count`, which is the obvious place to look and
+    is the wrong one: it still read **0** after two lectures had spent 9,168 credits of Scribe.
+    `/v1/usage/character-stats` had the 9,168. So the counter tracks something else, or lags,
+    and either way believing it would send an hour of audio at an account that cannot pay.
+
+    Taking the **larger** of the two is the safe direction: over-reporting spend skips a
+    lecture that could have gone, and under-reporting it sends one that gets refused.
+    """
+    spent = sum(sum(series) for series in usage.values())
+    return int(limit - max(spent, subscription_counter))
+
+
 def credits_left() -> int:
     """What the ElevenLabs account can actually pay for, asked before anything is sent.
 
@@ -132,12 +153,23 @@ def credits_left() -> int:
     file: it succeeded because it cost 22 credits and 90 remained.
     """
     import requests
-    response = requests.get("https://api.elevenlabs.io/v1/user/subscription",
-                            headers={"xi-api-key": secret("ELEVENLABS_API_KEY")}, timeout=60)
-    if response.status_code != 200:
-        raise HostedFailure(response.status_code, response.text)
-    body = response.json()
-    return int(body["character_limit"]) - int(body["character_count"])
+    headers = {"xi-api-key": secret("ELEVENLABS_API_KEY")}
+    subscription = requests.get("https://api.elevenlabs.io/v1/user/subscription",
+                                headers=headers, timeout=60)
+    if subscription.status_code != 200:
+        raise HostedFailure(subscription.status_code, subscription.text)
+    plan = subscription.json()
+
+    # The allowance refills monthly, so the window is the current period. A day of overlap
+    # either side costs nothing here and a missed day would overstate what is left.
+    reset_ms = int(plan["next_character_count_reset_unix"]) * 1000
+    stats = requests.get("https://api.elevenlabs.io/v1/usage/character-stats", headers=headers,
+                         params={"start_unix": reset_ms - 31 * 86_400_000,
+                                 "end_unix": int(time.time() * 1000)}, timeout=60)
+    if stats.status_code != 200:
+        raise HostedFailure(stats.status_code, stats.text)
+    return remaining_credits(int(plan["character_limit"]), int(plan["character_count"]),
+                             stats.json().get("usage", {}))
 
 
 def fits_the_budget(lectures: list[dict], credits: float,
@@ -186,6 +218,7 @@ def run_elevenlabs(audio: Path, terms: list[str]) -> dict:
         "words": [{"w": w["text"], "s": w.get("start"), "e": w.get("end"), "p": w.get("logprob")}
                   for w in payload.get("words", []) if w.get("type", "word") == "word"],
         "detected_language": payload.get("language_code"),
+        "unit": "word",
     }
 
 
@@ -220,7 +253,11 @@ def run_sarvam(audio: Path, terms: list[str], keep_raw: Path) -> dict:
             words.append({"w": word,
                           "s": starts[index] if index < len(starts) else None,
                           "e": ends[index] if index < len(ends) else None, "p": None})
-    return {"text": text.strip(), "words": words, "detected_language": "en-IN"}
+    # Sarvam's entries are SEGMENTS of ten to sixteen seconds, not words, and saying so here
+    # is the difference between "182 words for a 46-minute lecture" - which would read as a
+    # catastrophic failure in any comparison table - and 182 segments carrying 5,322 words.
+    return {"text": text.strip(), "words": words, "detected_language": "en-IN",
+            "unit": "segment"}
 
 
 def main() -> None:
@@ -311,13 +348,16 @@ def main() -> None:
                     break
                 continue
             timed = sum(1 for w in result["words"] if w.get("s") is not None)
+            unit = result.get("unit", "word")
             record = {**result, "slug": slug, "service": service, "keyterms": len(terms),
                       "audio_seconds": lecture["audio_seconds"],
                       "wall_seconds": round(time.time() - started, 1),
-                      "words_total": len(result["words"]), "words_with_times": timed}
+                      "units_total": len(result["words"]), "units_with_times": timed,
+                      "text_words": len(result["text"].split())}
             (OUT / service / f"{slug}.json").write_text(
                 json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
-            print(f"    {len(result['words']):,} words, {timed:,} with timestamps, "
+            print(f"    {len(result['words']):,} {unit}s, {timed:,} with timestamps, "
+                  f"{record['text_words']:,} words of text, "
                   f"{time.time()-started:.0f}s", flush=True)
 
 
