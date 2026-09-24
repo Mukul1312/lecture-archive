@@ -33,6 +33,18 @@ KEYTERMS = REPO / "data/reference/keyterms-50.txt"
 # From this repo's own api-tier-pricing-2026-08-27.md, per hour of audio.
 PRICE_PER_HOUR = {"elevenlabs": 0.22, "sarvam": 0.314}
 
+# Measured from ElevenLabs' own quota error rather than from the docs: a 61.0-minute lecture
+# with 50 keyterms needed 4,865 credits. The same hour without keyterms costs about 4,054, so
+# the fifty names that bought eight points of Indic accuracy also cost a fifth more - a line
+# the $760 corpus estimate did not have.
+CREDITS_PER_MINUTE = 79.8
+
+# Sarvam accepted 60.8 minutes and refused 86.3. It is duration and not size: the 92-minute
+# refusal is 71 MB, smaller than the 74 MB file that went through. Where between the two the
+# wall actually sits is unmeasured, so the ceiling here is the longest proven success and
+# nothing is claimed above it.
+SARVAM_PROVEN_CEILING = 61.0 * 60
+
 # A gap between lectures. Nine large uploads back to back tripped ElevenLabs' limiter on the
 # first run; nothing here is urgent enough to push a stranger's servers that hard.
 PAUSE_BETWEEN = 15.0
@@ -63,31 +75,98 @@ def already_done(slug: str, service: str) -> bool:
     return (OUT / service / f"{slug}.json").exists()
 
 
-def with_backoff(call, attempts: int = 5, first_wait: float = 20.0):
-    """Retry a hosted call, waiting longer each time.
+class HostedFailure(RuntimeError):
+    """A refusal from a hosted recogniser, carrying the sentence that explains it.
 
-    ElevenLabs answers a rate limit with **401 Unauthorized**, which reads as a bad key and is
-    not one. In the first run it produced four successes, a failure, another success, and then
-    five straight failures - a limiter escalating, not a quota emptying. A twenty-second probe
-    afterwards returned 200 on the same key.
-
-    So the fix is patience, not payment. Waiting is also the polite thing: these are somebody
-    else's servers and the archive is not in a hurry.
+    `requests.raise_for_status()` raises a message built from the status line and throws the
+    body away. The body is the only place the reason lives, and on this API the reason and the
+    status disagree: quota exhaustion arrives as 401.
     """
+
+    def __init__(self, status: int, body: str):
+        self.status, self.body = status, body
+        super().__init__(f"HTTP {status}: {body[:400]}")
+
+
+def retryable(exc: Exception) -> bool:
+    """Is waiting a plausible fix for this failure?
+
+    **401 is never retried.** It was read as rate limiting and it is not: ElevenLabs answers an
+    exhausted quota with 401, and the first run spent five escalating waits per lecture asking
+    an empty account for 4,865 credits it did not have. A bad key is the other thing 401 means
+    here, and patience does not fix that either - the pre-flight balance check below tells the
+    two apart before a byte is uploaded.
+
+    400 is not retried for the same reason: Sarvam refuses over-long audio with it, and the
+    file will not get shorter. 429 and 5xx are genuinely transient, and waiting on them is also
+    the polite thing - these are somebody else's servers and the archive is not in a hurry.
+    """
+    status = getattr(exc, "status", None)
+    if status is None:
+        return any(code in str(exc) for code in ("429", "500", "502", "503", "504"))
+    return status == 429 or 500 <= status < 600
+
+
+def with_backoff(call, attempts: int = 5, first_wait: float = 20.0):
+    """Retry a hosted call while retrying could help, waiting longer each time."""
     import time as clock
     wait = first_wait
     for attempt in range(attempts):
         try:
             return call()
         except Exception as exc:
-            transient = any(code in str(exc) for code in ("401", "429", "500", "502", "503", "504"))
-            if attempt == attempts - 1 or not transient:
+            if attempt == attempts - 1 or not retryable(exc):
                 raise
             print(f"    {type(exc).__name__} - waiting {wait:.0f}s then retrying "
                   f"({attempt + 2} of {attempts})", flush=True)
             clock.sleep(wait)
             wait *= 2
     raise RuntimeError("unreachable")
+
+
+def credits_left() -> int:
+    """What the ElevenLabs account can actually pay for, asked before anything is sent.
+
+    Free and instant, and it is the check whose absence turned one exhausted quota into three
+    contradictory diagnoses. A 20-second probe returning 200 proves nothing about an hour-long
+    file: it succeeded because it cost 22 credits and 90 remained.
+    """
+    import requests
+    response = requests.get("https://api.elevenlabs.io/v1/user/subscription",
+                            headers={"xi-api-key": secret("ELEVENLABS_API_KEY")}, timeout=60)
+    if response.status_code != 200:
+        raise HostedFailure(response.status_code, response.text)
+    body = response.json()
+    return int(body["character_limit"]) - int(body["character_count"])
+
+
+def fits_the_budget(lectures: list[dict], credits: float,
+                    paired_with_other_service: set[str]) -> list[dict]:
+    """Which lectures to send when the account holds less than the corpus needs.
+
+    Two rules, in order. **A lecture the other recogniser has already transcribed goes first**,
+    because the output of this run is a comparison and a lecture only one system has read
+    compares with nothing. Then **the longest that still fits**, because within the paired set
+    every lecture is equally comparable and the long ones carry more speech per credit.
+
+    A lecture that cannot fit is skipped rather than attempted. Attempting it is what produced
+    the 401 storm: nine uploads sent at an account holding ninety credits.
+    """
+    ordered = sorted(lectures,
+                     key=lambda l: (l["slug"] not in paired_with_other_service,
+                                    -l["audio_seconds"]))
+    chosen, budget = [], credits
+    for one in ordered:
+        cost = one["audio_seconds"] / 60 * CREDITS_PER_MINUTE
+        if cost <= budget:
+            chosen.append(one)
+            budget -= cost
+    return chosen
+
+
+def too_long_for_sarvam(lecture: dict) -> bool:
+    """Above the longest duration Sarvam is known to accept, so do not spend a job finding out."""
+    return lecture["audio_seconds"] > SARVAM_PROVEN_CEILING
 
 
 def run_elevenlabs(audio: Path, terms: list[str]) -> dict:
@@ -99,7 +178,8 @@ def run_elevenlabs(audio: Path, terms: list[str]) -> dict:
     response = requests.post("https://api.elevenlabs.io/v1/speech-to-text",
                              headers={"xi-api-key": secret("ELEVENLABS_API_KEY")},
                              files=fields, timeout=3600)
-    response.raise_for_status()
+    if response.status_code != 200:
+        raise HostedFailure(response.status_code, response.text)
     payload = response.json()
     return {
         "text": payload["text"],
@@ -150,9 +230,17 @@ def main() -> None:
     parser.add_argument("--all", action="store_true",
                         help="every aligned lecture, not only the solo ones")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--slug", action="append", default=None,
+                        help="one named lecture; repeat for several")
     args = parser.parse_args()
 
-    lectures = chosen(solo_only=not args.all, limit=args.limit)
+    lectures = chosen(solo_only=not args.all and not args.slug, limit=args.limit)
+    if args.slug:
+        wanted = set(args.slug)
+        lectures = [l for l in lectures if l["slug"] in wanted]
+        missing = wanted - {l["slug"] for l in lectures}
+        if missing:
+            raise SystemExit(f"not in the span manifest: {', '.join(sorted(missing))}")
     hours = sum(l["audio_seconds"] for l in lectures) / 3600
     services = ["elevenlabs", "sarvam"] if args.service == "both" else [args.service]
 
@@ -174,13 +262,37 @@ def main() -> None:
     terms = keyterms()
     for service in services:
         (OUT / service).mkdir(parents=True, exist_ok=True)
-        for index, lecture in enumerate(lectures, 1):
+        pending = [l for l in lectures if not already_done(l["slug"], service)]
+
+        if service == "sarvam":
+            for lecture in pending:
+                if too_long_for_sarvam(lecture):
+                    print(f"  skipping {lecture['slug'][:44]} - "
+                          f"{lecture['audio_seconds']/60:.0f} min is above the "
+                          f"{SARVAM_PROVEN_CEILING/60:.0f} min Sarvam is known to accept; "
+                          f"it needs chunk-and-stitch, not another attempt", flush=True)
+            pending = [l for l in pending if not too_long_for_sarvam(l)]
+
+        if service == "elevenlabs" and pending:
+            balance = credits_left()
+            other = {p.stem for p in (OUT / "sarvam").glob("*.json")}
+            affordable = fits_the_budget(pending, balance, other)
+            print(f"  {balance:,} credits in the account "
+                  f"({balance/CREDITS_PER_MINUTE:.0f} min of Scribe with {len(terms)} keyterms)",
+                  flush=True)
+            for lecture in pending:
+                if lecture not in affordable:
+                    print(f"  skipping {lecture['slug'][:44]} - "
+                          f"{lecture['audio_seconds']/60*CREDITS_PER_MINUTE:,.0f} credits needed, "
+                          f"not enough left", flush=True)
+            # Cheapest first among the affordable, so an estimate that is low costs the
+            # smallest lecture rather than the largest.
+            pending = sorted(affordable, key=lambda l: l["audio_seconds"])
+
+        for index, lecture in enumerate(pending, 1):
             slug = lecture["slug"]
-            if already_done(slug, service):
-                print(f"[{service} {index}/{len(lectures)}] {slug[:44]} - already done", flush=True)
-                continue
             audio = REPO / lecture["audio"]
-            print(f"[{service} {index}/{len(lectures)}] {slug[:44]} "
+            print(f"[{service} {index}/{len(pending)}] {slug[:44]} "
                   f"({lecture['audio_seconds']/60:.0f} min)", flush=True)
             time.sleep(PAUSE_BETWEEN)
             started = time.time()
@@ -191,7 +303,12 @@ def main() -> None:
                     result = with_backoff(
                         lambda: run_sarvam(audio, terms, OUT / service / f"{slug}-raw"))
             except Exception as exc:
-                print(f"    FAILED {type(exc).__name__}: {str(exc)[:110]}", flush=True)
+                # The whole message, not a 110-character stub: the reason lives in the body.
+                print(f"    FAILED {type(exc).__name__}: {exc}", flush=True)
+                if "quota_exceeded" in str(exc):
+                    print("    the account is empty - stopping rather than asking again",
+                          flush=True)
+                    break
                 continue
             timed = sum(1 for w in result["words"] if w.get("s") is not None)
             record = {**result, "slug": slug, "service": service, "keyterms": len(terms),
