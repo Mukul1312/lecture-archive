@@ -214,6 +214,32 @@ def main() -> None:
 
 
 
+# A pause longer than this is not breathing: it is audio the transcript has no words for.
+SILENT_GAP = 2.0
+
+# What the same measure gives on the Melbourne reference - a caption transcript verified cue by
+# cue against the audio. It is NOT 100%, because roughly a seventh of any lecture is genuine
+# pause, so this is the number an honest, complete transcript scores. Without it, 81% reads as
+# alarming rather than as five points short of verified.
+VERIFIED_BASELINE = 0.86
+
+
+def audio_accounted_for(words: list[dict], duration: float) -> float:
+    """The share of the recording the transcript actually has words for.
+
+    This is a different question from coverage, and confusing the two is easy. Coverage asks how
+    much of the TRANSCRIPT could be placed - it reads 99% for a transcript that omits half the
+    lecture, because the half it kept was placed perfectly. This asks how much of the AUDIO the
+    text accounts for, which is what decides whether a transcript can serve as a reference.
+    """
+    if not words or duration <= 0:
+        return 0.0
+    silent = sum(b["start"] - a["end"] for a, b in zip(words, words[1:])
+                 if b["start"] - a["end"] > SILENT_GAP)
+    silent += words[0]["start"] + max(0.0, duration - words[-1]["end"])
+    return round(1 - silent / duration, 4)
+
+
 def report() -> dict:
     """What the corpus looks like once the walk has been over it.
 
@@ -227,6 +253,11 @@ def report() -> dict:
             if p.name != "SUMMARY.json"]
     if not rows:
         return {"lectures": 0}
+
+    for r in rows:
+        r["audio_accounted_for"] = audio_accounted_for(r["words"], r["audio_seconds"])
+    thin = sorted((r for r in rows if r["audio_accounted_for"] < VERIFIED_BASELINE - 0.10),
+                  key=lambda r: r["audio_accounted_for"])
 
     words = sum(r["transcript_words"] for r in rows)
     placed = sum(r["words_placed"] for r in rows)
@@ -246,6 +277,14 @@ def report() -> dict:
         "mean_score": round(sum(scored) / len(scored), 4) if scored else 0.0,
         "speed_vs_realtime": round(audio / wall, 2) if wall else 0.0,
         "lectures_with_broken_invariants": broken,
+        "audio_accounted_for_median": round(
+            sorted(r["audio_accounted_for"] for r in rows)[len(rows) // 2], 4),
+        "audio_accounted_for_on_the_verified_reference": VERIFIED_BASELINE,
+        "transcripts_missing_much_of_their_lecture": [
+            {"slug": r["slug"], "accounted_for": r["audio_accounted_for"],
+             "coverage": r["coverage"],
+             "words_per_minute": round(r["transcript_words"] / (r["audio_seconds"] / 60))}
+            for r in thin],
         "worst_coverage": [{"slug": r["slug"], "coverage": r["coverage"],
                             "score": r["mean_score"], "words": r["transcript_words"]}
                            for r in by_coverage[:5]],

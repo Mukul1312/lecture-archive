@@ -34,6 +34,69 @@ other lecture in the repository. That is the first evidence that these published
 not heavily abridged: a transcript missing large stretches would imply a rate far below what the
 recording can support.
 
+## The result that matters, and the metric that hid it
+
+**22 lectures aligned overnight — 18.5 hours, 86,004 transcript words, 95.3% placed, zero broken
+invariants, at 2.44× real time.**
+
+That 95% is the wrong headline, and it took a control to see why.
+
+**Coverage asks how much of the TRANSCRIPT could be placed.** A transcript that omits half its
+lecture still scores 99%, because the half it kept was placed perfectly. The question that
+decides whether these transcripts can serve as references is the other one: **how much of the
+AUDIO does the text account for?**
+
+Measuring silent stretches over two seconds gives a median of **82%** — which reads alarmingly
+until you run the same measure on the Melbourne reference, a caption transcript verified cue by
+cue:
+
+| | audio accounted for |
+|---|---:|
+| Melbourne, **verified complete** | **86%** |
+| the archive, median of 22 | 82% |
+| the archive, worst | **44%** |
+
+A complete transcript scores 86%, not 100%, because roughly a seventh of any lecture is genuine
+pause. So the typical archive transcript is **four points short of verified** — much better than
+the raw number suggests — and the story is entirely in the tail.
+
+**Seven of 22 are missing much of their lecture**, and every one of them reads 96–100% on
+coverage:
+
+| accounted for | coverage | wpm | lecture |
+|---:|---:|---:|---|
+| **44%** | 99% | 40 | cc-adi-lila 4.256-258 |
+| 59% | 99% | 41 | cc-adi 13.2-6 |
+| 64% | 100% | 42 | Padayatra arrival, Sankirtan is Life |
+| 66% | 99% | 64 | cc-adi-lila 9.46 |
+| 67% | 96% | 65 | cc-adi-lila 8.59-62 |
+| 68% | 99% | 54 | cc-adi-lila 9.49-51 |
+| 75% | 99% | 82 | Arrival from Bali |
+
+The first of those has words for **44% of a 47-minute recording** — 27 minutes with no text at
+all — while reporting 99% coverage. **Words per minute is the tell**: 40 wpm against a measured
+83 median means the transcript cannot be describing all the speech.
+
+This is what the corpus needed most: **the aligner triages its own references.** Before any of
+these can be used to measure recognition, the incomplete ones have to be found, and now they are
+found automatically rather than assumed absent.
+
+### Two things about that tail
+
+**The scripture classes are worse**: `cc-`/`sb-`/`bg-` titles account for a median 79% of their
+audio against 87% for darshans and arrivals. The effect is real and the cause is not established.
+
+The obvious explanation — untranscribed Sanskrit recitation — **is not supported by the test I
+ran**: transcripts in the more diacritic-dense half account for 83% against 81% for the less
+dense, essentially no difference and in the wrong direction. That test cannot settle it either
+way, though, and for a reason worth recording: **verse omitted from a transcript leaves no
+diacritics to count.** Deciding this needs recognition run over the silent stretches, not a
+property of the text that is missing.
+
+**Missing questioner turns are a smaller effect than expected**: transcripts recording no other
+speaker account for a median 99.4% of their own words placed, against 96.5% for those that do —
+three points, not the dominant factor.
+
 ## How, given there is nothing to start from
 
 Two walls stand in front of simply aligning a lecture. The Viterbi backtrack matrix is frames ×

@@ -1329,6 +1329,39 @@ absorbs a gap, so neighbouring words were not being stretched. What blank cannot
 The star leaves a span: **147 seconds absorbed in the first window alone** is audio the published
 transcript does not account for, and it is now a number rather than a silence.
 
+#### Overnight result (2026-09-24): 22 lectures, and a metric that hid the real problem
+
+**22 aligned, 18.5 hours, 86,004 words, 95.3% placed, ZERO broken invariants, 2.44x real time.**
+
+**But 95% coverage is the wrong headline.** Coverage asks how much of the TRANSCRIPT was placed;
+a transcript omitting half its lecture still scores 99%, because the half it kept was placed
+perfectly. The question that decides whether these can be references is how much of the AUDIO
+the text accounts for.
+
+| | audio accounted for |
+|---|---:|
+| Melbourne, **VERIFIED complete** (the control) | **86%** |
+| the archive, median of 22 | 82% |
+| the archive, worst | **44%** |
+
+The control is what makes it readable: a *complete* transcript scores 86%, not 100%, because
+about a seventh of any lecture is genuine pause. So the typical archive transcript is four
+points short of verified, and **the story is the tail**.
+
+**7 of 22 are missing much of their lecture, and every one reads 96-100% coverage.** The worst
+has words for 44% of a 47-minute recording - 27 minutes with no text - while reporting 99%.
+**Words per minute is the tell**: 40 wpm against a median 83. `align_archive --report` now
+computes `audio_accounted_for` and lists `transcripts_missing_much_of_their_lecture`.
+
+**This is the capability the corpus needed: the aligner triages its own references.**
+
+Two notes on the tail. **Scripture classes are worse** (`cc-`/`sb-`/`bg-` median 79% vs 87% for
+darshans and arrivals) - real, cause NOT established. The obvious explanation, untranscribed
+Sanskrit recitation, **is not supported by the test I ran** (diacritic-dense half 83% vs 81%,
+no difference and the wrong way) - and that test *cannot* settle it, because **verse omitted
+from a transcript leaves no diacritics to count**. Settling it needs recognition over the silent
+stretches. **Missing questioner turns are a smaller effect than expected**: 99.4% vs 96.5%.
+
 #### ⚠ What this corpus CANNOT do
 
 **Never quote a WER against these transcripts unqualified.** They omit questioner turns, so a
