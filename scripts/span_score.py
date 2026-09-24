@@ -122,5 +122,71 @@ def main() -> None:
             print(f"  {track:8} {rate:>7.1%}  of {summary[f'{track}_words']:,} words")
 
 
+
+
+def bootstrap_interval(units: list[dict], rounds: int = 1000, seed: int = 0,
+                       width: float = 0.95) -> tuple[float, float]:
+    """A confidence interval for an error rate, by resampling LECTURES with replacement.
+
+    Lectures, not words or spans. Words inside one lecture are not independent observations -
+    one speaker, one room, one tape, one transcriber - so resampling words would treat 81,630
+    correlated things as 81,630 independent ones and report an interval far tighter than the
+    evidence supports.
+
+    `units` are per-lecture {"words": n, "errors": n}. The rate is recomputed from resampled
+    totals each round, never averaged across lectures, so a long lecture carries its weight.
+    """
+    import random
+    if not units:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    rates = []
+    for _ in range(rounds):
+        drawn = [units[rng.randrange(len(units))] for _ in units]
+        words = sum(u["words"] for u in drawn)
+        if words:
+            rates.append(sum(u["errors"] for u in drawn) / words)
+    if not rates:
+        return (0.0, 0.0)
+    rates.sort()
+    tail = (1.0 - width) / 2
+    return (rates[int(tail * len(rates))], rates[min(len(rates) - 1, int((1 - tail) * len(rates)))])
+
+
+def beats(first: list[dict], second: list[dict], rounds: int = 1000, seed: int = 0,
+          width: float = 0.95) -> dict:
+    """Whether one system's advantage over another survives resampling the lectures.
+
+    Paired: both systems were measured on the same lectures, so each round draws the same
+    lecture indices for both and takes the difference. Resampling them independently would
+    discard the pairing and hide gaps that are real but small - which are exactly the gaps worth
+    a decision.
+    """
+    import random
+    if len(first) != len(second):
+        raise ValueError("both systems must be measured on the same lectures, in the same order")
+    if not first:
+        return {"difference": 0.0, "interval": (0.0, 0.0), "separated": False}
+
+    rng = random.Random(seed)
+    differences = []
+    for _ in range(rounds):
+        picks = [rng.randrange(len(first)) for _ in first]
+        a_words = sum(first[i]["words"] for i in picks)
+        b_words = sum(second[i]["words"] for i in picks)
+        if a_words and b_words:
+            differences.append(sum(first[i]["errors"] for i in picks) / a_words
+                               - sum(second[i]["errors"] for i in picks) / b_words)
+    differences.sort()
+    tail = (1.0 - width) / 2
+    low = differences[int(tail * len(differences))]
+    high = differences[min(len(differences) - 1, int((1 - tail) * len(differences)))]
+    measured = (sum(u["errors"] for u in first) / max(1, sum(u["words"] for u in first))
+                - sum(u["errors"] for u in second) / max(1, sum(u["words"] for u in second)))
+    # Separated only when the whole interval sits on one side of zero: if it straddles, this
+    # data cannot say which system is better, however far apart the two point estimates look.
+    return {"difference": round(measured, 5), "interval": (round(low, 5), round(high, 5)),
+            "separated": (low < 0 and high < 0) or (low > 0 and high > 0)}
+
 if __name__ == "__main__":
     main()
