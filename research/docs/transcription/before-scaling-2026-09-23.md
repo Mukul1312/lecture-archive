@@ -99,6 +99,45 @@ would cost if it is discovered after a thousand lectures rather than before.
     models actually chosen, and the confidence-gated route needs three of them, so triple the
     hours. Storage may exceed compute: 0.5 TB at $0.07/GB/month is about $38/month.
 
+## The five systems to run on the archive, and what they cost
+
+The routing plan — English to the local trio confidence-gated, Sanskrit to ElevenLabs+keyterms
+or the fusion, Bengali to flex `bn mixed` — **was derived from one lecture.** Testing whether it
+holds means running its candidates again on new recordings. Running only the already-chosen
+system cannot detect that the choice was wrong.
+
+Five systems, chosen so that every routing decision has both its incumbent and its closest rival:
+
+| system | its job in the test | on 20 hours |
+|---|---|---|
+| **ElevenLabs Scribe v2 + 50 keyterms** | incumbent for English (10.5%) and second-best Sanskrit (42.6%) | **0.2 h, ~$4** |
+| **Sarvam Saaras v4 verbatim + 50 keyterms** | the closest Indic rival (43.5%) — the one that could overturn ElevenLabs | **0.2 h, ~$4** |
+| **flex `bn mixed`** | the only system under 50% on Bengali; the archive has no alternative | 11.0 h |
+| **flex `en native`** | best local Indic (41.9%) and the selector's pivot | **14.1 h** |
+| **Whisper medium, skip rule off** | the baseline every figure has been quoted against | 9.9 h |
+
+**Deepgram is deliberately absent.** Last on every column, 21.8% English, and **100% of Bengali
+wrong**. Its only virtues — 517× real time and the best per-word confidence — were already
+rejected on cost: as a confidence source across the corpus it is $904, more than ElevenLabs
+costs as a transcriber.
+
+### The cost is inverted from what you would expect
+
+**The hosted models are the cheap ones here.** ElevenLabs works out near $0.22 per hour of audio,
+so twenty hours is about four dollars and twelve minutes of wall clock. The local models are the
+expensive ones — **35 hours of CPU between the three of them**, on a laptop with no GPU that is
+already running the aligner.
+
+That inverts the usual instinct to prefer local. For an evaluation of this size, the sensible
+order is: run the two hosted systems first (minutes, pocket change), see whether the Indic
+ranking holds, and only spend CPU-days on the local three if the answer is interesting.
+
+### Score only where the transcript can be trusted
+
+Every one of these is scored on the same spans: from the first aligned word to the last, with
+the six transcripts that stop early scored only as far as they reach. That is the one boolean —
+not a taxonomy of the audio, which [we have shown we cannot derive](archive-alignment-2026-09-23.md).
+
 ---
 
 ## Suggested order

@@ -50,6 +50,28 @@
   is where they belong: one-pass, cue-by-cue and segment-by-segment alignment each have their own
   way of going wrong and the same way of looking fine. And agreement with other systems is not
   accuracy — say which one a figure is.
+- **Do not infer what audio or data contains from a cheap proxy. Measure it, or say it is
+  unknown.** Five inferences of this kind failed here in one week, every one of them plausible
+  when made:
+    1. "Pure Sanskrit" filtered by **diacritic density** — fed fourteen Bengali songs to a
+       Sanskrit-only model and reported a loss that was really a win.
+    2. A second `log_softmax` called a **harmless no-op** by reasoning about normalisation
+       instead of printing the sum — it was 2.0, not 1.0, and every confidence was halved.
+    3. Bengali onset error of 0.32 s — the matcher had paired `ei` with **another occurrence
+       twenty-five seconds away**; the real figure was 0.05 s.
+    4. An 86% "verified complete" baseline — computed **inside** Melbourne's reference span
+       while the thing it controlled was computed over whole files. On the same basis it is 64%.
+    5. Melbourne's skipped head "almost certainly **kirtan**", inferred from loudness — it is a
+       spoken archival announcement.
+  The common shape is a number standing in for a property nobody checked. Before a proxy
+  becomes a claim: listen to the audio, print the intermediate value, or check that two figures
+  were computed the same way. A surprising result on this corpus is more often a defect in the
+  instrument than a discovery about the archive.
+- **Voice-activity detection does not separate chanting from teaching here**, so audio-type
+  labelling is not currently derivable: 27 s of speech in 90 for kirtan against 24 s for
+  teaching, and Whisper reads Sanskrit prayers as Malayalam. Mark **where a transcript can be
+  trusted** — one boolean per span, which the aligner already computes — rather than classifying
+  what the audio is.
 - Detailed research reports live in the MkDocs site at `research/` (`research/docs/<topic>/`),
   each topic opening with an answer-first `index.md`. Add new research there, not to `docs/`,
   and list it in the `nav` in `research/mkdocs.yml`. `docs/` keeps project state: handoffs,
