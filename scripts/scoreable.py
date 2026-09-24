@@ -50,7 +50,8 @@ class Span:
     start: float
     end: float
     words: list[str]
-    score: float = 0.0   # mean acoustic confidence of the alignment across this span
+    # Mean acoustic confidence across the span. ⚠ NOT A QUALITY GATE - see `summarise`.
+    score: float = 0.0
 
 
 def scoreable_spans(words: list[dict], max_gap: float = MAX_GAP,
@@ -80,6 +81,17 @@ def scoreable_spans(words: list[dict], max_gap: float = MAX_GAP,
 
 
 def summarise(spans: list[Span], duration: float) -> dict:
+    """Totals for one lecture.
+
+    ⚠ `alignment_confidence` MUST NOT be used as a quality threshold. The Melbourne reference -
+    verified cue by cue against the audio, so the one alignment known to be correct - scores
+    0.2134, while these published transcripts average 0.3575 and **21 of 23 score above it**. A
+    gate set anywhere above 0.21 would reject the good material and keep the doubtful.
+
+    It measures how cleanly the audio matched the letters it was told to find, which varies with
+    the recording, the speaker's pace and how much Sanskrit is in it - not with whether the
+    transcript is any good. A number that ranks is not thereby a number that grades.
+    """
     seconds = sum(s.end - s.start for s in spans)
     words = sum(len(s.words) for s in spans)
     # Weighted by words, so a long confident span is not outvoted by a short doubtful one.

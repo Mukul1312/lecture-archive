@@ -103,6 +103,9 @@ lecture, and measure the corpus's real average length, which every cost figure m
 - [The whole archive, timed](archive-alignment-2026-09-23.md) — the official archive has **100
   lectures with audio and a published transcript**, so the one-lecture dependency need not stand.
   Their prose has no timings and no diarisation, which makes placing it the harder test.
+- [Preparing found audio to measure on](data-preparation-2026-09-24.md) — what stands between
+  downloaded lectures and a number worth deciding on. Includes the finding that **a known-correct
+  alignment scores worse than the suspect ones**, so alignment confidence is not a quality gate.
 
 **Surveys** — what exists, before anything was run.
 

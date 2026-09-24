@@ -72,6 +72,27 @@
   teaching, and Whisper reads Sanskrit prayers as Malayalam. Mark **where a transcript can be
   trusted** — one boolean per span, which the aligner already computes — rather than classifying
   what the audio is.
+- **A number that ranks is not thereby a number that grades.** Before any threshold is set on a
+  score, find out what a *known-correct* case scores. `alignment_confidence` in
+  `scripts/scoreable.py` is the standing example: the Melbourne reference, verified cue by cue,
+  scores **0.2134** while the archive's published transcripts average **0.3575** and 21 of 23
+  score above it. Any gate above 0.21 rejects the one alignment known to be right.
+- **Audio preparation is part of the comparison definition, not a detail beneath it.** MMS_FA is
+  gain-invariant; faster-whisper is not. Gain, channel choice and decoder therefore have to be
+  recorded alongside the text normalisation in `scripts/transcript_accuracy.normalise`, or
+  "which recogniser is best" partly measures which one liked our preparation. Two live facts:
+  every stage blind-downmixes stereo (`.mean(axis=1)`) and **31 of 75 stereo lectures lose over
+  3 dB of the 2-5 kHz consonant band** to the sum; and the aligner reads through libsndfile while
+  the recognisers read through ffmpeg, so on damaged files the two sides use different clocks.
+- **Do not filter this corpus by an accept/reject threshold borrowed from a training set.**
+  VoxPopuli, MLS, People's Speech and YODAS all drop material above a CER/WER cut, but they
+  filter *training* data with the same model family they then train - circular for a benchmark,
+  where the gatekeeper must be a system that is not being graded. And discarding audio from a
+  devotional archive of a departed teacher is a loss, not a tidy-up.
+- **Never run denoising or enhancement in the transcription path.** `scripts/youtube_enhance/`
+  has a working DeepFilterNet stage and it belongs to a different product: it optimises what a
+  devotee hears, while this pipeline optimises what a recogniser hears, and enhancement is
+  documented to hurt recognition.
 - Detailed research reports live in the MkDocs site at `research/` (`research/docs/<topic>/`),
   each topic opening with an answer-first `index.md`. Add new research there, not to `docs/`,
   and list it in the `nav` in `research/mkdocs.yml`. `docs/` keeps project state: handoffs,

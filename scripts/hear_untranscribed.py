@@ -33,6 +33,8 @@ ALIGNED = REPO / "data/reference/analysis/archive-alignment"
 # Long enough to tell chanting from speech, short enough to listen to without losing the morning.
 SAMPLE_SECONDS = 90.0
 
+NOT_YET = "(not transcribed"
+
 
 @dataclass
 class Stretch:
@@ -135,39 +137,65 @@ def transcribe(path: Path, model) -> str:
 
 
 def main() -> None:
-    from faster_whisper import WhisperModel
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-transcribe", action="store_true",
+                        help="cut the clips and build the page, skip the recogniser")
+    args = parser.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
     stretches = melbourne_stretches() + archive_stretches()
     print(f"{len(stretches)} untranscribed stretches to listen to\n", flush=True)
 
-    model = WhisperModel("medium", device="cpu", compute_type="int8")
-    results = []
+    # Cut every clip FIRST. The clips are the point - they let the question be settled by ear -
+    # and they take a second each, while the recogniser takes minutes and sometimes stalls
+    # entirely on chanting, which is exactly what these stretches tend to contain.
+    ready = []
     for stretch in stretches:
         clip = OUT / f"{stretch.label}.wav"
-        print(f"{stretch.label}  ({stretch.start / 60:.1f}-{stretch.end / 60:.1f} min)", flush=True)
-        if not cut(stretch, clip, SAMPLE_SECONDS):
+        if clip.exists() or cut(stretch, clip, SAMPLE_SECONDS):
+            ready.append((stretch, clip))
+            print(f"  cut {stretch.label}  ({stretch.start / 60:.1f}-{stretch.end / 60:.1f} min)",
+                  flush=True)
+
+    # Resume from a previous run, but NOT from its placeholders - a clip that was only cut
+    # records "not transcribed", and treating that as a result means it never gets one.
+    heard_before = {}
+    record = OUT / "heard.json"
+    if record.exists():
+        heard_before = {r["label"]: r["whisper_heard"]
+                        for r in json.loads(record.read_text(encoding="utf-8"))
+                        if not r["whisper_heard"].startswith(NOT_YET)}
+
+    # Build the whole list FIRST, with placeholders, then fill entries in place. Appending as
+    # each clip finishes means an interrupted run leaves a page and a record holding only what
+    # it got to - which is how a complete page of eight became a page of two.
+    results = [{
+        "label": s.label, "why": s.why, "source": s.source.name,
+        "from_minute": round(s.start / 60, 1), "to_minute": round(s.end / 60, 1),
+        "minutes_untranscribed": round((s.end - s.start) / 60, 1),
+        "clip": c.name, "sampled_seconds": SAMPLE_SECONDS,
+        "whisper_heard": heard_before.get(s.label) or f"{NOT_YET} - listen to the clip)",
+    } for s, c in ready]
+    record.write_text(json.dumps(results, indent=1, ensure_ascii=False), encoding="utf-8")
+    write_page(results)
+
+    model = None
+    for entry, (stretch, clip) in zip(results, ready):
+        if not entry["whisper_heard"].startswith(NOT_YET) or args.no_transcribe:
             continue
-        heard = transcribe(clip, model)
-        results.append({
-            "label": stretch.label, "why": stretch.why,
-            "source": stretch.source.name,
-            "from_minute": round(stretch.start / 60, 1),
-            "to_minute": round(stretch.end / 60, 1),
-            "minutes_untranscribed": round((stretch.end - stretch.start) / 60, 1),
-            "clip": clip.name,
-            "sampled_seconds": SAMPLE_SECONDS,
-            "whisper_heard": heard,
-        })
-        print(f"    {heard[:150]}\n", flush=True)
+        if model is None:
+            from faster_whisper import WhisperModel
+            model = WhisperModel("medium", device="cpu", compute_type="int8")
+        print(f"  transcribing {stretch.label} ...", flush=True)
+        entry["whisper_heard"] = transcribe(clip, model)
+        print(f"    {entry['whisper_heard'][:130]}", flush=True)
+        record.write_text(json.dumps(results, indent=1, ensure_ascii=False), encoding="utf-8")
+        write_page(results)
 
-    (OUT / "heard.json").write_text(json.dumps(results, indent=1, ensure_ascii=False),
-                                    encoding="utf-8")
     page = write_page(results)
-    print(f"{len(results)} clips and transcripts -> {OUT}")
+    print(f"\n{len(results)} clips -> {OUT}")
     print(f"open this to listen: {page}")
-
-
 
 
 PAGE = """<!doctype html>
