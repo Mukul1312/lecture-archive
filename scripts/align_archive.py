@@ -217,20 +217,21 @@ def main() -> None:
 # A pause longer than this is not breathing: it is audio the transcript has no words for.
 SILENT_GAP = 2.0
 
-# What the same measure gives on the Melbourne reference - a caption transcript verified cue by
-# cue against the audio. It is NOT 100%, because roughly a seventh of any lecture is genuine
-# pause, so this is the number an honest, complete transcript scores. Without it, 81% reads as
-# alarming rather than as five points short of verified.
-VERIFIED_BASELINE = 0.86
+# Audio left after the last transcribed word, beyond which the transcript is not merely trailing
+# off but has stopped while the recording continued.
+UNTRANSCRIBED_TAIL = 300.0
 
 
 def audio_accounted_for(words: list[dict], duration: float) -> float:
-    """The share of the recording the transcript actually has words for.
+    """The share of the recording the transcript has any words for.
 
-    This is a different question from coverage, and confusing the two is easy. Coverage asks how
-    much of the TRANSCRIPT could be placed - it reads 99% for a transcript that omits half the
-    lecture, because the half it kept was placed perfectly. This asks how much of the AUDIO the
-    text accounts for, which is what decides whether a transcript can serve as a reference.
+    Useful, but do NOT read it as a completeness score against some ideal. The obvious control -
+    run the same measure on the verified Melbourne reference - gives 64%, because that reference
+    deliberately skips 11 minutes of kirtan at the head and 12 at the tail. A transcript can be
+    perfectly faithful to the class it covers and still score low here, because recordings
+    contain things nobody set out to transcribe.
+
+    `stops_early` is the measure that means something on its own.
     """
     if not words or duration <= 0:
         return 0.0
@@ -238,6 +239,22 @@ def audio_accounted_for(words: list[dict], duration: float) -> float:
                  if b["start"] - a["end"] > SILENT_GAP)
     silent += words[0]["start"] + max(0.0, duration - words[-1]["end"])
     return round(1 - silent / duration, 4)
+
+
+def stops_early(words: list[dict], duration: float) -> float:
+    """Seconds of recording left after the last word the transcript had.
+
+    This is the failure that ruins a reference, and it is visible without any baseline: the
+    aligner places every word it was given, runs out, and the recording carries on. On
+    `cc-adi-lila 4.256-258` the text ends at 23.7 minutes of 47.2, and the remaining audio is at
+    the same loudness as the rest - he is still speaking and nobody wrote it down.
+
+    A recogniser scored against such a transcript is charged for every word it correctly hears
+    after that point, which would make the pipeline look far worse than it is.
+    """
+    if not words or duration <= 0:
+        return 0.0
+    return round(max(0.0, duration - words[-1]["end"]), 1)
 
 
 def report() -> dict:
@@ -256,8 +273,9 @@ def report() -> dict:
 
     for r in rows:
         r["audio_accounted_for"] = audio_accounted_for(r["words"], r["audio_seconds"])
-    thin = sorted((r for r in rows if r["audio_accounted_for"] < VERIFIED_BASELINE - 0.10),
-                  key=lambda r: r["audio_accounted_for"])
+        r["seconds_after_transcript_ends"] = stops_early(r["words"], r["audio_seconds"])
+    thin = sorted((r for r in rows if r["seconds_after_transcript_ends"] > UNTRANSCRIBED_TAIL),
+                  key=lambda r: -r["seconds_after_transcript_ends"])
 
     words = sum(r["transcript_words"] for r in rows)
     placed = sum(r["words_placed"] for r in rows)
@@ -279,11 +297,12 @@ def report() -> dict:
         "lectures_with_broken_invariants": broken,
         "audio_accounted_for_median": round(
             sorted(r["audio_accounted_for"] for r in rows)[len(rows) // 2], 4),
-        "audio_accounted_for_on_the_verified_reference": VERIFIED_BASELINE,
-        "transcripts_missing_much_of_their_lecture": [
-            {"slug": r["slug"], "accounted_for": r["audio_accounted_for"],
-             "coverage": r["coverage"],
-             "words_per_minute": round(r["transcript_words"] / (r["audio_seconds"] / 60))}
+        "audio_accounted_for_on_the_melbourne_reference": 0.64,
+        "transcripts_that_stop_before_the_recording_does": [
+            {"slug": r["slug"],
+             "minutes_left_untranscribed": round(r["seconds_after_transcript_ends"] / 60, 1),
+             "audio_minutes": round(r["audio_seconds"] / 60, 1),
+             "coverage": r["coverage"]}
             for r in thin],
         "worst_coverage": [{"slug": r["slug"], "coverage": r["coverage"],
                             "score": r["mean_score"], "words": r["transcript_words"]}

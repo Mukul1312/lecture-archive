@@ -1334,24 +1334,30 @@ transcript does not account for, and it is now a number rather than a silence.
 **22 aligned, 18.5 hours, 86,004 words, 95.3% placed, ZERO broken invariants, 2.44x real time.**
 
 **But 95% coverage is the wrong headline.** Coverage asks how much of the TRANSCRIPT was placed;
-a transcript omitting half its lecture still scores 99%, because the half it kept was placed
-perfectly. The question that decides whether these can be references is how much of the AUDIO
-the text accounts for.
+a transcript omitting half its lecture still scores 99%.
 
-| | audio accounted for |
-|---|---:|
-| Melbourne, **VERIFIED complete** (the control) | **86%** |
-| the archive, median of 22 | 82% |
-| the archive, worst | **44%** |
+⚠ **MY FIRST CONTROL WAS WRONG AND THE STEWARD CAUGHT IT.** I compared "audio accounted for" -
+archive median 82% against Melbourne 86% - and called the archive four points short of complete.
+**The two were not computed the same way**: Melbourne's 86% was measured INSIDE its reference
+span, the archive's over WHOLE files. On the archive's own formula **Melbourne scores 64%**,
+because its reference skips **11.4 min at the head and 12.5 at the tail** - stretches running at
+-18 to -21 dB against -22 to -24 dB for the transcribed middle, i.e. LOUDER than the class, almost
+certainly kirtan. The control excluded exactly what it was being used to detect. Like for like,
+the archive transcripts are MORE complete than Melbourne's.
 
-The control is what makes it readable: a *complete* transcript scores 86%, not 100%, because
-about a seventh of any lecture is genuine pause. So the typical archive transcript is four
-points short of verified, and **the story is the tail**.
+**The replacement needs no baseline: how much recording is left after the transcript's last
+word?** `align_archive --report` reports `transcripts_that_stop_before_the_recording_does`.
 
-**7 of 22 are missing much of their lecture, and every one reads 96-100% coverage.** The worst
-has words for 44% of a 47-minute recording - 27 minutes with no text - while reporting 99%.
-**Words per minute is the tell**: 40 wpm against a median 83. `align_archive --report` now
-computes `audio_accounted_for` and lists `transcripts_missing_much_of_their_lecture`.
+| min left | of | lecture |
+|---:|---:|---|
+| **29.5** | 92.2 | cc-adi 13.2-6 |
+| **23.5** | 47.2 | cc-adi-lila 4.256-258 |
+| 14.9 | 86.3 | cc-adi-lila 9.49-51 |
+
+**6 of 24, every one reading 99-100% coverage.** On cc-adi-lila 4.256-258 the text ends at 23.7
+of 47.2 min and the rest is at the SAME loudness - he is still speaking, nobody wrote it down.
+**None leaves >5 min BEFORE the transcript starts**, so unlike Melbourne these begin at the
+beginning. They are not unusable: they are usable **up to where their transcript ends**.
 
 **This is the capability the corpus needed: the aligner triages its own references.**
 

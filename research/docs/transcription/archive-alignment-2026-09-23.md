@@ -39,47 +39,52 @@ recording can support.
 **22 lectures aligned overnight — 18.5 hours, 86,004 transcript words, 95.3% placed, zero broken
 invariants, at 2.44× real time.**
 
-That 95% is the wrong headline, and it took a control to see why.
+That 95% is the wrong headline.
 
 **Coverage asks how much of the TRANSCRIPT could be placed.** A transcript that omits half its
 lecture still scores 99%, because the half it kept was placed perfectly. The question that
-decides whether these transcripts can serve as references is the other one: **how much of the
-AUDIO does the text account for?**
+decides whether these can serve as references is the opposite one: **does the transcript cover
+the recording?**
 
-Measuring silent stretches over two seconds gives a median of **82%** — which reads alarmingly
-until you run the same measure on the Melbourne reference, a caption transcript verified cue by
-cue:
+### A control that did not hold, and what replaced it
 
-| | audio accounted for |
-|---|---:|
-| Melbourne, **verified complete** | **86%** |
-| the archive, median of 22 | 82% |
-| the archive, worst | **44%** |
+The first attempt compared the share of audio with words against it — the archive's median 82%
+against 86% for the verified Melbourne reference — and concluded the archive was four points
+short of complete.
 
-A complete transcript scores 86%, not 100%, because roughly a seventh of any lecture is genuine
-pause. So the typical archive transcript is **four points short of verified** — much better than
-the raw number suggests — and the story is entirely in the tail.
+**That comparison was wrong, and the steward caught it.** The two numbers were not computed the
+same way. Melbourne's 86% was measured *inside its reference span*; the archive's 82% was
+measured over *whole files*. Put Melbourne on the archive's own formula and it scores **64%** —
+because the Melbourne reference skips **11.4 minutes at the head and 12.5 at the tail**, and
+those stretches run at −18 to −21 dB against −22 to −24 dB for the transcribed middle. They are
+louder than the class. Almost certainly kirtan, deliberately not transcribed.
 
-**Seven of 22 are missing much of their lecture**, and every one of them reads 96–100% on
-coverage:
+So the control was measured by excluding exactly the thing it was being used to detect. On a
+like-for-like basis the archive transcripts are **more** complete than Melbourne's, not less.
 
-| accounted for | coverage | wpm | lecture |
-|---:|---:|---:|---|
-| **44%** | 99% | 40 | cc-adi-lila 4.256-258 |
-| 59% | 99% | 41 | cc-adi 13.2-6 |
-| 64% | 100% | 42 | Padayatra arrival, Sankirtan is Life |
-| 66% | 99% | 64 | cc-adi-lila 9.46 |
-| 67% | 96% | 65 | cc-adi-lila 8.59-62 |
-| 68% | 99% | 54 | cc-adi-lila 9.49-51 |
-| 75% | 99% | 82 | Arrival from Bali |
+The replacement needs no baseline, because the failure is visible on its own terms:
 
-The first of those has words for **44% of a 47-minute recording** — 27 minutes with no text at
-all — while reporting 99% coverage. **Words per minute is the tell**: 40 wpm against a measured
-83 median means the transcript cannot be describing all the speech.
+**How much recording is left after the transcript's last word?**
 
-This is what the corpus needed most: **the aligner triages its own references.** Before any of
-these can be used to measure recognition, the incomplete ones have to be found, and now they are
-found automatically rather than assumed absent.
+| minutes left | of | lecture |
+|---:|---:|---|
+| **29.5** | 92.2 | cc-adi 13.2-6 |
+| **23.5** | 47.2 | cc-adi-lila 4.256-258 |
+| 14.9 | 86.3 | cc-adi-lila 9.49-51 |
+| 9.8 | 53.8 | cc-adi-lila 9.46 |
+| 9.4 | 43.9 | Padayatra arrival |
+| 7.1 | 60.8 | BG 3.37 |
+
+**Six of twenty-four, and every one reads 99–100% coverage.** On `cc-adi-lila 4.256-258` the text
+ends at 23.7 minutes of 47.2, and the rest of the recording is at the same loudness as the part
+that was transcribed — he is still speaking and nobody wrote it down.
+
+None of these lectures leaves more than five minutes *before* the transcript starts, which is
+itself worth knowing: unlike Melbourne, the archive's transcripts begin at the beginning.
+
+**This is what matters for using the corpus.** A recogniser scored against a transcript that
+stops early is charged for every word it correctly hears after that point. These six are not
+unusable — they are usable *up to where their transcript ends*, and now that point is known.
 
 ### Two things about that tail
 
