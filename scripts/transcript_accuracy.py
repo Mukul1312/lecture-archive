@@ -54,7 +54,14 @@ _CONTRACTIONS = ((r"n[’']t\b", " not"), (r"[’']ll\b", " will"), (r"[’']ve\
 _NOT_SPEAKERS = {"translation", "purport", "synonyms", "note", "text", "verse", "chapter"}
 # A cue often carries both sides of an exchange, one speaker to a line, so the label is
 # matched at the start of any line rather than only the first.
-_SPEAKER = re.compile(r"(?:(?<=\n)|\A)[ \t]*([A-Z][\w.]*(?: [A-Z][\w.]*){0,3})[ \t]*:[ \t]*")
+# A speaker's name may begin with a capital the ASCII range cannot see. The official archive
+# writes "Śrīmad Gour Govinda Swāmī:" 212 times, and `[A-Z]` matches none of them, so the label
+# survived into both scoring and alignment as though it had been spoken aloud. Only UPPERCASE
+# IAST letters are added: the lowercase ones would swallow ordinary Sanskrit words - `śayyā`
+# was caught that way while this was being written.
+_UPPER = "A-ZĀĪŪṚṜḶḸṀṂḤÑṄṆṬḌŚṢ"
+_SPEAKER = re.compile(
+    rf"(?:(?<=\n)|\A)[ \t]*([{_UPPER}][\w.]*(?: [{_UPPER}][\w.]*){{0,3}})[ \t]*:[ \t]*")
 
 
 def expand_contractions(text: str) -> str:

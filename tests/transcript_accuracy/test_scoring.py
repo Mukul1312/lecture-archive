@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.transcript_accuracy import fold, has_diacritics, load_hypothesis, recognisable, score, skeleton
+from scripts.transcript_accuracy import (fold, has_diacritics, load_hypothesis, recognisable,
+                                         score, skeleton, strip_speaker_label)
 
 
 class TokenTests(unittest.TestCase):
@@ -83,3 +84,38 @@ class HypothesisSpanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiacriticSpeakerLabelTests(unittest.TestCase):
+    """A speaker's name may begin with a capital outside the ASCII range.
+
+    The official archive writes "Śrīmad Gour Govinda Swāmī:" 212 times. `[A-Z]` matches none of
+    them, so for 227 lines the label survived into scoring as a word the machine had failed to
+    hear, and into forced alignment as audio to find.
+    """
+
+    def test_a_name_beginning_with_an_iast_capital_is_a_speaker_label(self):
+        self.assertEqual(
+            strip_speaker_label("Śrīmad Gour Govinda Swāmī: Ungrateful.").strip(),
+            "Ungrateful.")
+
+    def test_the_ascii_names_still_work(self):
+        self.assertEqual(strip_speaker_label("Mr Peter: Yes, I think so.").strip(),
+                         "Yes, I think so.")
+        self.assertEqual(strip_speaker_label("Devotee: There's no loss.").strip(),
+                         "There's no loss.")
+
+    def test_a_lowercase_sanskrit_word_is_not_mistaken_for_a_name(self):
+        # `śayyā` was caught this way by a first attempt that widened the class too far.
+        self.assertIn("śayyā", strip_speaker_label("śayyā: a bed"))
+
+    def test_a_name_spoken_mid_sentence_is_left_alone(self):
+        # "They asked Kṛṣṇa: ..." is narration - the name was said aloud.
+        line = "Our Vyāsadeva is... They asked Kṛṣṇa: kṛṣṇa-bhakta hao tumi"
+        self.assertEqual(strip_speaker_label(line), line)
+
+    def test_spoken_verse_that_merely_looks_like_a_label_survives(self):
+        # The Melbourne reference opens a verse translation with "Śrī Mārkaṇḍeya said:" - every
+        # word of which was spoken. A rule that removed it would delete real speech.
+        line = "Śrī Mārkaṇḍeya said: O Lord Hari,"
+        self.assertEqual(strip_speaker_label(line), line)
