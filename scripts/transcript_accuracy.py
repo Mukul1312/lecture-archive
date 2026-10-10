@@ -101,6 +101,27 @@ def has_diacritics(word: str) -> bool:
     return any(unicodedata.combining(c) for c in unicodedata.normalize("NFKD", word))
 
 
+def folded_with_marks(text: str) -> tuple[list[str], list[bool]]:
+    """Fold a reference to tokens, and say for each token whether its word carried diacritics.
+
+    `fold` splits on punctuation, so one written word can become two tokens: `Vedānta-sūtras,`
+    folds to `vedanta` and `sutras`. Marking tokens by zipping them against the *words* they
+    came from therefore misaligns, and on a 3,735-word span it misaligns by 94 — which is why
+    this exists. The caller that tried `has_diacritics` word by word and compared lengths fell
+    back to **all English** on every real span, silently emptying the Indic track: 214
+    diacritic words reported as none.
+
+    Folding each word separately and carrying its mark to every token it produces gives the
+    same token sequence as folding the whole string, with counts that cannot disagree.
+    """
+    tokens, marks = [], []
+    for word in text.split():
+        for token in fold(word):
+            tokens.append(token)
+            marks.append(has_diacritics(word))
+    return tokens, marks
+
+
 def skeleton(token: str) -> str:
     text = token
     for source, target in _SKELETON:

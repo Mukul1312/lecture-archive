@@ -20,7 +20,8 @@ import argparse
 import json
 from pathlib import Path
 
-from scripts.transcript_accuracy import (fold, has_diacritics, indic_language, normalise, score)
+from scripts.transcript_accuracy import (fold, folded_with_marks, indic_language, normalise,
+                                          score)
 
 REPO = Path(__file__).resolve().parents[1]
 SPANS = REPO / "data/reference/analysis/scoreable-spans.json"
@@ -51,12 +52,12 @@ def score_span(reference_words: list[str], heard_words: list[str]) -> dict:
                 "english": {"words": 0, "exact": 0, "near": 0, "errors": 0},
                 "indic": {"words": 0, "exact": 0, "near": 0, "errors": 0}}
 
-    # `fold` drops fillers and punctuation, so diacritics must be read off the original words.
-    original = normalise(" ".join(reference_words)).split()
-    line = " ".join(original)
-    marks = [has_diacritics(w) for w in original]
-    if len(marks) != len(reference):                 # folding changed the count; fall back
-        marks = [False] * len(reference)
+    # `fold` drops fillers and splits on punctuation, so diacritics must be read off the
+    # written words and carried to every token each one produces. Zipping tokens against
+    # words instead, and falling back when the lengths differed, marked every real span
+    # English and reported the emptied Indic track as a clean zero.
+    line = normalise(" ".join(reference_words))
+    reference, marks = folded_with_marks(line)
 
     result = score(reference, marks, hypothesis)
     return {"reference_words": result["reference_words"],

@@ -72,6 +72,23 @@
   teaching, and Whisper reads Sanskrit prayers as Malayalam. Mark **where a transcript can be
   trusted** — one boolean per span, which the aligner already computes — rather than classifying
   what the audio is.
+- **A silent fallback is worse than a crash, and this one emptied a whole track.**
+  `span_score.score_span` marked Indic words by zipping folded tokens against written words and
+  fell back to "all English" when the counts differed. `fold` splits on punctuation, so
+  `Vedānta-sūtras,` becomes two tokens and the counts differ on every real span: 214 diacritic
+  words were reported as **0 Indic words**, and the output looked clean. Use
+  `scripts.transcript_accuracy.folded_with_marks`, which folds each word and carries its mark to
+  every token it produces. When a track reports zero, suspect the instrument before the data.
+- **Span scoring must be worse-than-whole-file-proof, and that check is free.** Restricting a
+  grade to the spans where the transcript can be trusted should only ever *help*, since it
+  removes stretches nobody wrote down. So a lecture scoring far worse inside its spans than over
+  its whole file does not have a recognition problem - its words are in the wrong places, and
+  the spans were built from those places. `scripts/compare_hosted.MISPLACED_RATIO` is the gate,
+  and it is measured: five sound lectures ran 1.00-1.23 across two systems while the broken one
+  hit 2.11 and 5.64, with nothing in between. This is the alignment gate `alignment_confidence`
+  could not be - baseline-free, and it needs no known-good case. One straw in the wind: the
+  lecture it caught scores 0.1978, below Melbourne's verified 0.2134. That is n=1 and not yet a
+  rule.
 - **A number that ranks is not thereby a number that grades.** Before any threshold is set on a
   score, find out what a *known-correct* case scores. `alignment_confidence` in
   `scripts/scoreable.py` is the standing example: the Melbourne reference, verified cue by cue,
