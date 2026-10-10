@@ -36,11 +36,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from scripts.compare_hosted import (MISPLACED_RATIO, overall_error, paired,
                                     score_lecture_by_language, score_span_by_language,
                                     whole_file_error, words_for)
+from scripts.gretil_verses import load as load_gretil
 from scripts.transcript_accuracy import has_diacritics
 from scripts.verse_match import VerseIndex
 
@@ -71,6 +73,20 @@ NOT_INDIC = {"spanish", "english", "german", "french", "portuguese", "hungarian"
 #     left alone rather than repaired, since a repair asserted without checking the source is
 #     exactly the kind of guess this corpus does not need.
 LOST_CHARACTER = "�"
+
+# A combining mark with no base letter in front of it means the letter it belonged to is gone.
+# 1,962 KKSongs lines carry one, and the worst of them collapse to near-nonsense that matches
+# almost anything: `nanenanam ninun nenam` survived a 90%-precision read as the single wrong
+# identification, and once a length-comparable form of it existed it began contributing to the
+# verse score. Same category as U+FFFD - information lost, so it cannot be ground truth. This
+# is NOT the harmless case of an acute sitting ON an `m`, which `fold` and `skeleton` strip
+# before anything is compared.
+ORPHANED_MARK = re.compile(r"(?:^|\s)[̀-ͯ॑-॔]")
+
+
+def damaged(line: str) -> bool:
+    """Has this printed line lost characters, making it unusable as ground truth?"""
+    return LOST_CHARACTER in line or bool(ORPHANED_MARK.search(line))
 
 
 def song_windows(songs: list[dict], sizes: tuple[int, ...] = (1, 2, 3),
@@ -105,7 +121,7 @@ def song_windows(songs: list[dict], sizes: tuple[int, ...] = (1, 2, 3),
             line = raw.strip()
             if not line or line.startswith("("):
                 continue
-            if LOST_CHARACTER in line:
+            if damaged(line):
                 segments.append([])
                 continue
             segments[-1].append(line)
@@ -127,6 +143,23 @@ def song_windows(songs: list[dict], sizes: tuple[int, ...] = (1, 2, 3),
 # words nobody said there. Some slack is needed because the transcript's punctuation and the
 # printed edition's do not agree.
 LENGTH_BAND = (0.7, 1.4)
+
+
+def best_printed_form(windows: list[str], run_words: int) -> str:
+    """Among the printed forms of ONE identified passage, the one closest in length to the run.
+
+    Identification and length are separate questions, and conflating them cost real coverage.
+    A nine-word run quoting both halves of SB 1.2.10 matched the verse's five-word pada, because
+    containment scoring gives a short window the same 1.0 as the whole verse and the tie broke
+    on index order. The whole nine-word verse was sitting in the index unused.
+
+    ⚠ `windows` must already be filtered to forms that score as well as the winner. Choosing by
+    length alone was a defect: for a KKSongs match the passage is a whole SONG, so every line
+    of it is a candidate, and three correct matches were re-pointed at unrelated lines of the
+    right song. For a GRETIL match the passage is one verse and its windows are that verse's
+    own padas, which is the case this was written for.
+    """
+    return min(windows, key=lambda w: (abs(len(w.split()) - run_words), -len(w)))
 
 
 def comparable_length(run_words: int, printed_words: int) -> bool:
@@ -235,8 +268,21 @@ def main() -> None:
     songs = [json.loads(line) for line in SONGS.read_text(encoding="utf-8").splitlines()
              if line.strip()]
     verses, passages = song_windows(songs)
-    print(f"corpus: {len(verses):,} windows from "
-          f"{len(set(passages)):,} Indic songs (KKSongs)\n")
+    from_songs = len(verses)
+
+    # GRETIL carries what a song book cannot: the Bhāgavatam and Gītā this archive is built on.
+    # Each verse contributes itself AND its pādas, labelled with its own address, so a
+    # four-word quotation can match something its own size instead of being identified and
+    # then refused for scoring.
+    scripture = load_gretil()
+    for verse in scripture:
+        for window in verse.windows():
+            verses.append(window)
+            passages.append(verse.address)
+
+    print(f"corpus: {len(verses):,} windows - {from_songs:,} from "
+          f"{len(set(passages[:from_songs])):,} Indic songs (KKSongs) and "
+          f"{len(verses) - from_songs:,} from {len(scripture):,} printed verses (GRETIL)\n")
     index = VerseIndex(verses, passages=passages)
 
     manifest = json.loads(SPANS.read_text(encoding="utf-8"))
@@ -263,6 +309,14 @@ def main() -> None:
                 report["unmatched"].append(entry)
                 continue
             matched += 1
+            # Only forms of the identified passage that account for the run as well as the
+            # winner does. Length then breaks the tie among equals - it never overrules the
+            # similarity that established the match.
+            equal = [m.verse for m in index.rank(run["text"], top=80)
+                     if m.passage == found.passage and m.score >= found.score - 1e-9]
+            printed_form = best_printed_form(equal or [found.verse], run["words"])
+            found = found.__class__(printed_form, found.score, found.margin, found.index,
+                                    found.passage)
             printed = len(found.verse.split())
             entry.update({"verse": found.verse, "song": found.passage,
                           "score": round(found.score, 3), "margin": round(found.margin, 3),

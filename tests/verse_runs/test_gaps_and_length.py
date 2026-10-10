@@ -120,3 +120,53 @@ class CorpusHygieneTests(unittest.TestCase):
                   "lyrics": ["alpha beta gamma", "j\ufffdana lost line", "delta epsilon zeta"]}]
         verses, _ = song_windows(songs, sizes=(2,))
         self.assertEqual(verses, [])
+
+
+class BestPrintedFormTests(unittest.TestCase):
+    """Identification and length are separate questions, and conflating them cost coverage.
+
+    A nine-word run quoting both halves of SB 1.2.10 matched the verse's five-word pada,
+    because containment scoring gives a short window the same 1.0 as the whole verse and the
+    tie broke on index order. The whole nine-word verse was in the index, unused, and the
+    length gate then refused to score the match at all.
+    """
+
+    def test_the_form_closest_in_length_to_the_run_is_chosen(self):
+        from scripts.verse_runs import best_printed_form
+        forms = ["jivasya tattvajijnasa nartho yasceha karmabhih",
+                 "kamasya nendriyapritirlabho jiveta yavata jivasya tattvajijnasa nartho "
+                 "yasceha karmabhih"]
+        self.assertEqual(len(best_printed_form(forms, run_words=9).split()), 9)
+
+    def test_a_short_run_still_gets_the_short_form(self):
+        from scripts.verse_runs import best_printed_form
+        forms = ["alpha beta gamma", "alpha beta gamma delta epsilon zeta eta theta"]
+        self.assertEqual(best_printed_form(forms, run_words=3), "alpha beta gamma")
+
+    def test_ties_on_length_prefer_the_fuller_text(self):
+        from scripts.verse_runs import best_printed_form
+        forms = ["a b c", "aa bb cc dd"]
+        self.assertEqual(best_printed_form(forms, run_words=4), "aa bb cc dd")
+
+
+class OrphanedMarkTests(unittest.TestCase):
+    """A combining mark with no base letter means the letter it belonged to is gone.
+
+    `nanenanam ninun nenam` was the single wrong identification in a 90%-precision read, and
+    once a length-comparable form of it existed it started contributing to the verse score.
+    The length gate had been protecting against it by accident, which is not a guard.
+    """
+
+    def test_a_line_with_a_detached_diacritic_is_damaged(self):
+        from scripts.verse_runs import damaged
+        self.assertTrue(damaged("n\u0101nen\u0101nam \u0301 ninun nenam \u0301"))
+
+    def test_a_diacritic_sitting_on_its_letter_is_fine(self):
+        # The anusvara mis-decode: cosmetic, because fold and skeleton strip combining marks
+        # before anything is compared. Dropping these would discard 5,482 usable lines.
+        from scripts.verse_runs import damaged
+        self.assertFalse(damaged("abhayam\u0301 sattva-sam\u0301\u015buddhir"))
+
+    def test_clean_text_is_not_damaged(self):
+        from scripts.verse_runs import damaged
+        self.assertFalse(damaged("jaya radha madhava kunja bihari"))
