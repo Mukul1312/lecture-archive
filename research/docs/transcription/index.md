@@ -65,6 +65,13 @@ lecture, and measure the corpus's real average length, which every cost figure m
 9. **Measure the library, do not reason about it.** MMS_FA's output is already log-probabilities
    with the star at probability 1, so `exp()` sums to 2 — a second normalisation looks like a
    no-op, leaves every timestamp untouched, and silently halves every confidence score.
+10. **Score the alphabet before you score the recogniser.** A system that writes Devanagari
+    where the reference writes IAST is marked wrong on every word it got right: Deepgram's
+    `multi` scores 94.5% Sanskrit error raw and **83.6%** once transliterated, with no change to
+    the recogniser. Transliterate first, or reject a system for a fault it does not have. The
+    same logic rules out semantic metrics here for the opposite reason — this archive is
+    verbatim, so a metric that rewards preserved *meaning* rewards paraphrase, and a measured
+    case exists where it would have hidden the most informative failure found all session.
 
 ## The pages
 
@@ -106,6 +113,11 @@ lecture, and measure the corpus's real average length, which every cost figure m
 - [Preparing found audio to measure on](data-preparation-2026-09-24.md) — what stands between
   downloaded lectures and a number worth deciding on. Includes the finding that **a known-correct
   alignment scores worse than the suspect ones**, so alignment confidence is not a quality gate.
+- [Does Melbourne's ranking hold on the archive?](archive-replication-2026-10-10.md) — five
+  lectures, both hosted systems, scored only where the transcript can be trusted. **English
+  replicates** (ElevenLabs 11.7% against Melbourne's 10.5%, and the gap over Sarvam survives
+  resampling). **Sanskrit cannot be tested here at all**: the archive's Indic words are names in
+  English sentences, with only 6.0% in runs of five or more against Melbourne's 24.6%.
 
 **Surveys** — what exists, before anything was run.
 
