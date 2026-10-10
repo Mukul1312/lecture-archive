@@ -103,6 +103,64 @@ never downloaded - is most of 26 runs in five lectures, which scales with the co
 next concrete step for the Sanskrit question, and it costs a download rather than a listening
 campaign.
 
+### The canon fetched, and retrieval working (2026-10-11)
+
+GRETIL downloaded and parsed: **14,293 addressed verses** - 13,594 Bhagavatam, 622 Gita. Both
+files state **CC BY-NC-SA 4.0** in their own TEI header, verified here rather than taken on
+trust. ShareAlike binds only a *published* index, and `data/reference/` is not in git.
+
+| | matched | correct, by reading | scoreable | printed verse words |
+|---|---:|---:|---:|---:|
+| KKSongs only | 5 | 4 | 4 | 24 |
+| **+ GRETIL** | **9** | **9** | **6** | **36** |
+
+| | error over 36 printed verse words |
+|---|---:|
+| ElevenLabs Scribe v2 + keyterms | **44.4%** |
+| Sarvam Saaras v4 + keyterms | 61.1% |
+
+Six scripture addresses are now identified exactly: **SB 5.5.8**, **SB 1.2.10** (four times) and
+**SB 3.2.23**. Before GRETIL, not one scripture citation could be resolved.
+
+**44.4% against the 15.6% those systems score on the archive's Indic track is the composition
+argument confirmed from the other side.** Connected recited verse is roughly three times harder
+than names in English sentences - so the archive's Indic figure was never measuring the thing
+the Indian models were winning at.
+
+**The documented repair is real.** 842 starred long-metre Bhagavatam verses repeat their first
+half-verse in the XML: BhP 1.1.2, 1.1.3 and **BhP 3.9.10**, a Melbourne citation, each print
+their first half twice. A pada group identical to the one *before* it is dropped - compared only
+against the previous group, so a poem that legitimately repeats a refrain is untouched - and the
+regression test is written on SB 3.9.10 by name. The Gita file stops at **chapter 17**, so
+BG 18.66, the archive's most-cited Gita verse, is absent; a test asserts that absence rather than
+letting it surprise someone later.
+
+### Three more defects, same method: read the output
+
+1. **Whole verses could identify a quotation but not score it.** A GRETIL verse runs 12-20 words
+   while the archive quotes 4-13 - a teacher cites a half-verse and talks on. Each verse now
+   offers its padas as well as itself, all under its own address so the margin is still taken
+   over a *different* passage.
+2. **Choosing the printed form by length alone was wrong, and it re-pointed three correct song
+   matches at unrelated lines of the right song.** For KKSongs a passage is a whole song, not
+   one verse. Candidates are now restricted to forms that account for the run as well as the
+   winner does, and length only breaks ties among equals. This one was caught only because the
+   output was read again after a change that looked like a pure improvement.
+3. **1,962 KKSongs lines carry a combining mark with no base letter** - the letter is gone. The
+   worst collapse to near-nonsense that matches almost anything, and once a length-comparable
+   form of one existed it began contributing to the verse score. Dropped, with the 4,646 U+FFFD
+   lines. The 5,482 whose acute sits *on* an `m` are kept, because `fold` and `skeleton` strip
+   combining marks before anything is compared, so they change no number.
+
+### What this settles about the Sanskrit question
+
+Retrieval is the right frame. He teaches from a fixed canon, so each distinct verse is identified
+**once, ever**, and its printed text is then exact for all 3,766 lectures - no listening, no
+per-lecture cost. Nine identifications from five lectures at 100% precision on this read is a
+working method, not a finished corpus; the next gains are **Caitanya-caritamrta**, which has no
+machine-readable text and is resolved verse-by-verse through `scripts/verse_cache.py`, and
+**BG chapter 18**.
+
 ### Three defects found by reading the output rather than trusting it
 
 1. **One unmarked word was cutting verses in half.** SB 1.2.10 is `jivasya tattva-jijnasa nartho
