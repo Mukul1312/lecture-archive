@@ -61,6 +61,79 @@ So the consequence is a limit on the corpus, not a result about the models:
 > Indic track. Choosing a verse recogniser needs verified verbatim reference text, which means
 > Melbourne, or new listening.
 
+## Reaching the Sanskrit gap without new listening (2026-10-11)
+
+The limit above says a verse recogniser needs verified verbatim text. For verse specifically it
+does not, because **a quotation has fixed printed text**: where a run of connected Indic words
+can be matched to a printed verse, ground truth is exact and free.
+
+`scripts/verse_runs.py` takes every run of four or more consecutive diacritic-marked words from
+the forced alignment, with the stretch of audio it occupies, and matches it against KKSongs
+through `verse_match`, whose margin gate refuses rather than guesses.
+
+**44 runs across the five admissible lectures. 5 matched, 4 of them length-comparable and so
+scoreable.** Scored against printed text neither recogniser has seen:
+
+| | error over 24 printed verse words |
+|---|---:|
+| ElevenLabs Scribe v2 + keyterms | **29.2%** |
+| Sarvam Saaras v4 + keyterms | 45.8% |
+
+**Twenty-four words is far too few to carry a claim.** It is reported because the method is now
+proven end to end - exact ground truth, no listening, no money - and because the direction
+agrees with the span comparison.
+
+### What the unmatched runs say, and they say it clearly
+
+Reading all 39: roughly **26 are genuine quotations** and 13 are names, term lists or the
+mahamantra. And the quotations are overwhelmingly **Caitanya-caritamrta and Bhagavatam**, which
+a song book cannot hold:
+
+```
+ 8w  "Yahan krsna tahan nai mayar adhikara" (Caitanya-caritamrta)
+ 9w  jivasya tattva-jijnasa nartho yas ceha karmabhih, labho jiveta yavata    (SB 1.2.10)
+ 5w  mahajano yena gatah sa pantha                                           (x3)
+ 5w  grha ksetra suta apta vittaih
+ 5w  gharma-vrsti sahe, anera karaye raksana                                 (CC Antya 20.22)
+ 4w  tri-tapas: adhyatmika, adhidaivika, adhibhautika.         <- a term list, not a verse
+```
+
+So the prize for fetching GRETIL - 14,067 Bhagavatam verses, explicitly licensed, researched and
+never downloaded - is most of 26 runs in five lectures, which scales with the corpus. That is the
+next concrete step for the Sanskrit question, and it costs a download rather than a listening
+campaign.
+
+### Three defects found by reading the output rather than trusting it
+
+1. **One unmarked word was cutting verses in half.** SB 1.2.10 is `jivasya tattva-jijnasa nartho
+   yas ceha karmabhih`, and `ceha` has no diacritics, so it split into two fragments. Bridging a
+   single-word gap took the inventory from 39 runs to 92 at a floor of three. The gap is bounded
+   in **time** as well, at 1.5 s: a one-word gap can be a six-second silence, and a test caught
+   it joining two recitations nine seconds apart.
+2. **A matched window can be longer than what was recited.** `aham bija-pradah pita` correctly
+   matched `tasam brahma mahad yonir aham bija-pradah pita` - BG 14.4 - but only three of those
+   seven words occupy the run's audio, so scoring both systems on all seven charged them four
+   words nobody said there. Matches outside a 0.7-1.4 length band are now reported and not
+   scored.
+3. **The KKSongs mirror has an undocumented encoding defect.** Found by reading a match whose
+   printed side came back as mojibake. 4,646 lines carry U+FFFD where a letter was lost
+   (`jnana` stored as `j<FFFD>ana`); these cannot be ground truth and, being wreckage, match
+   almost anything, so they are dropped and a damaged line now *breaks* the run of lines rather
+   than being skipped over. A further 5,482 lines carry a combining acute where the anusvara
+   belongs - cosmetic here, since `fold` and `skeleton` strip combining marks before anything is
+   compared, and left unrepaired rather than guessed at. **The mirror should be re-fetched with
+   the encoding fixed.**
+
+Precision, by reading all five matches: **four right, one wrong** - the wrong one being a
+wholly-mojibake corpus line, caught by the length gate before it could score. The floor of four
+words is itself measured: at a floor of three, five of thirteen matches were wrong and **every
+one of them was a three-word run**, with `Babu eka paisa` matching `tumhare darasa ke bhuke
+pyase` three separate times.
+
+One change that was indicated by the data and **did not work**: runs reach thirteen words while a
+KKSongs line is four to six, so three-line windows were indexed. The corpus grew from 40,463
+windows to 58,845 and recovered nothing.
+
 ## Two instruments that had to be fixed first
 
 Neither number above was reachable until two measurement defects were found, and both reported
