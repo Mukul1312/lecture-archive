@@ -118,7 +118,19 @@ def verses_from_tei(xml: str) -> list[Verse]:
     """Every addressed verse in a GRETIL TEI file, in document order."""
     found: list[Verse] = []
     pending: list[str] = []
-    for raw in LINE.findall(xml):
+    previous_end: int | None = None
+    for line_match in LINE.finditer(xml):
+        # **Anything pending is discarded when another element intervenes.** The Gītā file is a
+        # commentary, and Śaṅkara's prose sits in bare `<l>` elements of its own, immediately
+        # before the `<lg>` holding the verse it comments on. Accumulating across that boundary
+        # attached the commentary to the next real address: BG 3.17 came back as "evaṃ sthite
+        # kim evaṃ pravartitaṃ caktraṃ..." and BG 11.1 as a colophon. Inside one `<lg>`, and
+        # inside the Bhāgavatam's runs of bare `<l>`, consecutive lines are separated by
+        # whitespace alone, so those keep accumulating as they must.
+        if previous_end is not None and "<" in xml[previous_end:line_match.start()]:
+            pending = []
+        previous_end = line_match.end()
+        raw = line_match.group(1)
         match = ADDRESS.search(raw)
         text = _clean(raw)
         if text:

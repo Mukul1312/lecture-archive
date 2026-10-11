@@ -51,6 +51,7 @@ SPANS = REPO / "data/reference/analysis/scoreable-spans.json"
 ALIGNED = REPO / "data/reference/analysis/archive-alignment"
 HOSTED = REPO / "data/reference/analysis/hosted"
 SONGS = REPO / "data/reference/kksongs/songs.jsonl"
+WIKISOURCE = REPO / "data/reference/wikisource/gita-verses.jsonl"
 OUT = REPO / "data/reference/analysis/verse-runs.json"
 
 SERVICES = ("elevenlabs", "sarvam")
@@ -280,9 +281,31 @@ def main() -> None:
             verses.append(window)
             passages.append(verse.address)
 
+    from_gretil = len(verses) - from_songs
+
+    # Sanskrit Wikisource supplies the chapter GRETIL has not got - BG 18, and with it BG 18.66,
+    # the archive's most-cited Gītā verse - and stands as a second witness for 1-17. It is read
+    # from a written file rather than transliterated here, because only `.venv-indic` holds
+    # `indic_transliteration` and this script has to run anywhere.
+    #
+    # Both editions use the ADDRESS as the passage, so two printings of BG 18.66 are the same
+    # passage and cannot cancel each other's margin - while their different sandhi segmentation
+    # gives a garbled quotation two different skeletons to match against.
+    gita = []
+    if WIKISOURCE.exists():
+        gita = [json.loads(line) for line in WIKISOURCE.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
+        for verse in gita:
+            for window in [verse["text"], *verse.get("lines", [])]:
+                if window and len(window.split()) >= 3:
+                    verses.append(window)
+                    passages.append(verse["address"])
+
     print(f"corpus: {len(verses):,} windows - {from_songs:,} from "
-          f"{len(set(passages[:from_songs])):,} Indic songs (KKSongs) and "
-          f"{len(verses) - from_songs:,} from {len(scripture):,} printed verses (GRETIL)\n")
+          f"{len(set(passages[:from_songs])):,} Indic songs (KKSongs), "
+          f"{from_gretil:,} from {len(scripture):,} printed verses (GRETIL), "
+          f"{len(verses) - from_songs - from_gretil:,} from {len(gita):,} "
+          f"(Sanskrit Wikisource)\n")
     index = VerseIndex(verses, passages=passages)
 
     manifest = json.loads(SPANS.read_text(encoding="utf-8"))

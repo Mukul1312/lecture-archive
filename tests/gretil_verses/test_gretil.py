@@ -144,3 +144,42 @@ class WindowTests(unittest.TestCase):
     def test_a_single_line_verse_offers_just_itself(self):
         xml = "<l>hare krsna hare rama ||BhG_1.1||</l>"
         self.assertEqual(verses_from_tei(xml)[0].windows(), ["hare krsna hare rama"])
+
+
+# The real structure around BG 3.17: Sankara's prose in a bare <l> of its own, then the
+# <lg> holding the verse. Accumulating across that boundary returned the commentary AS the
+# verse, and the archive would have been told that is what the Gita says.
+COMMENTARY_THEN_VERSE = """
+<p>tad-akarane ca dosa-samkirtanam krtam ||BhGS_3.16||</p>
+<p>==============================</p>
+<l>evam sthite kim evam pravartitam caktram sarvenanuvartaniyam ? aho svit purvokta</l>
+<lg>
+<l>yas tv atma-ratir eva syad atma-tiptas ca manavah |</l>
+<l>atmany eva ca samtustas tasya karyam na vidyate ||BhG_3.17||</l>
+</lg>
+"""
+
+
+class CommentaryBoundaryTests(unittest.TestCase):
+    def test_commentary_prose_does_not_become_part_of_the_verse(self):
+        verses = {v.address: v for v in verses_from_tei(COMMENTARY_THEN_VERSE)}
+        self.assertIn("BG 3.17", verses)
+        self.assertNotIn("evam sthite", verses["BG 3.17"].text)
+
+    def test_the_verse_itself_is_complete(self):
+        verse = {v.address: v for v in verses_from_tei(COMMENTARY_THEN_VERSE)}["BG 3.17"]
+        self.assertIn("yas tv atma-ratir", verse.text)
+        self.assertIn("na vidyate", verse.text)
+
+    def test_lines_within_one_group_still_accumulate(self):
+        # The fix must not cost the second half of every verse.
+        verse = {v.address: v for v in verses_from_tei(COMMENTARY_THEN_VERSE)}["BG 3.17"]
+        self.assertEqual(len(verse.lines), 2)
+
+    def test_a_bhagavatam_run_of_bare_lines_still_accumulates(self):
+        # The Bhagavatam's starred long-metre verses are bare <l> with no <lg> at all.
+        xml = ("<l>janmadyasya yato 'nvayad $</l>\n"
+               "<l>tejovarimrdam yatha % // BhP_01.01.001* //</l>")
+        verse = verses_from_tei(xml)[0]
+        self.assertIn("janmadyasya", verse.text)
+        self.assertIn("tejovarimrdam", verse.text)
