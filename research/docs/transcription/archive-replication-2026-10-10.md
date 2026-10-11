@@ -174,6 +174,58 @@ quotations**, each to be resolved once and then known for all 3,766 lectures. (S
 grouping only collapses identical skeletons, so 34 slightly overstates it - `recall` is fuzzy,
 so a near-duplicate of a resolved verse hits the cache at lookup and never needs resolving.)
 
+### The canon completed, under BBT permission (2026-10-12)
+
+The steward states that full permission from BBT is held, which settles the one gap that could
+not be closed by licensing. **11,357 Caitanya-caritamrta verses** from the structured
+`vaniwiki/prabhupada-books` corpus - an independent audit of the same corpus counts 11,359
+entries, so it is the same text. **Verse text only, never the purports**, by the same rule the
+KKSongs mirror follows, enforced by a test over the whole corpus rather than a fixture.
+
+The retrieval corpus is now **134,354 windows**: 53,214 KKSongs, 43,858 GRETIL, 2,051 Sanskrit
+Wikisource, **35,231 Caitanya-caritamrta**.
+
+| | matched | correct by reading | scoreable | verse words |
+|---|---:|---:|---:|---:|
+| KKSongs only | 5 | 4 | 4 | 24 |
+| + GRETIL | 9 | 9 | 6 | 36 |
+| **+ Wikisource + Caitanya-caritamrta** | **20** | **18** | **15** | **90** |
+
+| | error over 90 printed verse words |
+|---|---:|
+| ElevenLabs Scribe v2 + keyterms | **51.1%** |
+| Sarvam Saaras v4 + keyterms | 68.9% |
+
+Addresses now identified exactly include **SB 5.5.8**, **SB 1.2.10**, **SB 3.2.23**,
+**BG 3.37**, **Cc. Madhya 17.186**, **Cc. Antya 20.22**, **20.24**, **20.26**, **Cc. Adi 17.29**
+and **17.33**.
+
+Two of the twenty are worth stating rather than burying. `ami bandhi achi hrdaya` ->
+Cc. Madhya 25.127 is **uncertain** - plausible as a loose quotation, but containment scoring is
+generous with a four-word query - and it **is** scored, contributing 6 of the 90 words. And the
+mahamantra is cited to a KKSongs entry titled "Derdime Deva Eyler": the text is right, the
+citation is absurd, and it is not scored.
+
+### The margin gate broke, and the way it broke is the finding
+
+**Caitanya-caritamrta quotes the same verse verbatim at more than one address.** `radhayah
+pranaya-mahima kidrsam` scores 1.000 at both Cc. Adi 1.6 and Cc. Adi 4.230 with identical text,
+so a margin defended against "a different passage" is 0.000 and a correct identification is
+refused. The rival is not a rival; it is the same verse under another number.
+
+The first fix was wrong, and the data said so: skeleton **equality** does not group a *shorter
+window of the same verse*, whose skeleton necessarily differs, so it went on cancelling the
+margin. The relation is **containment**.
+
+**The margin itself was not relaxed.** `Yahan krsna tahan nai` (0.033) and `bhartsana-tadane
+kake kichu na` (0.111) stay refused, because their rivals are genuinely different verses, and a
+test pins that.
+
+Two reporting faults travelled with it: accepted matches printed `margin 0.0`, because the
+display showed `verse_match`'s own margin rather than the one acceptance used - an output
+contradicting itself - and BG 3.37 was cited to the KKSongs song that quotes it. Among
+candidates that tie, the scripture is now cited rather than the song.
+
 ### Two defects the cross-check found, both mine
 
 1. **My GRETIL parser was putting commentary inside verses.** `BG 3.17` came back as
