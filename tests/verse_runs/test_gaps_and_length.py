@@ -217,3 +217,115 @@ class WorklistTests(unittest.TestCase):
                                  ("b", "mahajano yena gatah sa pantha"),
                                  ("c", "jivasya tattva-jijnasa nartho")))
         self.assertEqual(got[0]["heard_in"], 2)
+
+
+class IdentityTests(unittest.TestCase):
+    """The margin must be defended against a different VERSE, not a different address.
+
+    Caitanya-caritamrta quotes the same verse verbatim at more than one address.
+    `radhayah pranaya-mahima kidrsam` scores 1.000 at both Cc. Adi 1.6 and Cc. Adi 4.230 with
+    identical text, so a margin taken over "a different passage" is 0.000 and a correct
+    identification is thrown away - the rival is the same verse under another number.
+    """
+
+    def index(self, pairs):
+        from scripts.verse_match import VerseIndex
+        return VerseIndex([text for _, text in pairs], passages=[p for p, _ in pairs])
+
+    def test_one_verse_at_two_addresses_does_not_cancel_its_own_margin(self):
+        from scripts.verse_runs import identify
+        verse = "radhayah pranaya-mahima kidrso vanayaiva svadyo"
+        index = self.index([("Cc. Adi 1.6", verse), ("Cc. Adi 4.230", verse),
+                            ("Cc. Adi 2.1", "sakala brahmanda-gana sei murti haya")])
+        found, addresses, _, _ = identify(index, verse, 0.30, 0.25)
+        self.assertIsNotNone(found)
+        self.assertEqual(addresses, 2)
+
+    def test_a_genuinely_different_rival_still_cancels_the_margin(self):
+        # The protection that matters: two different verses sharing most of their words must
+        # still produce a refusal, because for scripture a confident error is the worst case.
+        from scripts.verse_runs import identify
+        index = self.index([("Cc. Adi 17.27", "bhartsana-tadane kake kichu na balibe"),
+                            ("Cc. Adi 14.85", "bhartsana-tadana kichui na jana balibe")])
+        found, _, _, _ = identify(index, "bhartsana-tadane kake kichu na", 0.30, 0.25)
+        self.assertIsNone(found)
+
+    def test_an_empty_index_refuses_rather_than_raising(self):
+        from scripts.verse_runs import identify
+        self.assertEqual(identify(self.index([]), "anything at all", 0.30, 0.25)[0], None)
+
+    def test_a_score_below_the_floor_is_refused_however_clear_the_margin(self):
+        from scripts.verse_runs import identify
+        index = self.index([("Cc. Adi 1.1", "vande gurun isa-bhaktan isam isavatarakan")])
+        found, _, _, _ = identify(index, "completely unrelated english words here", 0.95, 0.0)
+        self.assertIsNone(found)
+
+
+class VerseIdentityByContainmentTests(unittest.TestCase):
+    """Equality of skeletons was not enough, and the data said so.
+
+    The runner-up to `radhayah pranaya-mahima kidrsam` is a SHORTER WINDOW OF THE SAME VERSE,
+    whose skeleton therefore differs from the winner's, so skeleton-equality kept letting it
+    cancel the margin. Containment covers that as well as one verse printed at two addresses.
+    """
+
+    def index(self, pairs):
+        from scripts.verse_match import VerseIndex
+        return VerseIndex([text for _, text in pairs], passages=[p for p, _ in pairs])
+
+    def test_a_half_of_the_winner_does_not_cancel_the_winners_margin(self):
+        from scripts.verse_runs import identify
+        full = "sri-radhayah pranaya-mahima kidrso vanayaiva svadyo yenadbhuta"
+        half = "sri-radhayah pranaya-mahima kidrso vanayaiva"
+        index = self.index([("Cc. Adi 1.6", full), ("Cc. Adi 4.230", full),
+                            ("Cc. Adi 1.6", half),
+                            ("Cc. Madhya 8.1", "suniya prabhura mana phiri gela")])
+        found, addresses, _, _ = identify(index, "radhayah pranaya-mahima kidrsam", 0.30, 0.25)
+        self.assertIsNotNone(found)
+        self.assertGreaterEqual(addresses, 2)
+
+    def test_two_verses_sharing_a_phrase_still_refuse(self):
+        # The guard that must survive: neither contains the other, so the margin stands.
+        from scripts.verse_runs import identify
+        index = self.index([("Cc. Adi 17.27", "bhartsana-tadane kake kichu na balibe"),
+                            ("Cc. Adi 14.85", "bhartsana-tadana kichui na jana balibe")])
+        self.assertIsNone(identify(index, "bhartsana-tadane kake kichu na", 0.30, 0.25)[0])
+
+
+class CitationTests(unittest.TestCase):
+    """Cite the scripture, not the song that quotes it.
+
+    KKSongs carries BG 3.37 inside the song "Jyayasi Cet Karmanas Te Mata", and when the two
+    tie on score the song title was being printed as the source of the verse. The text is
+    identical either way, so this changes what is cited and nothing that is scored - but
+    citing a song for a Gita verse is simply wrong.
+    """
+
+    def index(self, pairs):
+        from scripts.verse_match import VerseIndex
+        return VerseIndex([text for _, text in pairs], passages=[p for p, _ in pairs])
+
+    def test_a_scriptural_address_is_preferred_over_a_song_title(self):
+        from scripts.verse_runs import identify
+        verse = "kama esa krodha esa rajo-guna-samudbhavah"
+        index = self.index([("Jyayasi Cet Karmanas Te Mata", verse), ("BG 3.37", verse),
+                            ("Some Other Song", "jaya radha madhava kunja bihari")])
+        found, _, _, _ = identify(index, verse, 0.30, 0.25)
+        self.assertEqual(found.passage, "BG 3.37")
+
+    def test_a_song_is_still_cited_when_no_scripture_holds_the_verse(self):
+        from scripts.verse_runs import identify
+        verse = "tomara carane niskapate ami kandiya lutibo bhumi"
+        index = self.index([("Krpa Koro Vaisnava Thakura", verse),
+                            ("Another Song", "jaya radha madhava kunja bihari")])
+        found, _, _, _ = identify(index, verse, 0.30, 0.25)
+        self.assertEqual(found.passage, "Krpa Koro Vaisnava Thakura")
+
+    def test_a_lower_scoring_scripture_does_not_displace_the_winner(self):
+        # Preference applies only among candidates that tie, never to overrule similarity.
+        from scripts.verse_runs import identify
+        index = self.index([("Krpa Koro Vaisnava Thakura", "tomara carane niskapate ami"),
+                            ("SB 1.1.1", "tomara carane something quite different indeed"),
+                            ("Another Song", "jaya radha madhava kunja bihari")])
+        found, _, _, _ = identify(index, "tomara carane niskapate ami", 0.30, 0.25)
+        self.assertEqual(found.passage, "Krpa Koro Vaisnava Thakura")

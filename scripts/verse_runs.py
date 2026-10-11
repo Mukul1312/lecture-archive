@@ -53,6 +53,7 @@ ALIGNED = REPO / "data/reference/analysis/archive-alignment"
 HOSTED = REPO / "data/reference/analysis/hosted"
 SONGS = REPO / "data/reference/kksongs/songs.jsonl"
 WIKISOURCE = REPO / "data/reference/wikisource/gita-verses.jsonl"
+CARITAMRTA = REPO / "data/reference/vaniwiki/cc-verses.jsonl"
 OUT = REPO / "data/reference/analysis/verse-runs.json"
 WORKLIST = REPO / "data/reference/analysis/verse-worklist.json"
 CACHE = REPO / "data/reference/verse-cache.json"
@@ -149,6 +150,63 @@ def song_windows(songs: list[dict], sizes: tuple[int, ...] = (1, 2, 3),
 LENGTH_BAND = (0.7, 1.4)
 
 
+def identify(index, text: str, min_score: float, min_margin: float, top: int = 12):
+    """Which passage this is, with the margin taken over a different VERSE rather than address.
+
+    `verse_match` defends its margin against the best candidate from a different *passage*,
+    which was the right unit for a song book. Caitanya-caritāmṛta breaks it: **the text quotes
+    the same verse verbatim at more than one address.** `rādhāyāḥ praṇaya-mahimā kīdṛśam` scores
+    1.000 at both Cc. Ādi 1.6 and Cc. Ādi 4.230 with identical text, so the margin is 0.000 and
+    a correct identification is refused - the rival is not a rival, it is the same verse under
+    another number.
+
+    So identity is taken on the verse's own skeleton. This is the same reasoning that
+    introduced passage identity in the first place, extended from "the same song" to "the same
+    words": a candidate that says what the winner says cannot be evidence against it.
+
+    **The margin itself is not relaxed.** Two runs whose rivals are genuinely different verses
+    - `Yāhāṅ kṛṣṇa tāhāṅ nāi` at 0.033 and `bhartsana-tāḍane kāke kichu nā` at 0.111 - stay
+    refused, because for scripture a confident error is worse than an admitted gap.
+    """
+    # One scan, reused. `rank` compares the query against every window in the corpus, and the
+    # corpus is 134,354 windows, so ranking twice per run - once to identify and once to pick
+    # which printed form to score against - doubled the work for nothing.
+    ranked = index.rank(text, top=top, min_length=0.55)
+    if not ranked:
+        return None, 0, 0.0, []
+    winner = ranked[0]
+    same = skeleton(winner.verse)
+
+    def is_the_same_verse(candidate) -> bool:
+        """Same address, or words that are part of the winner's words.
+
+        Equality alone was not enough, and the first attempt at this proved it: the runner-up
+        to `rādhāyāḥ praṇaya-mahimā kīdṛśam` is a *shorter window of the very same verse*, whose
+        skeleton therefore differs, so it kept cancelling the margin. Containment covers both
+        shapes - one verse printed at two addresses, and a half of the winner competing with
+        the whole of it - while two genuinely different verses that merely share a phrase
+        contain neither each other nor the winner, and still refuse.
+        """
+        if candidate.passage == winner.passage:
+            return True
+        theirs = skeleton(candidate.verse)
+        return bool(theirs) and (theirs in same or same in theirs)
+
+    rival = next((c.score for c in ranked if not is_the_same_verse(c)), 0.0)
+    margin = winner.score - rival
+    family = [c for c in ranked if is_the_same_verse(c)]
+    addresses = len({c.passage for c in family})
+
+    # Cite the scripture, not the song that quotes it.
+    scriptural = next((c for c in family if SCRIPTURAL.match(c.passage)
+                       and c.score >= winner.score - 1e-9), None)
+    if scriptural is not None and not SCRIPTURAL.match(winner.passage):
+        winner = scriptural
+    if winner.score < min_score or margin < min_margin:
+        return None, addresses, margin, ranked
+    return winner, addresses, margin, ranked
+
+
 def best_printed_form(windows: list[str], run_words: int) -> str:
     """Among the printed forms of ONE identified passage, the one closest in length to the run.
 
@@ -172,6 +230,13 @@ def comparable_length(run_words: int, printed_words: int) -> bool:
         return False
     ratio = printed_words / run_words
     return LENGTH_BAND[0] <= ratio <= LENGTH_BAND[1]
+
+
+# A scriptural address, as against a song title. Several sources hold the same verse - KKSongs
+# quotes BG 3.37 inside "Jyayasi Cet Karmanas Te Mata" - and when they tie, the citation should
+# be the scripture rather than the song that quotes it. The text is identical either way, so
+# this changes what is cited and nothing that is scored.
+SCRIPTURAL = re.compile(r"^(SB|BG|Cc\.)\s")
 
 
 # A bridged gap must be short in TIME as well as in words. One unmarked word inside a verse
@@ -331,11 +396,27 @@ def main() -> None:
                     verses.append(window)
                     passages.append(verse["address"])
 
+    from_gita = len(verses) - from_songs - from_gretil
+
+    # Caitanya-caritāmṛta, which no freely-licensed edition carries and which the archive
+    # quotes constantly. Available because the steward holds full permission from BBT, stated
+    # 2026-10-12; verse text only, never the purports. See `scripts/bbt_verses.py`.
+    caritamrta = []
+    if CARITAMRTA.exists():
+        caritamrta = [json.loads(line) for line
+                      in CARITAMRTA.read_text(encoding="utf-8").splitlines() if line.strip()]
+        for verse in caritamrta:
+            for window in [verse["text"], *verse.get("lines", [])]:
+                if window and len(window.split()) >= 3:
+                    verses.append(window)
+                    passages.append(verse["address"])
+
     print(f"corpus: {len(verses):,} windows - {from_songs:,} from "
           f"{len(set(passages[:from_songs])):,} Indic songs (KKSongs), "
           f"{from_gretil:,} from {len(scripture):,} printed verses (GRETIL), "
-          f"{len(verses) - from_songs - from_gretil:,} from {len(gita):,} "
-          f"(Sanskrit Wikisource)\n")
+          f"{from_gita:,} from {len(gita):,} (Sanskrit Wikisource), "
+          f"{len(verses) - from_songs - from_gretil - from_gita:,} from "
+          f"{len(caritamrta):,} (Caitanya-caritāmṛta)\n")
     # Verses resolved one at a time and remembered, which is the only route open for
     # Caitanya-caritamrta: no freely-licensed machine-readable text of it exists anywhere -
     # checked against Exa, Sanskrit Wikisource and Bengali Wikisource, and every digital
@@ -368,23 +449,27 @@ def main() -> None:
 
         matched = 0
         for run in runs:
-            found = index.find(run["text"], args.min_score, args.margin)
+            found, addresses, margin, ranked = identify(index, run["text"], args.min_score,
+                                                        args.margin, top=80)
             entry = {"slug": lecture["slug"], **run}
             if found is None:
-                report["unmatched"].append(entry)
+                report["unmatched"].append({**entry, "best_margin": round(margin, 3)})
                 continue
             matched += 1
+            # When one verse is printed at several addresses, say so rather than implying the
+            # winner is the only place it appears.
+            entry["also_at_addresses"] = addresses - 1
             # Only forms of the identified passage that account for the run as well as the
             # winner does. Length then breaks the tie among equals - it never overrules the
             # similarity that established the match.
-            equal = [m.verse for m in index.rank(run["text"], top=80)
+            equal = [m.verse for m in ranked
                      if m.passage == found.passage and m.score >= found.score - 1e-9]
             printed_form = best_printed_form(equal or [found.verse], run["words"])
             found = found.__class__(printed_form, found.score, found.margin, found.index,
                                     found.passage)
             printed = len(found.verse.split())
             entry.update({"verse": found.verse, "song": found.passage,
-                          "score": round(found.score, 3), "margin": round(found.margin, 3),
+                          "score": round(found.score, 3), "margin": round(margin, 3),
                           "printed_words": printed,
                           "scoreable": comparable_length(run["words"], printed)})
             # Scored against the PRINTED text, which neither recogniser has seen, over exactly
