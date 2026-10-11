@@ -13,7 +13,7 @@ on licensing rather than coverage.** One rejection ran in the archive's favour.
 |---|---|
 | **Sanskrit verse** | **Solved.** GRETIL, explicitly licensed, complete Bhāgavatam |
 | **Bengali padāvalī** | **KKSongs**, mirrored, with a permission request — lyrics only, never the purports |
-| **Caitanya-caritāmṛta / -bhāgavata** | No download exists; **resolved by search, cached permanently** |
+| **Caitanya-caritāmṛta** | **SOLVED 2026-10-12** — BBT permission held; 11,357 verses from `vaniwiki/prabhupada-books`, verse text only |
 | **An LLM's role** | May **label**, **choose**, and **search**. Must never **produce** |
 
 ---
@@ -54,7 +54,13 @@ should be freely reusable by others, a CC BY base is needed.
 
 ### What was excluded, and why
 
-- **Bhaktivedanta Book Trust / vedabase** — in copyright. Not usable.
+- **Bhaktivedanta Book Trust / vedabase** — in copyright. Not usable. **⚠ SUPERSEDED
+  2026-10-12: the steward states that full permission from BBT is held.** This is now the
+  source of Caitanya-caritāmṛta, via the structured `vaniwiki/prabhupada-books` corpus
+  (`scripts/bbt_verses.py`), **verse text only and never the purports**, by the same rule the
+  KKSongs mirror follows. The exclusion above stood until then, and it was right to: no
+  freely-licensed machine-readable Caitanya-caritāmṛta exists, which was verified on 2026-10-11
+  against Exa, Sanskrit Wikisource and Bengali Wikisource rather than assumed.
 - **Gaudiya Grantha Mandira** — the only tradition-specific repository, but **no licence
   statement at all**, and its own page says the Bhāgavatam was typed from BBT Folio.
 - **Digital Corpus of Sanskrit** — better licence (CC BY 4.0) but only 119 of ~335 Bhāgavatam

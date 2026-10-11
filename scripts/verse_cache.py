@@ -44,6 +44,16 @@ SOURCES: dict[str, dict] = {
     "bn.wikisource.org": {"why": "CC BY-SA 4.0; the Bengali side"},
     "www.wisdomlib.org": {"why": "licensed; Caitanya-bhagavata complete in four scripts"},
     "kksongs.org": {"why": "the songs corpus; LYRICS AND METADATA ONLY, never /authors/purports/"},
+    # 2026-10-12: the steward stated that FULL PERMISSION FROM BBT IS HELD. The earlier
+    # research had excluded BBT as in copyright, and that exclusion is superseded - a later
+    # session reading only the research would refuse this source wrongly. No freely-licensed
+    # machine-readable Caitanya-caritamrta exists (checked against Exa, Sanskrit Wikisource and
+    # Bengali Wikisource on 2026-10-11), so this is the only route to it.
+    # Even so: VERSE TEXT ONLY, never the purports, by the same rule as KKSongs. See
+    # scripts/bbt_verses.py.
+    "github.com": {"why": "vaniwiki/prabhupada-books; BBT permission held by the steward "
+                          "2026-10-12; VERSE TEXT ONLY, never the purports"},
+    "vedabase.io": {"why": "BBT permission held by the steward 2026-10-12; verse text only"},
     "bhagavata.org": {"why": "publishes SB-Sanskrit downloads"},
     "www.srimadbhagavatam.org": {"why": "publishes SB-Sanskrit downloads"},
     "gitabase.com": {"why": "returned at rank 1 by search for Bhagavatam verses"},
