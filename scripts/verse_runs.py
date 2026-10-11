@@ -44,7 +44,8 @@ from scripts.compare_hosted import (MISPLACED_RATIO, overall_error, paired,
                                     whole_file_error, words_for)
 from scripts.gretil_verses import load as load_gretil
 from scripts.transcript_accuracy import has_diacritics
-from scripts.verse_match import VerseIndex
+from scripts.verse_cache import VerseCache
+from scripts.verse_match import VerseIndex, skeleton
 
 REPO = Path(__file__).resolve().parents[1]
 SPANS = REPO / "data/reference/analysis/scoreable-spans.json"
@@ -53,6 +54,8 @@ HOSTED = REPO / "data/reference/analysis/hosted"
 SONGS = REPO / "data/reference/kksongs/songs.jsonl"
 WIKISOURCE = REPO / "data/reference/wikisource/gita-verses.jsonl"
 OUT = REPO / "data/reference/analysis/verse-runs.json"
+WORKLIST = REPO / "data/reference/analysis/verse-worklist.json"
+CACHE = REPO / "data/reference/verse-cache.json"
 
 SERVICES = ("elevenlabs", "sarvam")
 
@@ -229,6 +232,33 @@ def indic_runs(words: list[dict], minimum: int = 3, gap: int = 1,
              "start": run[0]["start"], "end": run[-1]["end"]} for run in runs]
 
 
+def worklist(unmatched: list[dict]) -> list[dict]:
+    """The DISTINCT quotations still to resolve, each with every place it was heard.
+
+    This is where the economics of the whole approach becomes visible. He teaches from a fixed
+    canon, so the same verse recurs across lectures - SB 1.2.10 appeared six times in five
+    lectures before GRETIL could answer it - and a verse resolved once is resolved for all
+    3,766 lectures. Grouping by the matcher's own skeleton rather than by the written text is
+    what makes two renderings of one quotation a single item of work.
+    """
+    groups: dict[str, dict] = {}
+    for run in unmatched:
+        key = skeleton(run["text"])
+        if not key:
+            continue
+        group = groups.setdefault(key, {"key": key, "longest": run["text"], "occurrences": []})
+        group["occurrences"].append({"slug": run["slug"], "start": round(run["start"], 1),
+                                     "words": run["words"], "text": run["text"]})
+        if len(run["text"].split()) > len(group["longest"].split()):
+            # The fullest rendering is the best thing to search with.
+            group["longest"] = run["text"]
+    ordered = sorted(groups.values(), key=lambda g: (-len(g["occurrences"]),
+                                                     -len(g["longest"].split())))
+    for group in ordered:
+        group["heard_in"] = len(group["occurrences"])
+    return ordered
+
+
 def heard_between(words: list[dict], start: float, end: float) -> list[str]:
     return [w["w"] for w in sorted(words, key=lambda w: w["s"])
             if start <= (w["s"] + w["e"]) / 2 < end]
@@ -306,6 +336,18 @@ def main() -> None:
           f"{from_gretil:,} from {len(scripture):,} printed verses (GRETIL), "
           f"{len(verses) - from_songs - from_gretil:,} from {len(gita):,} "
           f"(Sanskrit Wikisource)\n")
+    # Verses resolved one at a time and remembered, which is the only route open for
+    # Caitanya-caritamrta: no freely-licensed machine-readable text of it exists anywhere -
+    # checked against Exa, Sanskrit Wikisource and Bengali Wikisource, and every digital
+    # edition traces back to the Bhaktivedanta Vedabase. Whatever the steward resolves lands
+    # here and becomes searchable immediately, with its provenance attached.
+    cache = VerseCache(CACHE)
+    for entry in cache._entries.values():
+        verses.append(entry.verse)
+        passages.append(f"cached {entry.key[:12]}")
+    if len(cache):
+        print(f"  plus {len(cache)} verse(s) resolved by search and cached\n")
+
     index = VerseIndex(verses, passages=passages)
 
     manifest = json.loads(SPANS.read_text(encoding="utf-8"))
@@ -402,8 +444,16 @@ def main() -> None:
     if len(report["unmatched"]) > 30:
         print(f"  ... and {len(report['unmatched']) - 30} more")
 
+    todo = worklist(report["unmatched"])
+    WORKLIST.write_text(json.dumps({"distinct": len(todo), "quotations": todo},
+                                   ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"\n{len(report['unmatched'])} unmatched runs are {len(todo)} DISTINCT quotations, "
+          f"each to be resolved once and then known for all 3,766 lectures:")
+    for group in todo[:6]:
+        print(f"  heard {group['heard_in']}x  {group['longest'][:62]}")
+
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"\nwritten to {OUT.relative_to(REPO)}")
+    print(f"\nwritten to {OUT.relative_to(REPO)} and {WORKLIST.relative_to(REPO)}")
 
 
 if __name__ == "__main__":

@@ -170,3 +170,50 @@ class OrphanedMarkTests(unittest.TestCase):
     def test_clean_text_is_not_damaged(self):
         from scripts.verse_runs import damaged
         self.assertFalse(damaged("jaya radha madhava kunja bihari"))
+
+
+class WorklistTests(unittest.TestCase):
+    """The same verse quoted in five lectures is ONE item of work, not five.
+
+    This is where the economics of retrieval become visible: he teaches from a fixed canon, so
+    a verse resolved once is resolved for all 3,766 lectures. Grouping by the matcher's own
+    skeleton rather than by the written text is what makes two renderings of one quotation a
+    single item.
+    """
+
+    def runs(self, *pairs):
+        return [{"slug": slug, "text": text, "start": 1.0, "words": len(text.split())}
+                for slug, text in pairs]
+
+    def test_two_renderings_of_one_quotation_collapse(self):
+        from scripts.verse_runs import worklist
+        got = worklist(self.runs(("a", "jivasya tattva-jijnasa nartho"),
+                                 ("b", "jivasya tattva jijnasa nartho")))
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["heard_in"], 2)
+
+    def test_different_quotations_stay_separate(self):
+        from scripts.verse_runs import worklist
+        got = worklist(self.runs(("a", "jivasya tattva-jijnasa nartho"),
+                                 ("b", "mahajano yena gatah sa pantha")))
+        self.assertEqual(len(got), 2)
+
+    def test_every_place_it_was_heard_is_recorded(self):
+        from scripts.verse_runs import worklist
+        got = worklist(self.runs(("lecture-one", "mahajano yena gatah sa pantha"),
+                                 ("lecture-two", "mahajano yena gatah sa pantha")))
+        self.assertEqual({o["slug"] for o in got[0]["occurrences"]},
+                         {"lecture-one", "lecture-two"})
+
+    def test_the_fullest_rendering_is_what_gets_searched_with(self):
+        from scripts.verse_runs import worklist
+        got = worklist(self.runs(("a", "gatah sa pantha"),
+                                 ("b", "mahajano yena gatah sa pantha")))
+        self.assertEqual(len(got[0]["longest"].split()), 5)
+
+    def test_the_most_quoted_comes_first(self):
+        from scripts.verse_runs import worklist
+        got = worklist(self.runs(("a", "mahajano yena gatah sa pantha"),
+                                 ("b", "mahajano yena gatah sa pantha"),
+                                 ("c", "jivasya tattva-jijnasa nartho")))
+        self.assertEqual(got[0]["heard_in"], 2)
