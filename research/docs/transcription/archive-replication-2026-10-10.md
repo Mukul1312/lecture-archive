@@ -135,6 +135,61 @@ regression test is written on SB 3.9.10 by name. The Gita file stops at **chapte
 BG 18.66, the archive's most-cited Gita verse, is absent; a test asserts that absence rather than
 letting it surprise someone later.
 
+### The last two gaps, closed and quantified (2026-10-11)
+
+**BG chapter 18 is solved.** GRETIL's cleanly-licensed Gita stops at 17, so BG 18.66 - the
+archive's most-cited Gita verse - was absent. Sanskrit Wikisource has all eighteen chapters at
+**CC BY-SA 4.0**, read from the wiki's own `siteinfo`, and every page is stored with its
+revision id because "the verse at this address" is only reproducible if the revision is
+recorded. 700 verses, canonical counts in every chapter but 13 (34 against 35).
+
+It is Devanagari, so it is transliterated to IAST by table - a reversible re-encoding, not the
+forbidden act of *producing* scripture - and then checked against GRETIL on the 621 addresses
+both editions carry:
+
+| | of 621 |
+|---|---:|
+| letter-identical | 520 (83.7%) |
+| GRETIL's verse wholly inside Wikisource's | **565 (91.0%)** |
+| neither contains the other | 39 (6.3%) |
+
+The extra text Wikisource carries is exactly `arjuna uvaca`, `sri-bhagavan uvaca`, `sanjaya
+uvaca` and the chapter-head `om sriparamatmane namah`. So the transliteration is sound, and
+chapter 18 is usable. The five test lectures quote no BG 18, so the match count is unchanged;
+the capability is proved instead by a test that corrupts BG 18.66 **as read from the file** and
+checks the index returns BG 18.66.
+
+**Caitanya-caritamrta has no freely-licensed machine-readable text, now verified rather than
+inherited.** Three independent checks: Exa returns only editions whose own pages name the
+Bhaktivedanta Vedabase as their source (anantasatsang.org states it outright), Sanskrit
+Wikisource does not carry it, and Bengali Wikisource - already an approved CC BY-SA source in
+`verse_cache.SOURCES` - returns **zero hits**. The project's research had excluded BBT as in
+copyright, so bulk ingest is not available and the **verse-by-verse route is the only one
+open**. That decision belongs to the steward, so the plumbing is finished and left waiting:
+resolved verses in the cache join the retrieval index automatically, with provenance attached.
+
+And the remaining runs are now a **worklist of distinct quotations** rather than occurrences,
+which is where the economics show. 35 unmatched runs across five lectures are **34 distinct
+quotations**, each to be resolved once and then known for all 3,766 lectures. (Strict skeleton
+grouping only collapses identical skeletons, so 34 slightly overstates it - `recall` is fuzzy,
+so a near-duplicate of a resolved verse hits the cache at lookup and never needs resolving.)
+
+### Two defects the cross-check found, both mine
+
+1. **My GRETIL parser was putting commentary inside verses.** `BG 3.17` came back as
+   `evam sthite kim evam pravartitam caktram...` and `BG 11.1` as a colophon. The Gita file is a
+   commentary, and Sankara's prose sits in **bare `<l>` elements of its own**, immediately
+   before the `<lg>` holding the verse it discusses - so accumulating across that boundary
+   attached the commentary to the next real address. Pending lines are now discarded when
+   another element intervenes, which leaves the Bhagavatam's runs of bare `<l>` untouched
+   because those are separated by whitespace alone. Letter agreement went 81.2% to 87.0%.
+2. **My first cross-check measured the wrong thing** - 12.3% token agreement, which read as a
+   broken transliteration and was nothing of the kind. The two editions segment sandhi by
+   different conventions: `anantavijayam` against `ananta-vijayam`, `sahadevasca` against
+   `sahadevas ca`. Identical sounds, different typography. Comparing letter sequences with
+   spaces and hyphens removed - which is what `skeleton` does, and for the same reason - gave
+   the figures above.
+
 ### Three more defects, same method: read the output
 
 1. **Whole verses could identify a quotation but not score it.** A GRETIL verse runs 12-20 words
