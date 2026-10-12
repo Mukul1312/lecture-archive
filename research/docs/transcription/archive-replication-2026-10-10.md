@@ -206,6 +206,53 @@ generous with a four-word query - and it **is** scored, contributing 6 of the 90
 mahamantra is cited to a KKSongs entry titled "Derdime Deva Eyler": the text is right, the
 citation is absurd, and it is not scored.
 
+### The corpus scope completed - and more corpus made retrieval slightly worse
+
+The steward set the scope: **KKSongs, SB, BG, CC, CB**. All five are now in, at **177,373
+windows**:
+
+| source | windows | verses |
+|---|---:|---:|
+| KKSongs | 53,214 | 1,175 songs |
+| GRETIL (SB, BG 1-17) | 43,858 | 14,293 |
+| Sanskrit Wikisource (BG 1-18) | 2,051 | 700 |
+| Vedabase SB/BG/CC | 68,378 | 20,270 |
+| Caitanya-bhagavata Antya | 9,872 | 3,352 |
+
+Caitanya-bhagavata's Antya-khanda came off the Internet Archive as one file rather than 3,352
+page requests. **Adi and Madhya could not**: their archive.org scans are failed OCR - one item's
+language was auto-detected as Armenian at "confidence 1.0", its text numeric noise - and the one
+complete PDF answers 403 to everything. Those 7,800 verses are being fetched from wisdomlib a
+page at a time, spaced, resumable, raw pages kept so a parser change costs no refetching.
+
+| | matched of 44 runs | correct by reading | scoreable | verse words |
+|---|---:|---:|---:|---:|
+| KKSongs only | 5 | 4 | 4 | 24 |
+| + GRETIL | 9 | 9 | 6 | 36 |
+| + Wikisource + CC | 20 | 18 | 15 | 90 |
+| **+ SB/BG/CB (full scope)** | **18** | **16** | **14** | **77** |
+
+| | error over 77 printed verse words |
+|---|---:|
+| ElevenLabs Scribe v2 + keyterms | **55.8%** |
+| Sarvam Saaras v4 + keyterms | 68.8% |
+
+**Adding corpus cost two matches, and that is worth understanding rather than hiding.** A bigger
+haystack holds more near-rivals, and the margin gate - which defends against citing the wrong
+verse of scripture - refuses more as a result. `grha ksetra suta apta vittaih` went from matched
+at margin 0.317 to **refused at 0.167** purely because the enlarged corpus introduced a
+competitor. Nothing regressed in the instrument; the question simply got harder.
+
+It also bought real improvements that the match count hides. BBT's segmentation supplies
+**right-sized** windows where GRETIL's did not: `kam va dayalum saranam` now scores against the
+5-word `kam va dayalum saranam vrajema` instead of being identified and then refused against a
+10-word window, and `labho jiveta yavata` found a 3-word pada of its own.
+
+And the refusals are not the gate being timid: of 26 unmatched runs, **only one** sits in the
+near-miss band 0.20-0.25; the other 25 are well below it. So the limit is discrimination, not
+threshold - which says the next gain for retrieval is longer runs or surrounding context, **not
+more text**.
+
 ### The margin gate broke, and the way it broke is the finding
 
 **Caitanya-caritamrta quotes the same verse verbatim at more than one address.** `radhayah
