@@ -104,11 +104,34 @@ def collect_links() -> dict[str, str]:
     return wanted
 
 
+def looks_complete(page: str) -> bool:
+    """Is this the verse page, or the CDN's challenge page wearing its title?
+
+    **A 200 response that did not raise is not necessarily the page you asked for.** 28 of
+    7,800 came back at about 22 KB against a normal 57, carrying the correct `<title>`
+    (`Verse 2.1.70 Shri Chaitanya Bhagavata`) and the boilerplate words "English translation"
+    and "Commentary", but no verse. `curl` returns the same 22 KB, so nothing was truncated in
+    transit: the tail is `/cdn-cgi/challenge-platform/scripts/jsd/main.js` - **Cloudflare's bot
+    challenge**, served after several thousand requests from one client.
+
+    (I first called these truncated responses and wrote that into the code. They are not; the
+    bytes are all there. The label is corrected here because a wrong name sends the next reader
+    hunting a network bug that does not exist.)
+
+    The verse block is the thing being fetched, so its absence is the test, and a page failing
+    it is **not written** - the next run asks again instead of inheriting a hole that resume
+    would never notice. The challenge is per-client and temporary, so retrying later, more
+    slowly, is the remedy.
+    """
+    return bool(BLOCK_START.search(page))
+
+
 def fetch(links: dict[str, str], limit: int | None = None) -> None:
     PAGES.mkdir(parents=True, exist_ok=True)
     todo = [(a, u) for a, u in sorted(links.items())
             if not (PAGES / f"{a.replace(' ', '_').replace('.', '-')}.html").exists()]
     print(f"{len(links)} verses, {len(todo)} still to fetch")
+    incomplete = 0
     for position, (address, url) in enumerate(todo[:limit], 1):
         time.sleep(PAUSE)
         try:
@@ -116,10 +139,18 @@ def fetch(links: dict[str, str], limit: int | None = None) -> None:
         except Exception as exc:                 # noqa: BLE001 - one bad page must not stop it
             print(f"  [{position}] {address} FAILED {type(exc).__name__}", flush=True)
             continue
+        if not looks_complete(page):
+            # Not written, so the next run asks for it again instead of inheriting the hole.
+            incomplete += 1
+            print(f"  [{position}] {address} CHALLENGED ({len(page):,} chars, no verse "
+                  f"block) - not saved", flush=True)
+            continue
         (PAGES / f"{address.replace(' ', '_').replace('.', '-')}.html").write_text(
             page, encoding="utf-8")
         if position % 50 == 0 or position == 1:
             print(f"  [{position}/{min(len(todo), limit or len(todo))}] {address}", flush=True)
+    if incomplete:
+        print(f"\n{incomplete} page(s) arrived truncated and were not saved; run --fetch again")
 
 
 # Where the four renderings start and stop on the page.
