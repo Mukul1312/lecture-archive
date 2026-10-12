@@ -63,6 +63,12 @@
        while the thing it controlled was computed over whole files. On the same basis it is 64%.
     5. Melbourne's skipped head "almost certainly **kirtan**", inferred from loudness — it is a
        spoken archival announcement.
+    6. "The system truly cannot tell which verse it is", inferred from the **distribution of
+       retrieval margins** - 25 of 26 refusals far below the acceptance bar. Reading the 26
+       refusals showed the right text ranked **first** in 10 of them, four at a perfect 1.000,
+       refused only because another verse sharing a formulaic phrase scored nearly as high; and
+       **12 were not verse quotations at all**. A margin measures how crowded the neighbourhood
+       is, not whether the answer was found.
   The common shape is a number standing in for a property nobody checked. Before a proxy
   becomes a claim: listen to the audio, print the intermediate value, or check that two figures
   were computed the same way. A surprising result on this corpus is more often a defect in the

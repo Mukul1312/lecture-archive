@@ -248,10 +248,36 @@ It also bought real improvements that the match count hides. BBT's segmentation 
 5-word `kam va dayalum saranam vrajema` instead of being identified and then refused against a
 10-word window, and `labho jiveta yavata` found a 3-word pada of its own.
 
-And the refusals are not the gate being timid: of 26 unmatched runs, **only one** sits in the
-near-miss band 0.20-0.25; the other 25 are well below it. So the limit is discrimination, not
-threshold - which says the next gain for retrieval is longer runs or surrounding context, **not
-more text**.
+**⚠ A claim stood here that was wrong, and it is worth keeping the correction visible.** It read:
+*"of 26 unmatched runs only one sits in the near-miss band, so the limit is discrimination, not
+threshold."* That used the margin distribution as a proxy for *why* retrieval failed, which is
+not what a margin measures. Reading all 26 refusals and their top candidates
+(`data/reference/analysis/refusal-diagnosis.json`) gives a different and more useful picture:
+
+| what the refusal actually is | count |
+|---|---:|
+| **the right text ranked FIRST and the gate refused it** | **10** |
+| the right verse is in the corpus but mis-ranked | 4 |
+| **not a verse quotation at all** - names, term lists, English fragments | **12** |
+
+So the system frequently *can* tell which verse it is: four of those ten scored **1.000** at rank
+one. `bhartsana-tadane kake kichu na` matched Cc. Adi 17.27 exactly and was refused because
+Cc. Adi 14.85 shares the phrase and scored 0.889. **A low margin means a crowded neighbourhood,
+not ignorance** - and devotional verse is full of shared formulaic phrases.
+
+And 12 of 26 were never failures. The run detector finds consecutive diacritic-marked words, so
+it cannot tell `Thakur, Narottam Das Thakur` or `rajo-guna, tamo-guna, and sattva-guna` from a
+quotation: **the "26 unmatched" headline is inflated by 46%**.
+
+One case is a genuine scoring defect. `kama esa krodha esa,` - four words - scored **1.000**
+against an unrelated song, beating BG 3.37 which is in the corpus, because containment scoring
+asks only whether the query's n-grams appear in the candidate and a long candidate contains
+almost anything. **Short queries are unsafe under this scoring**, and the measured four-word
+floor is still too low.
+
+What that implies: filter non-verse runs before querying; make the score length-aware rather
+than pure containment; and **do not relax the margin** - the wrong candidates also reach
+0.8-1.0, so a lower bar would buy errors.
 
 ### The margin gate broke, and the way it broke is the finding
 
