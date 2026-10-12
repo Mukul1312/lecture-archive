@@ -53,7 +53,8 @@ ALIGNED = REPO / "data/reference/analysis/archive-alignment"
 HOSTED = REPO / "data/reference/analysis/hosted"
 SONGS = REPO / "data/reference/kksongs/songs.jsonl"
 WIKISOURCE = REPO / "data/reference/wikisource/gita-verses.jsonl"
-CARITAMRTA = REPO / "data/reference/vaniwiki/cc-verses.jsonl"
+VEDABASE = REPO / "data/reference/vaniwiki/bbt-verses.jsonl"
+BHAGAVATA = REPO / "data/reference/caitanya-bhagavata/cb-verses.jsonl"
 OUT = REPO / "data/reference/analysis/verse-runs.json"
 WORKLIST = REPO / "data/reference/analysis/verse-worklist.json"
 CACHE = REPO / "data/reference/verse-cache.json"
@@ -236,7 +237,7 @@ def comparable_length(run_words: int, printed_words: int) -> bool:
 # quotes BG 3.37 inside "Jyayasi Cet Karmanas Te Mata" - and when they tie, the citation should
 # be the scripture rather than the song that quotes it. The text is identical either way, so
 # this changes what is cited and nothing that is scored.
-SCRIPTURAL = re.compile(r"^(SB|BG|Cc\.)\s")
+SCRIPTURAL = re.compile(r"^(SB|BG|Cc\.|CB)\s")
 
 
 # A bridged gap must be short in TIME as well as in words. One unmarked word inside a verse
@@ -398,25 +399,30 @@ def main() -> None:
 
     from_gita = len(verses) - from_songs - from_gretil
 
-    # Caitanya-caritāmṛta, which no freely-licensed edition carries and which the archive
-    # quotes constantly. Available because the steward holds full permission from BBT, stated
-    # 2026-10-12; verse text only, never the purports. See `scripts/bbt_verses.py`.
-    caritamrta = []
-    if CARITAMRTA.exists():
-        caritamrta = [json.loads(line) for line
-                      in CARITAMRTA.read_text(encoding="utf-8").splitlines() if line.strip()]
-        for verse in caritamrta:
-            for window in [verse["text"], *verse.get("lines", [])]:
-                if window and len(window.split()) >= 3:
-                    verses.append(window)
-                    passages.append(verse["address"])
+    # The scope the steward set is KKSongs, SB, BG, CC and CB. SB, BG and CC come from the
+    # Vedabase corpus - available because the steward holds full permission from BBT, stated
+    # 2026-10-12, verse text only and never the purports - and Caitanya-bhāgavata from the
+    # Internet Archive's full text of the same edition wisdomlib serves.
+    added: dict[str, tuple[int, int]] = {}
+    for label, path in (("Vedabase SB/BG/CC", VEDABASE), ("Caitanya-bhāgavata", BHAGAVATA)):
+        before, rows = len(verses), []
+        if path.exists():
+            rows = [json.loads(line) for line
+                    in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            for verse in rows:
+                for window in [verse["text"], *verse.get("lines", [])]:
+                    if window and len(window.split()) >= 3:
+                        verses.append(window)
+                        passages.append(verse["address"])
+        added[label] = (len(verses) - before, len(rows))
 
-    print(f"corpus: {len(verses):,} windows - {from_songs:,} from "
-          f"{len(set(passages[:from_songs])):,} Indic songs (KKSongs), "
-          f"{from_gretil:,} from {len(scripture):,} printed verses (GRETIL), "
-          f"{from_gita:,} from {len(gita):,} (Sanskrit Wikisource), "
-          f"{len(verses) - from_songs - from_gretil - from_gita:,} from "
-          f"{len(caritamrta):,} (Caitanya-caritāmṛta)\n")
+    print(f"corpus: {len(verses):,} windows")
+    print(f"  {from_songs:>7,} from {len(set(passages[:from_songs])):,} Indic songs (KKSongs)")
+    print(f"  {from_gretil:>7,} from {len(scripture):,} printed verses (GRETIL)")
+    print(f"  {from_gita:>7,} from {len(gita):,} verses (Sanskrit Wikisource)")
+    for label, (windows, rows) in added.items():
+        print(f"  {windows:>7,} from {rows:,} verses ({label})")
+    print()
     # Verses resolved one at a time and remembered, which is the only route open for
     # Caitanya-caritamrta: no freely-licensed machine-readable text of it exists anywhere -
     # checked against Exa, Sanskrit Wikisource and Bengali Wikisource, and every digital

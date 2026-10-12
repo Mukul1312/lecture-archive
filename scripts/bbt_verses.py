@@ -8,7 +8,7 @@ stated that full permission from BBT is held**, which settles the question their
 this exists.
 
 The source is `github.com/vaniwiki/prabhupada-books`, one file per verse under
-`books/cc/{lila}/{chapter}/{verse}.txt`, with a JSON header carrying the address.
+`books/{book}/.../{verse}.txt`, with a JSON header carrying the address.
 
 **Only the verse text is taken.** Each file holds the verse, then word-for-word synonyms, then
 the translation, then Prabhupāda's purport. This reads the `===== Text =====` section and
@@ -30,8 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-CORPUS = REPO / "data/reference/vaniwiki/books/cc"
-OUT = REPO / "data/reference/vaniwiki/cc-verses.jsonl"
+CORPUS = REPO / "data/reference/vaniwiki/books"
+
+# The corpus scope the steward set: KKSongs, SB, BG, CC and CB. The clone holds all of
+# Prabhupada's books, so Nectar of Devotion, Upadesamrta and the rest are sitting there too -
+# left out deliberately rather than missed, and a line away whenever the scope widens.
+BOOKS = ("cc", "sb", "bg")
+OUT = REPO / "data/reference/vaniwiki/bbt-verses.jsonl"
 
 SOURCE = "https://github.com/vaniwiki/prabhupada-books"
 
@@ -43,11 +48,28 @@ _FRONT = re.compile(r"^---json\s*(\{.*?\})\s*---", re.S)
 _WIKILINK = re.compile(r"\[\[[^\]]*\]\]")
 
 
+# The same verse is addressed differently by different editions - GRETIL writes `BG 18.66`,
+# this corpus writes `Bg. 18.66` - and that is not cosmetic. `verse_runs.SCRIPTURAL` decides
+# whether a citation is scripture or a song that quotes it by matching the prefix, so
+# `Bg. 18.66` would have lost that preference to a song title; and `best_printed_form` pools
+# the printed forms of one passage by address, so a split label splits the pool.
+CANONICAL = {"bg.": "BG", "bg": "BG", "sb.": "SB", "sb": "SB", "cc.": "Cc.", "cc": "Cc.",
+             "cb.": "CB", "cb": "CB"}
+
+
+def canonical_address(name: str) -> str:
+    """One spelling per address, so two editions of a verse agree about what to call it."""
+    parts = name.split(None, 1)
+    if len(parts) == 2 and parts[0].lower() in CANONICAL:
+        return f"{CANONICAL[parts[0].lower()]} {parts[1]}"
+    return name
+
+
 @dataclass(frozen=True)
 class Verse:
     address: str                  # "Cc. Ādi 17.21", as the corpus itself names it
     text: str                     # the verse, and only the verse
-    lila: str                     # adi / madhya / antya
+    book: str                     # cc / sb / bg, as the corpus directories name them
     lines: tuple[str, ...] = ()
 
     def windows(self, sizes: tuple[int, ...] = (1, 2, 3)) -> list[str]:
@@ -102,19 +124,29 @@ def verse_from_file(content: str) -> tuple[str, list[str]] | None:
     return address, lines
 
 
-def load(corpus: Path = CORPUS) -> list[Verse]:
-    """Every Caitanya-caritāmṛta verse on disk, verse text only."""
+def load(corpus: Path = CORPUS, books: tuple[str, ...] = BOOKS) -> list[Verse]:
+    """Every verse on disk from the books in scope, verse text only.
+
+    The Devanagari block each Śrīmad-Bhāgavatam file carries *before* its `===== Text =====`
+    section is skipped for free, because the file's own `====== SB 1.2.10 ======` title is a
+    heading and so closes any section - the parser is only ever inside `Text`.
+    """
     found: list[Verse] = []
-    for path in sorted(corpus.rglob("*.txt")):
-        parts = path.relative_to(corpus).parts
-        if len(parts) < 2:
-            continue                             # chapter front matter, not a verse
-        parsed = verse_from_file(path.read_text(encoding="utf-8", errors="replace"))
-        if parsed is None:
+    for book in books:
+        root = corpus / book
+        if not root.exists():
             continue
-        address, lines = parsed
-        found.append(Verse(address=address, text=" ".join(lines), lila=parts[0],
-                           lines=tuple(lines)))
+        for path in sorted(root.rglob("*.txt")):
+            parts = path.relative_to(root).parts
+            if len(parts) < 2:
+                continue                         # chapter front matter, not a verse
+            parsed = verse_from_file(path.read_text(encoding="utf-8", errors="replace"))
+            if parsed is None:
+                continue
+            address, lines = parsed
+            found.append(Verse(address=canonical_address(address), text=" ".join(lines),
+                               book=book,
+                               lines=tuple(lines)))
     return found
 
 
@@ -131,12 +163,12 @@ def main() -> None:
 
     per: dict[str, int] = {}
     for verse in verses:
-        per[verse.lila] = per.get(verse.lila, 0) + 1
-    print(f"{len(verses):,} Caitanya-caritāmṛta verses (verse text only, no purports)")
-    for lila in sorted(per):
-        print(f"  {lila:8} {per[lila]:>6,}")
+        per[verse.book] = per.get(verse.book, 0) + 1
+    print(f"{len(verses):,} verses from the Vedabase corpus (verse text only, no purports)")
+    for book in sorted(per):
+        print(f"  {book:8} {per[book]:>6,}")
 
-    for address in ("Cc. Ādi 17.21", "Cc. Antya 20.21"):
+    for address in ("Cc. Ādi 17.21", "SB 1.2.10", "BG 18.66"):
         one = next((v for v in verses if v.address == address), None)
         print(f"\n  {address}: {one.text[:92] if one else '(absent)'}")
 
@@ -152,7 +184,7 @@ def main() -> None:
 
     if args.write:
         OUT.write_text("\n".join(json.dumps(
-            {"address": v.address, "text": v.text, "lila": v.lila, "lines": list(v.lines),
+            {"address": v.address, "text": v.text, "book": v.book, "lines": list(v.lines),
              "source": SOURCE}, ensure_ascii=False) for v in verses), encoding="utf-8")
         print(f"\nwritten to {OUT.relative_to(REPO)}")
 

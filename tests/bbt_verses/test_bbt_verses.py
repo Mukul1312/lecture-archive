@@ -108,9 +108,15 @@ class RealCorpusTests(unittest.TestCase):
         from scripts.bbt_verses import load
         cls.verses = {v.address: v for v in load()}
 
-    def test_all_three_lilas_are_present(self):
-        # Reuses setUpClass's load: parsing 11,429 files twice cost the suite 110 seconds.
-        self.assertEqual({v.lila for v in self.verses.values()}, {"adi", "madhya", "antya"})
+    def test_every_book_in_scope_is_present(self):
+        # Reuses setUpClass's load: parsing the corpus twice cost the suite 110 seconds.
+        # The scope the steward set is KKSongs, SB, BG, CC and CB; the three of those that
+        # live in this corpus are cc, sb and bg.
+        self.assertEqual({v.book for v in self.verses.values()}, {"cc", "sb", "bg"})
+
+    def test_the_gita_verse_the_archive_cites_most_is_present(self):
+        # BG 18.66, under the canonical spelling rather than the corpus's own `Bg. 18.66`.
+        self.assertIn("BG 18.66", self.verses)
 
     def test_the_verse_the_archive_quotes_is_there(self):
         self.assertIn("Cc. Ādi 17.21", self.verses)
@@ -122,3 +128,30 @@ class RealCorpusTests(unittest.TestCase):
         offenders = [v.address for v in self.verses.values()
                      if any(g in v.text for g in giveaways)]
         self.assertEqual(offenders[:5], [], f"{len(offenders)} verses contain prose")
+
+
+class CanonicalAddressTests(unittest.TestCase):
+    """One spelling per address, so two editions of a verse agree what to call it.
+
+    GRETIL writes `BG 18.66`; this corpus writes `Bg. 18.66`. That is not cosmetic:
+    `verse_runs.SCRIPTURAL` decides whether a citation is scripture or a song that merely
+    quotes it by matching the prefix, so `Bg. 18.66` would have lost that preference to a song
+    title - and `best_printed_form` pools one passage's printed forms by address, so a split
+    label splits the pool.
+    """
+
+    def test_the_bbt_gita_prefix_is_normalised(self):
+        from scripts.bbt_verses import canonical_address
+        self.assertEqual(canonical_address("Bg. 18.66"), "BG 18.66")
+
+    def test_an_already_canonical_address_is_unchanged(self):
+        from scripts.bbt_verses import canonical_address
+        self.assertEqual(canonical_address("SB 1.2.10"), "SB 1.2.10")
+
+    def test_the_caitanya_caritamrta_form_is_kept(self):
+        from scripts.bbt_verses import canonical_address
+        self.assertEqual(canonical_address("Cc. \u0100di 17.21"), "Cc. \u0100di 17.21")
+
+    def test_something_unrecognised_is_left_alone(self):
+        from scripts.bbt_verses import canonical_address
+        self.assertEqual(canonical_address("Derdime Deva Eyler"), "Derdime Deva Eyler")
