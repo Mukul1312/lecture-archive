@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Lecture Read-Along</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>Read along with Śrīla Gurudeva</h1>
+  <p class="sub sans">The archive's published transcripts, placed against their recordings by forced alignment. Press play and the text follows the voice.</p>
+
+  <dl class="legend">
+    <dt><span class="badge failed">2 stretches off</span> <span class="badge verified">no stretch off</span></dt>
+    <dd>A speech recogniser (ElevenLabs) has also timed every word it heard. Where several words in a row sit more than a second from where it heard them, that stretch is marked in red, because the highlight there is probably wrong. This is the strongest check there is. The two agree to 0.02 s on sound lectures.</dd>
+    <dt><span class="badge verified">Verified</span></dt>
+    <dd>A speech recogniser was run over the recording, and its words land in the same places as the transcript's. This is the placement check. Passing it rules out the transcript being laid against the wrong part of the recording. It cannot see a stretch shifted by seconds or a minute, so verified lectures can still have shifted passages.</dd>
+    <dt><span class="badge unverified">Unverified</span></dt>
+    <dd>Aligned, but nobody has checked where the words landed. Most lectures are here. The highlighting may be right, or it may drift. Watching it is the check.</dd>
+    <dt><span class="badge failed">Failed the check</span></dt>
+    <dd>The recogniser's words and the transcript's words disagree about where things are. Shown so the fault can be seen and heard.</dd>
+  </dl>
+
+  <div id="lists"></div>
+</div>
+<script src="catalogue.js"></script>
+<script src="index.js"></script>
+</body>
+</html>

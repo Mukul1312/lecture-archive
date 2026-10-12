@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Lecture Read-Along</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <p class="sub sans" style="margin-top:1rem"><a href="index.html">← All lectures</a></p>
+  <h1 id="title">Loading…</h1>
+  <div id="status"></div>
+
+  <div class="bar">
+    <audio id="audio" controls preload="metadata"></audio>
+    <div class="controls">
+      <label>Speed <select id="speed">
+        <option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option>
+      </select></label>
+      <button id="follow" hidden>Follow the voice</button>
+      <button id="resume" hidden></button>
+      <button id="mark" title="Keyboard: M">Mark a fault here</button>
+      <span class="here" id="here"></span>
+    </div>
+    <div class="timeline" id="timeline" title="Click to jump"><div class="head" id="head"></div></div>
+    <div class="key">Timeline:<i style="background:var(--gold);opacity:.55"></i>has transcript<i style="background:var(--gap)"></i>no transcript<i style="background:var(--bad)"></i>disagrees with a recogniser</div>
+  </div>
+
+  <div class="text" id="text"></div>
+
+  <div class="faults sans">
+    <b>Faults noticed</b>: press <kbd>M</kbd> (or the button) the moment the highlight is ahead of or behind the voice. Each mark records the time and the highlighted word. Copy the list below to report it.
+    <ol id="faultlist"></ol>
+    <textarea id="faulttext" readonly></textarea>
+    <button id="clearfaults">Clear marks</button>
+  </div>
+</div>
+<script src="player.js"></script>
+</body>
+</html>
