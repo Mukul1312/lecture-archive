@@ -71,6 +71,47 @@ class SpeakerLabelTests(unittest.TestCase):
                          ["prapanno", "’smy", "aṅghri-mūlaṁ", "te"])
 
 
+class WrittenOnlyTests(unittest.TestCase):
+    """Writing that is a note to the reader, which the aligner must never look for in the audio.
+
+    Each of these was found in the archive's transcripts being timed as speech.
+    """
+
+    def test_a_reference_in_round_brackets_is_not_speech(self):
+        # The scorer has always dropped these; the aligner did not, so the two disagreed about
+        # what was said. "(Bhagavad-gītā 4.7)" stays on the page, but nobody says it.
+        self.assertEqual(spoken_words("dharmasya glānir bhavati (Bhagavad-gītā 4.7) yes"),
+                         ["dharmasya", "glānir", "bhavati", "yes"])
+
+    def test_a_bracket_left_open_takes_only_its_own_line(self):
+        from scripts.transcript_accuracy import fold, normalise
+        text = "(janasya moho mameti This is illusion.\nOne must (SB 5.5.8) give up."
+        self.assertEqual(spoken_words(text)[-3:], ["must", "give", "up."])
+        self.assertEqual(spoken_words(text)[5], "illusion.")
+        self.assertEqual(fold(" ".join(spoken_words(text))), fold(normalise(text)))
+
+    def test_a_footnote_line_is_not_speech(self):
+        self.assertEqual(spoken_words("material world?\n* Cc M 19.151\nOh, in the material world."),
+                         ["material", "world?", "Oh,", "in", "the", "material", "world."])
+
+    def test_a_literal_asterisk_never_reaches_the_aligner(self):
+        # A word that IS "*" is the aligner's wildcard. Five arrived from footnote markers.
+        self.assertNotIn("*", spoken_words("one * two\n*\nthree"))
+
+    def test_text_the_editor_says_is_not_in_the_audio_is_not_speech(self):
+        text = "Don't be drunken.\n\nTHE FOLLOWING IS NOT INCLUDED IN THIS AUDIO:\n\nYes, what?\n"
+        self.assertEqual(spoken_words(text), ["Don't", "be", "drunken."])
+
+    def test_the_aligner_and_the_scorer_agree_on_what_was_said(self):
+        from scripts.transcript_accuracy import fold, normalise
+        text = ("Sri Srimad Gour Govinda Swami Maharaja: So how it will be here?\n"
+                "Devotee: Kṛṣṇa [verse] is (SB 10.14.58) the Lord\n"
+                "* see SB 10.14.58\n"
+                "They asked Kṛṣṇa: bhakta hao tumi\n"
+                "THE FOLLOWING IS NOT INCLUDED IN THIS AUDIO:\nYes, what do you say\n")
+        self.assertEqual(fold(" ".join(spoken_words(text))), fold(normalise(text)))
+
+
 class TokenisingTests(unittest.TestCase):
     def test_each_target_knows_which_word_it_came_from(self):
         # This mapping is the whole game: spans come back per token and must be folded back

@@ -60,8 +60,14 @@ _NOT_SPEAKERS = {"translation", "purport", "synonyms", "note", "text", "verse", 
 # IAST letters are added: the lowercase ones would swallow ordinary Sanskrit words - `śayyā`
 # was caught that way while this was being written.
 _UPPER = "A-ZĀĪŪṚṜḶḸṀṂḤÑṄṆṬḌŚṢ"
+# Up to eight names, not four: the archive writes his name in full - "Sri Srimad Gour Govinda
+# Swami Maharaja:", six words - and the four-word limit let it through 81 times in four
+# transcripts, to be timed as speech at nearly every turn of a darshan. Only at the START of a
+# line: a capitalised name before a colon mid-line is narration he spoke ("Lord Kṛṣṇa tells
+# Arjuna: ..."), as reading every mid-line case in the archive showed. A non-breaking space may
+# open the line; one label hid behind it.
 _SPEAKER = re.compile(
-    rf"(?:(?<=\n)|\A)[ \t]*([{_UPPER}][\w.]*(?: [{_UPPER}][\w.]*){{0,3}})[ \t]*:[ \t]*")
+    rf"(?:(?<=\n)|\A)[ \t ]*([{_UPPER}][\w.]*(?: [{_UPPER}][\w.]*){{0,7}})[ \t]*:[ \t]*")
 
 
 def expand_contractions(text: str) -> str:
@@ -76,6 +82,66 @@ def strip_speaker_label(text: str) -> str:
     def drop(match: re.Match) -> str:
         return "" if match.group(1).lower() not in _NOT_SPEAKERS else match.group(0)
     return _SPEAKER.sub(drop, text)
+
+
+# Editorial asides, in either kind of bracket. Unbounded in length, unlike the Melbourne-era rule
+# that stopped at 40 and 60 characters: the archive carries a bracketed song citation 85
+# characters long, and a length limit silently lets the longest ones through. Bounded by the
+# LINE instead: one editor opened "(janasya moho ’yam ahaṁ mameti" and never closed it, and the
+# rule ran on to the next ")" and took 277 spoken words with it. Of the archive's 1,160
+# bracketed notes that was the only one crossing a line break.
+_EDITORIAL = re.compile(r"\[[^\]\n]*\]|\([^)\n]*\)")
+
+# A footnote the editor put on a line of its own: "* Cc M 19.151", "* see SB 10.14.58".
+_FOOTNOTE = re.compile(r"(?m)^[ \t ]*\*[ \t].*$")
+
+# An asterisk standing alone. A word that IS "*" is the aligner's wildcard, which matches any
+# audio for free - five arrived that way from footnote markers and were never meant as one.
+_LONE_ASTERISK = re.compile(r"(?<!\S)\*+(?!\S)")
+
+# The editor saying outright that what follows is not in this recording. Everything after it is
+# text without audio, which the aligner would otherwise squeeze into the recording anyway.
+_NOT_IN_AUDIO = re.compile(r"(?im)^[ \t ]*the following is not included in (?:this|the) "
+                           r"(?:audio|recording)\b")
+
+
+def written_only(text: str) -> list[tuple[int, int]]:
+    """Where `text` holds writing that was never said: merged (start, end) character spans.
+
+    The single definition of "not speech", shared by the scorer (`normalise`) and the aligner
+    (`forced_align.spoken_words`), and used by the read-along page to show these spans as notes.
+    Shared because two definitions drift: the aligner timed every round-bracketed reference as
+    speech while the scorer had always dropped them.
+
+    When in doubt a span is treated as writing. Wrongly dropping a word that was said leaves a
+    moment of audio with no text, which costs a recogniser nothing and lets the read-along
+    highlight wait; wrongly keeping one makes the aligner spend real speech on it, which pushed a
+    darshan's highlight three and a half minutes behind the voice.
+    """
+    spans = [m.span() for m in _SPEAKER.finditer(text) if m.group(1).lower() not in _NOT_SPEAKERS]
+    spans += [m.span() for m in _EDITORIAL.finditer(text)]
+    spans += [m.span() for m in _FOOTNOTE.finditer(text)]
+    spans += [m.span() for m in _LONE_ASTERISK.finditer(text)]
+    tail = _NOT_IN_AUDIO.search(text)
+    if tail:
+        spans.append((tail.start(), len(text)))
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def remove_written_only(text: str) -> str:
+    """`text` with every written-only span replaced by a space, so no two words fuse."""
+    pieces, at = [], 0
+    for start, end in written_only(text):
+        pieces += [text[at:start], " "]
+        at = end
+    pieces.append(text[at:])
+    return "".join(pieces)
 
 
 # Some recognisers write the clitic as a word of its own ("isn t", "he ll"). That is a
@@ -435,12 +501,6 @@ def spell_numbers(text: str) -> str:
     return re.sub(r"\b\d{1,3}\b", lambda m: spell_number(int(m.group())), text)
 
 
-# Editorial asides, in either kind of bracket. Unbounded, unlike the Melbourne-era rule that
-# stopped at 40 and 60 characters: the archive carries a bracketed song citation 85 characters
-# long, and a length limit silently lets the longest ones through.
-_EDITORIAL = re.compile(r"\[[^\]]*\]|\([^)]*\)")
-
-
 def normalise(text: str) -> str:
     """Text reduced to what was said, on whichever side of the comparison it came from.
 
@@ -451,8 +511,7 @@ def normalise(text: str) -> str:
     Versioned deliberately. This lived in `data/reference/melbourne_bakeoff.py`, which is
     gitignored, so the definition of a fair comparison was not in the repository at all.
     """
-    text = strip_speaker_label(text)
-    text = _EDITORIAL.sub(" ", text)
+    text = remove_written_only(text)
     text = expand_contractions(text)
     text = re.sub(r"[’']", " ", text)
     text = join_orphan_clitics(text)

@@ -114,6 +114,22 @@ class DiacriticSpeakerLabelTests(unittest.TestCase):
         line = "Our Vyāsadeva is... They asked Kṛṣṇa: kṛṣṇa-bhakta hao tumi"
         self.assertEqual(strip_speaker_label(line), line)
 
+    def test_his_full_name_as_a_label_is_removed(self):
+        # The rule stopped at four words, so the archive's six-word form survived 81 times in
+        # four transcripts and was timed as speech at nearly every turn of a darshan.
+        self.assertEqual(
+            strip_speaker_label("Sri Srimad Gour Govinda Swami Maharaja: Yes, material world.").strip(),
+            "Yes, material world.")
+        self.assertEqual(
+            strip_speaker_label("Śrī Śrīmad Gour Govinda Swāmī Mahārāja: Hā.").strip(), "Hā.")
+
+    def test_a_label_after_an_invisible_space_is_removed(self):
+        self.assertEqual(strip_speaker_label(" Gour Govinda Swāmī: Yeah.").strip(), "Yeah.")
+
+    def test_a_long_line_of_narration_with_a_verb_is_not_a_label(self):
+        line = "Lord Kṛṣṇa tells Arjuna: O Kaunteya"
+        self.assertEqual(strip_speaker_label(line), line)
+
     def test_spoken_verse_that_merely_looks_like_a_label_survives(self):
         # The Melbourne reference opens a verse translation with "Śrī Mārkaṇḍeya said:" - every
         # word of which was spoken. A rule that removed it would delete real speech.

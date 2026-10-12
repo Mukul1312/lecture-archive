@@ -25,7 +25,6 @@ the page highlights the wrong word for the rest of the lecture. Hence the care, 
 
 from __future__ import annotations
 
-import re
 import unicodedata
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -286,10 +285,6 @@ def align_window(path: str, start: float, end: float, words: list[str],
     return to_seconds(spans, seconds_per_frame, offset=max(0.0, start - pad))
 
 
-# Editorial annotations, the repository's existing convention for "written, not spoken".
-_BRACKETED = re.compile(r"\[[^\]]*\]")
-
-
 def spoken_words(text: str) -> list[str]:
     """The words of a transcript line that were actually said aloud.
 
@@ -305,11 +300,15 @@ def spoken_words(text: str) -> list[str]:
     next lecture in the queue has 28 of them carrying 60 phantom words, so this is a trap that
     is simply waiting rather than one that has been avoided.
 
-    Both rules are the repository's existing ones, so the text being aligned and the text being
-    scored agree about what counts as speech.
+    Round-bracketed references - "(Bhagavad-gītā 4.7)" - footnote lines, lone asterisks and
+    text the editor marks as not in this audio were found later, being timed as speech.
+
+    Every rule lives in `transcript_accuracy.written_only`, the one definition the scorer uses
+    too, so the text being aligned and the text being scored agree about what counts as speech.
+    They had drifted apart once: the scorer dropped round brackets and this did not.
     """
-    from scripts.transcript_accuracy import strip_speaker_label
-    return _BRACKETED.sub(" ", strip_speaker_label(text)).split()
+    from scripts.transcript_accuracy import remove_written_only
+    return remove_written_only(text).split()
 
 
 @dataclass
