@@ -1,0 +1,292 @@
+{
+ "provenance": "Judged by Claude by reading each run against its top candidates, 2026-10-11/12. NOT independently verified by the steward. Entries marked confidence 'low' or verdict 'unresolved' must not be counted as ground truth; they are recorded so that the uncertainty is visible rather than averaged away.",
+ "matching": "`heard` is verbatim as the pipeline emits it; `key` is the same text under NFC. MATCH ON `key`, normalising the pipeline's text the same way. These transcripts mix precomposed and decomposed diacritics, so `pratiṣthāśā` and `pratiṣthāśā` print identically and compare unequal - this fixture silently missed a run until both sides were normalised.",
+ "how_to_use": "A scoring change is an improvement only if it raises the count of 'correct' runs resolved to their address WITHOUT resolving any 'refuse' run to any address. Those two move in opposite directions under every loosening, which is the whole point.",
+ "counts": {
+  "correct": 23,
+  "refuse": 5,
+  "unresolved": 3,
+  "unjudged": 0
+ },
+ "runs": [
+  {
+   "heard": "āmi bāndhi āchi hṛdaya",
+   "key": "āmi bāndhi āchi hṛdaya",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "unresolved",
+   "address": null,
+   "confidence": "none",
+   "why": "currently matched to Cc. Madhya 25.127; I flagged it uncertain and it IS being scored, so it is a known soft spot"
+  },
+  {
+   "heard": "jijñāsā nārtho yaś ceha karmabhiḥ",
+   "key": "jijñāsā nārtho yaś ceha karmabhiḥ",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "SB 1.2.10",
+   "confidence": "high",
+   "why": "the verse's own second half"
+  },
+  {
+   "heard": "jīvasya tattva-jijñāsā nārtho yaś ceha karmabhiḥ, lābho jīveta yāvatā",
+   "key": "jīvasya tattva-jijñāsā nārtho yaś ceha karmabhiḥ, lābho jīveta yāvatā",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "SB 1.2.10",
+   "confidence": "high",
+   "why": "the verse's own second half"
+  },
+  {
+   "heard": "śreya, lābho jīveta yāvatā.",
+   "key": "śreya, lābho jīveta yāvatā.",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "SB 1.2.10",
+   "confidence": "high",
+   "why": "first half, lābho jīveta yāvatā"
+  },
+  {
+   "heard": "mahājano yena gataḥ sa panthā",
+   "key": "mahājano yena gataḥ sa panthā",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "Cc. Madhya 17.186",
+   "confidence": "high",
+   "why": "also printed at SB 6.3.19 and elsewhere; same verse"
+  },
+  {
+   "heard": "jīvasya tattva jijñāsā nārtho yaś ceha karmabhiḥ",
+   "key": "jīvasya tattva jijñāsā nārtho yaś ceha karmabhiḥ",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "SB 1.2.10",
+   "confidence": "high",
+   "why": "the verse's own second half"
+  },
+  {
+   "heard": "kāma eṣa krodha eṣa rajo-guṇa-samudbhavaḥ.",
+   "key": "kāma eṣa krodha eṣa rajo-guṇa-samudbhavaḥ.",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "BG 3.37",
+   "confidence": "high",
+   "why": "exact, and the lecture is on BG 3.37"
+  },
+  {
+   "heard": "hañā āpanāke māne tṛṇādhama",
+   "key": "hañā āpanāke māne tṛṇādhama",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Antya 20.22",
+   "confidence": "high",
+   "why": "uttama hañā āpanāke māne"
+  },
+  {
+   "heard": "dui-prakāre sahiṣṇutā kare vṛkṣa-sama.",
+   "key": "dui-prakāre sahiṣṇutā kare vṛkṣa-sama.",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Antya 20.22",
+   "confidence": "high",
+   "why": "exact"
+  },
+  {
+   "heard": "gharma-vṛṣṭi sahe, ānera karaye rakṣaṇa",
+   "key": "gharma-vṛṣṭi sahe, ānera karaye rakṣaṇa",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Antya 20.24",
+   "confidence": "high",
+   "why": "exact"
+  },
+  {
+   "heard": "amānī mānada. ei-mata hañā yei Kṛṣṇa-nāma laya śrī-Kṛṣṇa-caraṇe tāṅra",
+   "key": "amānī mānada. ei-mata hañā yei Kṛṣṇa-nāma laya śrī-Kṛṣṇa-caraṇe tāṅra",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Antya 20.26",
+   "confidence": "high",
+   "why": "ei-mata hañā yei kṛṣṇa-nāma laya"
+  },
+  {
+   "heard": "ayācita-vṛtti, kiṁvā śāka-phala khāiba-",
+   "key": "ayācita-vṛtti, kiṁvā śāka-phala khāiba-",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Ādi 17.29",
+   "confidence": "high",
+   "why": "exact"
+  },
+  {
+   "heard": "avaśya pāibe tabe śrī-kṛṣṇa-caraṇa",
+   "key": "avaśya pāibe tabe śrī-kṛṣṇa-caraṇa",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Ādi 17.33",
+   "confidence": "high",
+   "why": "exact"
+  },
+  {
+   "heard": "kaṁ vā dayāluṁ śaraṇaṁ",
+   "key": "kaṁ vā dayāluṁ śaraṇaṁ",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "SB 3.2.23",
+   "confidence": "high",
+   "why": "kaṁ vā dayāluṁ śaraṇaṁ vrajema"
+  },
+  {
+   "heard": "tomāra caraṇe niṣkapaṭe āmi kāndiyā luṭibo bhūmi",
+   "key": "tomāra caraṇe niṣkapaṭe āmi kāndiyā luṭibo bhūmi",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Krpa Koro Vaisnava Thakura",
+   "confidence": "high",
+   "why": "exact"
+  },
+  {
+   "heard": "pāche pāche, o vaiṣṇava ṭhākura. Kṛṣṇa se tomāra.\" Kṛṣṇa",
+   "key": "pāche pāche, o vaiṣṇava ṭhākura. Kṛṣṇa se tomāra.\" Kṛṣṇa",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "Ohe Vaisnava Thakura",
+   "confidence": "high",
+   "why": "same song, adjacent lines"
+  },
+  {
+   "heard": "\"āmi kaṅgāl Kṛṣṇa Kṛṣṇa",
+   "key": "\"āmi kaṅgāl Kṛṣṇa Kṛṣṇa",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "He Vaisnava Thakura , Daya Karo Mo Pai",
+   "confidence": "medium",
+   "why": "the Hindi rendering of the same song; which printing is right is genuinely ambiguous"
+  },
+  {
+   "heard": "\"Yāhāṅ kṛṣṇa tāhāṅ nāi māyār adhikāra\" (Caitanya-caritāmṛta). Kṛṣṇa",
+   "key": "\"Yāhāṅ kṛṣṇa tāhāṅ nāi māyār adhikāra\" (Caitanya-caritāmṛta). Kṛṣṇa",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "Cc. Madhya 22.31",
+   "confidence": "high",
+   "why": "yāhāṅ kṛṣṇa, tāhāṅ nāhi māyāra adhikāra; the transcript even names Caitanya-caritāmṛta"
+  },
+  {
+   "heard": "gṛha kṣetra suta āpta vittaiḥ",
+   "key": "gṛha kṣetra suta āpta vittaiḥ",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "SB 5.5.8",
+   "confidence": "high",
+   "why": "ato gṛha-kṣetra-sutāpta-vittair, read exactly"
+  },
+  {
+   "heard": "You—prapaṇa. O Śyāma-sundara! O Śyāma-sundara!",
+   "key": "You—prapaṇa. O Śyāma-sundara! O Śyāma-sundara!",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "refuse",
+   "address": null,
+   "confidence": "high",
+   "why": "an invocation, not a quotation"
+  },
+  {
+   "heard": "\"Anugrahāya bhajanti bhūtāni janārdanasya\"—that",
+   "key": "\"Anugrahāya bhajanti bhūtāni janārdanasya\"—that",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "SB 3.5.3",
+   "confidence": "low",
+   "why": "ranked second, not first; I am not confident"
+  },
+  {
+   "heard": "\"Kṛṣṇa de tomāra, Kṛṣṇa dite pāra, tomāra śakti āche. Āmi ye kaṅgāla Kṛṣṇa-Kṛṣṇa-boli.\"",
+   "key": "\"Kṛṣṇa de tomāra, Kṛṣṇa dite pāra, tomāra śakti āche. Āmi ye kaṅgāla Kṛṣṇa-Kṛṣṇa-boli.\"",
+   "slug": "arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur",
+   "verdict": "correct",
+   "address": "Ohe Vaisnava Thakura",
+   "confidence": "high",
+   "why": "kṛṣṇa se tomāra, kṛṣṇa dīte pāro, tomāra śakati āche"
+  },
+  {
+   "heard": "kāma eṣa krodha eṣa,",
+   "key": "kāma eṣa krodha eṣa,",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "correct",
+   "address": "BG 3.37",
+   "confidence": "high",
+   "why": "same verse truncated; currently loses to an unrelated song"
+  },
+  {
+   "heard": "tri-tāpas: ādhyātmika, ādhidaivika, ādhibhautika.\"",
+   "key": "tri-tāpas: ādhyātmika, ādhidaivika, ādhibhautika.\"",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "refuse",
+   "address": null,
+   "confidence": "high",
+   "why": "a list of the three miseries, delimited by a colon"
+  },
+  {
+   "heard": "'āmāra' bolite āre kichu nāi",
+   "key": "'āmāra' bolite āre kichu nāi",
+   "slug": "bg-3-37-the-duty-of-a-human-being-brisbane",
+   "verdict": "unresolved",
+   "address": null,
+   "confidence": "none",
+   "why": "a Bhaktivinoda song line; I could not confirm it is in the corpus at all"
+  },
+  {
+   "heard": "Kṛṣṇa Hare Kṛṣṇa Kṛṣṇa Kṛṣṇa",
+   "key": "Kṛṣṇa Hare Kṛṣṇa Kṛṣṇa Kṛṣṇa",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "refuse",
+   "address": null,
+   "confidence": "high",
+   "why": "the mahāmantra - fixed text, but not a verse with an address"
+  },
+  {
+   "heard": "Rāma Hare Rāma Rāma Rāma",
+   "key": "Rāma Hare Rāma Rāma Rāma",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "refuse",
+   "address": null,
+   "confidence": "high",
+   "why": "the mahāmantra"
+  },
+  {
+   "heard": "bhartsana-tāḍane kāke kichu nā",
+   "key": "bhartsana-tāḍane kāke kichu nā",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Cc. Ādi 17.27",
+   "confidence": "high",
+   "why": "scores 1.000 at rank 1; refused on a 0.889 rival"
+  },
+  {
+   "heard": "bhāva-grāhī janārdana. bhāvaku nikaṭa bhāvaku",
+   "key": "bhāva-grāhī janārdana. bhāvaku nikaṭa bhāvaku",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "unresolved",
+   "address": null,
+   "confidence": "none",
+   "why": "could not confirm the source"
+  },
+  {
+   "heard": "Ṭhākur, Narottam Dās Ṭhākur,",
+   "key": "Ṭhākur, Narottam Dās Ṭhākur,",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "refuse",
+   "address": null,
+   "confidence": "high",
+   "why": "a list of names"
+  },
+  {
+   "heard": "pratiṣthāśā āsi', hṛdoya dūṣibe, hoibo niraya-gāmī,",
+   "key": "pratiṣthāśā āsi', hṛdoya dūṣibe, hoibo niraya-gāmī,",
+   "slug": "cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar",
+   "verdict": "correct",
+   "address": "Krpa Koro Vaisnava Thakura",
+   "confidence": "high",
+   "why": "exact, scores 1.000, refused"
+  }
+ ]
+}
