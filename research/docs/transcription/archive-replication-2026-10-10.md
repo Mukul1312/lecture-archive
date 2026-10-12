@@ -279,6 +279,76 @@ What that implies: filter non-verse runs before querying; make the score length-
 than pure containment; and **do not relax the margin** - the wrong candidates also reach
 0.8-1.0, so a lower bar would buy errors.
 
+### Taking the scoring apart, and getting it wrong three times (2026-10-12)
+
+The scoring was the suspected deeper problem. It was taken apart, and **three hypotheses of
+mine were refuted by measurement** - each plausible, each cheap to test, each damaging to ship.
+
+| I claimed | what the measurement said |
+|---|---|
+| long candidates cause wrong winners, so bound candidate length | correct matches have candidates *longer* relative to the query - median ratio **1.89** against refusals' **1.01**, and one correct match sits at 5.00. Bounding would have broken working matches. |
+| a few trigrams dominate the corpus, so idf will sharpen it | the commonest, `prb`, is in 11.6% of windows - substantial, not dominant. And **only 5 of 2,544 trigrams appear in a single window**, so almost nothing is rare and there is nothing for idf to weight. It measured *worse*: 13 correct against 14. |
+| short queries are the hazard, so add a minimum query length | floors of 8-9 change nothing; 10 and 12 only lose correct matches. |
+
+**The scoring does saturate**, and that part held up: 22 of 33 runs score exactly 1.000, so the
+score has near-binary resolution and the margin is a difference of two saturated numbers. But
+saturation turned out not to be the operational problem, because of the column I had not looked
+at.
+
+### The gate was already strictly safe, which inverts the question
+
+Across every variant and every threshold down to 0.15: **no correct run was sent to a wrong
+address, and no non-quotation was given any address.** Including `kāma eṣa krodha eṣa,` - whose
+top candidate genuinely is an unrelated song at 1.000 - because the margin discards it before
+it reaches the output. The bad winner exists in the ranking and is harmless in the result.
+
+So the question was never "make the score trustworthy". It was "the gate is provably safe at
+0.25 - how far down does that hold?" That is a sweep, not a redesign:
+
+| margin | correct resolved | **wrong address** | refused | **non-quotation resolved** |
+|---:|---:|---:|---:|---:|
+| 0.25 (as shipped) | 14 | 0 | 9 | 0 |
+| **0.15** | **16** | **0** | 7 | **0** |
+| 0.12 | 17 | 1 | 5 | 0 |
+| 0.08 | 19 | 1 | 3 | 1 |
+| 0.00 | 20 | 3 | 0 | 5 |
+
+**0.15 is now the default.** It recovers two identifications read and verified by hand -
+SB 5.5.8 at margin 0.167 and Ohe Vaiṣṇava Ṭhākura at 0.194 - and costs nothing measurable.
+
+Two honest qualifications. The first wrong answer, at 0.12, is the single fixture entry marked
+*low confidence*, so that boundary is soft; the firm one is **0.08**, where the term list
+`tri-tāpas: ādhyātmika, ādhidaivika, ādhibhautika` is handed a verse address. And the evidence
+is **28 runs from 5 lectures, judged by reading, with 64 aligned lectures unexamined** - "no
+wrong answer among what we have read", not "safe".
+
+### The structural ceiling, which no threshold can lift
+
+At margin 0.000, correct and wrong are **perfectly mixed**: `pratiṣthāśā āsi', hṛdoya dūṣibe`
+is correct at score 1.000 and margin 0.000, and `Rāma Hare Rāma Rāma Rāma` is wrong at score
+1.000 and margin 0.000. Identical numbers, opposite truths.
+
+So two verified identifications - that one and `bhartsana-tāḍane kāke kichu nā` = Cc. Ādi 17.27,
+both exact at 1.000 - are unreachable at any safe setting, because a different verse sharing
+their phrase scores as well. Recovering them needs a signal this scoring does not have: the
+surrounding English, or which scripture the lecture is already discussing. **Not a better
+threshold.**
+
+### And the thing that made all of this decidable
+
+`tests/fixtures/verse_truth.json`: 23 runs with the address judged correct by reading, 5 that
+must be refused, 3 recorded as unresolved rather than guessed, and a provenance line saying it
+is Claude's reading and **not** verified by the steward. Before it, every scoring claim here was
+settled by argument - which is how the margin error happened. Each of the three refutations
+above cost one command.
+
+Two defects surfaced while building it. The transcripts **mix Unicode normalisation**:
+`pratiṣthāśā` precomposed and decomposed print identically and compare unequal, so the fixture
+silently missed a run until both sides were normalised - `skeleton()` is immune because it runs
+NFKD first, but nothing comparing text is. And the fixture's own integrity test caught me
+storing raw text while comparing normalised, which would have broken the lookup it exists to
+make reliable.
+
 ### The margin gate broke, and the way it broke is the finding
 
 **Caitanya-caritamrta quotes the same verse verbatim at more than one address.** `radhayah

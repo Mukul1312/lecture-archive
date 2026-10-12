@@ -408,7 +408,21 @@ def main() -> None:
     # words of folded, vowel-dropped skeleton is simply not enough text to identify a verse
     # out of fifty thousand windows, and for scripture a confident error is worse than a gap.
     parser.add_argument("--min-run", type=int, default=4)
-    parser.add_argument("--margin", type=float, default=0.25)
+    # 0.15, measured rather than chosen, by sweeping the gate against
+    # `tests/fixtures/verse_truth.json` - 23 run/address pairs read by hand and 5 runs that are
+    # not quotations at all. It is **the lowest margin at which no correct run is sent to a
+    # wrong address and no non-quotation is sent to any address**, and it recovers two verified
+    # identifications that 0.25 was discarding: SB 5.5.8 at 0.167 and Ohe Vaiṣṇava Ṭhākura at
+    # 0.194.
+    #
+    # Below it: the first wrong answer appears at 0.12, but it is the one fixture entry marked
+    # low confidence, so that boundary is soft. The FIRM boundary is 0.08, where `tri-tāpas:
+    # ādhyātmika, ādhidaivika, ādhibhautika` - a list of terms - is handed a verse address.
+    #
+    # ⚠ The evidence is 28 runs from 5 lectures, judged by reading, with 64 aligned lectures
+    # unexamined. This is "no wrong answer among the runs we have read", not "safe". Lower it
+    # further only with more read ground truth, and re-read whatever a change newly admits.
+    parser.add_argument("--margin", type=float, default=0.15)
     parser.add_argument("--min-score", type=float, default=0.30)
     args = parser.parse_args()
 
