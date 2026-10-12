@@ -233,6 +233,51 @@ def comparable_length(run_words: int, printed_words: int) -> bool:
     return LENGTH_BAND[0] <= ratio <= LENGTH_BAND[1]
 
 
+# English function words, which quoted scripture does not contain. `gap` was added so that
+# `ceha` - a Sanskrit word carrying no diacritics - would stop cutting SB 1.2.10 in half, and
+# it bridged `is`, `and` and `in` just as happily: `Kṛṣṇa is Rājā Rājeśvara` and
+# `rajo-guṇa, tamo-guṇa, and sattva-guṇa` were queried against 177,000 windows of scripture as
+# though they were quotations. Eight of the twelve non-verse runs got in this way.
+ENGLISH_GAP = frozenset("""
+a an the and or but so as at by for from in into of on to with within without is are was were
+be been being am do does did has have had this that these those it its they them their he him
+his she her we us our you your i me my mine not no nor if then than when while where which who
+whom whose what why how all any both each few more most other some such only own same too very
+can will just dont don't cant can't im i'm says said say saying tells told asked answered
+means meaning one two three four five six seven eight nine ten first second third next last
+there here now also thus therefore because about after before again against between during
+through under over up down out off again once
+""".split())
+
+
+def bridgeable(word: str) -> bool:
+    """May this undiacriticed word sit inside a run of quoted scripture?
+
+    Yes for anything that could be Indic - `ceha`, `yas`, `tat` - and no for a plainly English
+    function word. The asymmetry is deliberate: letting an English word through produces a
+    phantom quotation that is then searched against the whole canon, while refusing one merely
+    trims a run back to the verse itself, which is the better query anyway. `Śrīmad-Bhāgavatam
+    says, jīvasya ...` becomes `jīvasya ...`, and is fairer to score against printed text.
+    """
+    bare = re.sub(r"[^\w']+", "", word).lower()
+    return bool(bare) and bare not in ENGLISH_GAP
+
+
+# Above this share of words ending in a comma, the run is an enumeration rather than a verse
+# line. `sādhu, bhakta, Vaiṣṇava, ācārya.` is a list of terms; printed verse carries commas but
+# not one after every word - `gharma-vṛṣṭi sahe, ānera karaye rakṣaṇa` sits at one in five.
+LIST_COMMA_SHARE = 0.6
+
+
+def looks_like_a_list(text: str) -> bool:
+    """Is this an enumeration of terms rather than a line of verse?"""
+    words = text.split()
+    if len(words) < 3:
+        return False
+    delimited = sum(1 for w in words if w.rstrip('."\'').endswith(","))
+    return delimited / len(words) >= LIST_COMMA_SHARE
+
+
 # A scriptural address, as against a song title. Several sources hold the same verse - KKSongs
 # quotes BG 3.37 inside "Jyayasi Cet Karmanas Te Mata" - and when they tie, the citation should
 # be the scripture rather than the song that quotes it. The text is identical either way, so
@@ -287,15 +332,20 @@ def indic_runs(words: list[dict], minimum: int = 3, gap: int = 1,
             pending = []
             current.append(word)
             continue
-        if current and len(pending) < gap:
+        # A gap may be bridged only by a word that could be Indic. An English function word
+        # ends the run instead, which is why `Kṛṣṇa is Rājā Rājeśvara` is no longer offered to
+        # the matcher as a quotation.
+        if current and len(pending) < gap and bridgeable(word["word"]):
             pending.append(word)
             continue
         close(current)
         current, pending = [], []
     close(current)                               # a run the lecture ends on
 
-    return [{"text": " ".join(w["word"] for w in run), "words": len(run),
-             "start": run[0]["start"], "end": run[-1]["end"]} for run in runs]
+    found = [{"text": " ".join(w["word"] for w in run), "words": len(run),
+              "start": run[0]["start"], "end": run[-1]["end"]} for run in runs]
+    # An enumeration of terms is not a quotation, however many diacritics it carries.
+    return [run for run in found if not looks_like_a_list(run["text"])]
 
 
 def worklist(unmatched: list[dict]) -> list[dict]:

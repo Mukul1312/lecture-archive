@@ -87,9 +87,12 @@ class BridgeTimeTests(unittest.TestCase):
         self.assertEqual(len(indic_runs(words, minimum=3, gap=1)), 2)
 
     def test_a_brief_gap_is_bridged(self):
+        # The gap word is `ceha` rather than `the`: this test is about the TIME bound, and an
+        # English function word is now refused outright by `bridgeable`, which would make the
+        # test pass or fail for the wrong reason.
         words = ([{"word": w, "start": i * 0.6, "end": i * 0.6 + 0.5}
                   for i, w in enumerate([KRSNA, NAMA, CINTAMANI])]
-                 + [{"word": "the", "start": 1.9, "end": 2.2}]
+                 + [{"word": "ceha", "start": 1.9, "end": 2.2}]
                  + [{"word": w, "start": 2.3 + i * 0.6, "end": 2.8 + i * 0.6}
                     for i, w in enumerate([KRSNA, NAMA, CINTAMANI])])
         self.assertEqual(len(indic_runs(words, minimum=3, gap=1)), 1)
