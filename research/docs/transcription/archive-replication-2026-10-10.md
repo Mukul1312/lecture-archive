@@ -22,6 +22,14 @@ Paired, resampling the same lecture indices for both systems:
 | Indic | −9.55 pts | `[−13.30, −5.66]` | **separated — ElevenLabs better** |
 | Bengali | +2.06 pts | `[−7.69, +7.09]` | straddles zero, and only 97 words |
 
+!!! note "How to read this page"
+    It grew across three days and the sections are no longer in order. The **answers** are the
+    two sections immediately above and below this note. For the verse-retrieval subsystem — what
+    each script does, what is measured, what is merely believed, and the traps — read
+    `docs/handoff-verse-retrieval-2026-10-12.md` instead; it supersedes the scattered sections
+    here. The later sections are kept because each records a specific defect and how it was
+    caught, which is the only reason to keep a log.
+
 ## The one that replicates
 
 Melbourne put ElevenLabs + keyterms at **10.5% English**. The archive puts it at **11.7%**, and
