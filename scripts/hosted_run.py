@@ -145,6 +145,25 @@ def remaining_credits(limit: int, subscription_counter: int, usage: dict) -> int
     return int(limit - max(spent, subscription_counter))
 
 
+def period_start_ms(next_reset_unix: int) -> int:
+    """The start of the UTC day on which the current allowance began.
+
+    The allowance refills on the same day each month, so the period began one calendar month
+    before the next reset - clamped to the month's last day, since 31 March has no 31 February.
+    Counting from 31 days before the next reset instead reached a day into the previous period
+    and charged its 9,168 credits again, reporting -307 for an account holding 8,861. The whole
+    reset day is counted, because the usage report buckets by UTC day and spend in the hours
+    before a reset is indistinguishable from spend after it - overcounting is the safe side.
+    """
+    import calendar
+    import datetime
+    reset = datetime.datetime.fromtimestamp(next_reset_unix, datetime.timezone.utc)
+    year, month = (reset.year, reset.month - 1) if reset.month > 1 else (reset.year - 1, 12)
+    day = min(reset.day, calendar.monthrange(year, month)[1])
+    start = datetime.datetime(year, month, day, tzinfo=datetime.timezone.utc)
+    return int(start.timestamp() * 1000)
+
+
 def credits_left() -> int:
     """What the ElevenLabs account can actually pay for, asked before anything is sent.
 
@@ -160,11 +179,10 @@ def credits_left() -> int:
         raise HostedFailure(subscription.status_code, subscription.text)
     plan = subscription.json()
 
-    # The allowance refills monthly, so the window is the current period. A day of overlap
-    # either side costs nothing here and a missed day would overstate what is left.
-    reset_ms = int(plan["next_character_count_reset_unix"]) * 1000
+    # The allowance refills monthly, so the window is the current period and nothing before it.
     stats = requests.get("https://api.elevenlabs.io/v1/usage/character-stats", headers=headers,
-                         params={"start_unix": reset_ms - 31 * 86_400_000,
+                         params={"start_unix": period_start_ms(
+                                     int(plan["next_character_count_reset_unix"])),
                                  "end_unix": int(time.time() * 1000)}, timeout=60)
     if stats.status_code != 200:
         raise HostedFailure(stats.status_code, stats.text)

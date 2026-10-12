@@ -18,6 +18,7 @@ from scripts.hosted_run import (
     HostedFailure,
     SARVAM_PROVEN_CEILING,
     fits_the_budget,
+    period_start_ms,
     remaining_credits,
     retryable,
     too_long_for_sarvam,
@@ -121,3 +122,28 @@ class BalanceTests(unittest.TestCase):
 
     def test_an_empty_usage_report_falls_back_to_the_counter(self):
         self.assertEqual(remaining_credits(10_000, 250, {}), 9_750)
+
+
+class PeriodTests(unittest.TestCase):
+    """Usage is counted from the last reset, not from 31 days before the next one.
+
+    The 31-day window reached one day into the previous period and counted 9,168 credits spent
+    on 2026-09-24 against a period that began on 09-25, reporting -307 credits for an account
+    holding 8,861. Spend from a period that has already refilled must not be charged again.
+    """
+
+    def test_the_period_begins_one_calendar_month_before_the_next_reset(self):
+        # Next reset 2026-10-25 01:46:16 UTC; the period began on the day of 2026-09-25.
+        start = period_start_ms(1792892776)
+        self.assertEqual(start, 1790294400000)  # 2026-09-25 00:00 UTC
+
+    def test_last_periods_spend_is_not_counted(self):
+        sept_24, oct_10 = 1790208000000, 1791590400000  # UTC midnights, the API's day buckets
+        start = period_start_ms(1792892776)
+        self.assertLess(sept_24, start)
+        self.assertGreaterEqual(oct_10, start)
+
+    def test_a_reset_late_in_a_long_month_does_not_skip_into_the_next(self):
+        # 31 March has no 31 February; the period began on the last day of February.
+        start = period_start_ms(1806451200)  # 2027-03-31 00:00 UTC
+        self.assertEqual(start, 1803772800000)  # 2027-02-28 00:00 UTC
