@@ -313,8 +313,26 @@ So the question was never "make the score trustworthy". It was "the gate is prov
 | 0.08 | 19 | 1 | 3 | 1 |
 | 0.00 | 20 | 3 | 0 | 5 |
 
-**0.15 is now the default.** It recovers two identifications read and verified by hand -
-SB 5.5.8 at margin 0.167 and Ohe Vaiṣṇava Ṭhākura at 0.194 - and costs nothing measurable.
+**0.15 was adopted, then reverted, and the reversal is the useful part.**
+
+It was lowered on that table. Then the four newly-admitted matches were read, as the rule
+written into the code demanded, and one is **wrong**: `'āmāra' bolite āre kichu nāi` was cited
+to the song `Pranesvari Ei Bara Karuna Koro More`, whose matched line is `yogāibo lalitāra
+kāche` - unrelated. Three right, one wrong. By this archive's standard a confidently wrong
+attribution to a departed teacher is worse than an admitted gap, so **0.25 stands**.
+
+**The sweep could not see that wrong answer, and that is a hole in the harness rather than bad
+luck.** That run is marked `unresolved` in the fixture, and unresolved runs were excluded from
+the wrong-answer tally - so a variant could misattribute them invisibly. "No wrong answer at
+0.15" meant "none among the runs I had judged". The fixture now says in its own text to count
+an address assigned to an unresolved run as a flagged event: unresolved means the right answer
+is unknown, which makes any confident answer unsupported rather than acceptable.
+
+And no threshold would have helped: the correct `Cc. Ādi 4.63` and the wrong `Pranesvari` both
+sit at margin **0.229**. 0.25 is not merely cautious, it is the nearest value above both.
+
+What the sweep does leave behind is worth keeping: the **firm** leak boundary is 0.08, where the
+term list `tri-tāpas: ādhyātmika, ādhidaivika, ādhibhautika` is handed a verse address.
 
 Two honest qualifications. The first wrong answer, at 0.12, is the single fixture entry marked
 *low confidence*, so that boundary is soft; the firm one is **0.08**, where the term list
@@ -338,7 +356,10 @@ threshold.**
 
 `tests/fixtures/verse_truth.json`: 23 runs with the address judged correct by reading, 5 that
 must be refused, 3 recorded as unresolved rather than guessed, and a provenance line saying it
-is Claude's reading and **not** verified by the steward. Before it, every scoring claim here was
+is Claude's reading and **not** verified by the steward. ⚠ It covers **31 runs from 5
+lectures**, while the pipeline now produces **55 across 7** - the span manifest was regenerated
+from 24 lectures to 73 and ElevenLabs gained three more. So the fixture is ground truth for the
+runs it covers and silent about the rest, and judging the new runs is the next thing it needs. Before it, every scoring claim here was
 settled by argument - which is how the margin error happened. Each of the three refutations
 above cost one command.
 

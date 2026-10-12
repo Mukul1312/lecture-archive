@@ -408,21 +408,32 @@ def main() -> None:
     # words of folded, vowel-dropped skeleton is simply not enough text to identify a verse
     # out of fifty thousand windows, and for scripture a confident error is worse than a gap.
     parser.add_argument("--min-run", type=int, default=4)
-    # 0.15, measured rather than chosen, by sweeping the gate against
-    # `tests/fixtures/verse_truth.json` - 23 run/address pairs read by hand and 5 runs that are
-    # not quotations at all. It is **the lowest margin at which no correct run is sent to a
-    # wrong address and no non-quotation is sent to any address**, and it recovers two verified
-    # identifications that 0.25 was discarding: SB 5.5.8 at 0.167 and Ohe Vaiṣṇava Ṭhākura at
-    # 0.194.
+    # **0.25 stays, and the attempt to lower it is recorded because it failed informatively.**
     #
-    # Below it: the first wrong answer appears at 0.12, but it is the one fixture entry marked
-    # low confidence, so that boundary is soft. The FIRM boundary is 0.08, where `tri-tāpas:
-    # ādhyātmika, ādhidaivika, ādhibhautika` - a list of terms - is handed a verse address.
+    # Sweeping the gate against `tests/fixtures/verse_truth.json` said 0.15 was the lowest
+    # margin with no wrong answer and no leak, and that it would recover two identifications
+    # verified by reading - SB 5.5.8 at 0.167, Ohe Vaiṣṇava Ṭhākura at 0.194. It was lowered.
     #
-    # ⚠ The evidence is 28 runs from 5 lectures, judged by reading, with 64 aligned lectures
-    # unexamined. This is "no wrong answer among the runs we have read", not "safe". Lower it
-    # further only with more read ground truth, and re-read whatever a change newly admits.
-    parser.add_argument("--margin", type=float, default=0.15)
+    # Then the four newly-admitted matches were read, as the rule written here demanded, and
+    # one of them is **wrong**: `'āmāra' bolite āre kichu nāi` was cited to the song
+    # `Pranesvari Ei Bara Karuna Koro More`, whose matched line is `yogāibo lalitāra kāche` -
+    # an unrelated line. Three right, one wrong, and by this archive's standard a confidently
+    # wrong attribution to a departed teacher is worse than an admitted gap.
+    #
+    # ⚠ **The sweep could not see it, and that is a hole in the harness, not bad luck.** That
+    # run is marked `unresolved` in the fixture, and unresolved runs were excluded from the
+    # wrong-answer tally - so a variant could misattribute them invisibly. "No wrong answer"
+    # meant "none among the runs I had judged".
+    #
+    # No threshold separates the good from the bad here: the correct `Cc. Ādi 4.63` and the
+    # wrong `Pranesvari` both sit at margin 0.229. So 0.25 is not merely cautious, it is the
+    # nearest value above both.
+    #
+    # What the sweep did establish, and what is worth keeping: the FIRM leak boundary is 0.08,
+    # where the term list `tri-tāpas: ādhyātmika, ādhidaivika, ādhibhautika` is handed a verse
+    # address. Lower this only with ground truth for the unresolved runs, and re-read
+    # everything a change newly admits - which is how this one was caught.
+    parser.add_argument("--margin", type=float, default=0.25)
     parser.add_argument("--min-score", type=float, default=0.30)
     args = parser.parse_args()
 

@@ -143,6 +143,13 @@ OUT.write_text(json.dumps({
         "A scoring change is an improvement only if it raises the count of 'correct' runs "
         "resolved to their address WITHOUT resolving any 'refuse' run to any address. Those "
         "two move in opposite directions under every loosening, which is the whole point."),
+    "unresolved_are_not_free": (
+        "COUNT an address assigned to an 'unresolved' run as a flagged event, never as "
+        "nothing. Excluding them from the tally is how a margin sweep reported 'no wrong "
+        "answer at 0.15' and the lowered gate then cited "
+        "\"'amara' bolite are kichu nai\" to an unrelated song line - the run was "
+        "unresolved, so the harness was blind to it. Unresolved means 'the right answer is "
+        "unknown', which makes ANY confident answer unsupported, not acceptable."),
     "counts": {k: sum(1 for r in rows if r["verdict"] == k)
                for k in ("correct", "refuse", "unresolved", "unjudged")},
     "runs": rows,
