@@ -1,8 +1,26 @@
 # Handoff: build the read-along page (2026-10-12)
 
 **Read this before writing any code.** Everything needed already exists on disk; the task is
-presentation, not new measurement. The one thing that is genuinely missing is a prerequisite,
-and it is in §2.
+presentation, not new measurement.
+
+## The first five minutes, if you read nothing else
+
+1. **Regenerate the span manifest.** It covers **24 lectures; 56+ are aligned.** Spans are what
+   mark where a transcript can be trusted, so building on the stale file silently omits most of
+   the corpus. `.venv-indic/Scripts/python.exe -m scripts.scoreable` (§2).
+2. **Only 5 alignments are verified. ~50 are not.** The page must say which is which rather than
+   imply they are all sound. Verification needs a recogniser's words and only 9 lectures have
+   any; 1 of the 6 checked **failed** (§4).
+3. **Use `.venv-indic` for alignment, `.venv-api` for hosted recognisers, `.venv` otherwise.**
+   The wrong one fails *after* doing the work (§6).
+4. **Two background jobs are running** — the aligner and a wisdomlib fetch. Do not start a second
+   copy of either, and do not run competing CPU work (§6).
+5. **Expect the page to find alignment faults the numbers missed.** That is the point of it, not
+   a failure of it (§1).
+
+Everything below is the detail behind those five. **Treat claims in §8 as this session's
+findings, not as ground truth** — each is evidenced, but a handoff can launder an inference into
+authority, and six inferences in this project have already turned out wrong (§5).
 
 ## 1. What to build, and why it is the next thing
 
