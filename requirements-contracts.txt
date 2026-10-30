@@ -1,0 +1,5 @@
+# The review format's conformance checks (scripts/review_contract.py, contracts/review/).
+# Installed into .venv, which the review package builder also needs for torch:
+#   .\.venv\Scripts\python.exe -m pip install -r requirements-contracts.txt
+# 4.23.0 is the version the review app's side checked the golden examples with.
+jsonschema==4.23.0

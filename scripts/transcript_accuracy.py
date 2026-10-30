@@ -347,6 +347,17 @@ _BENGALI = re.compile(
     r"|kabe|ebe|ekhona|jakhona|kothaya|kotha|hoya|haya|haite|hoite"
     r"|nahi|koya|koro|kori|kariya|chilama|chile|dase|bolibo|peye"
     r"|janani|jathare|bhuliya|asiya|asiyachi|chele|kole|hasiya|katanu"
+    # Added 2026-10-30 from half the KKSongs songs and checked on the other half: the future in
+    # -aibe/-oibe, the genitive -era, the conditional -ile, and common particles and pronouns.
+    # Words that are also English (to, be, e, hay, pay) are left out, since some callers pass
+    # whole lines with English in them; -ile and -era are kept only after letters that English
+    # rarely puts there (while, describe, camera, opera).
+    r"|\w*(aibe|oibe|aribe|oribe|nera|yera|vera|dera|rera|sera|gera|hera|tera|kera|bera)\b"
+    r"|\w*(unile|khile|rile|aile)\b"
+    r"|sei|ei|yei|kore|kare|karaye|kaila|haila|saba|nahe|tahe|kahe|taha|tabe|habe"
+    r"|tomar|amare|amake|kichu|nai|yaha|yara|kabhu|kobe|dekhi|lagi|boli|bolo|majhe|heno"
+    r"|dui|apana|apanake|thake|kiba|tuya|tuwa|kaha|doya|tini|koribe|koribo|duhu|sabe"
+    r"|hana|mane|hoy|mor|ara|ache"
     r")\b", re.I)
 _SANSKRIT = re.compile(
     r"\b(\w*(asya|anam|ebhyah|esu|ena|aya|ah|ih|uh)\b"
@@ -364,12 +375,24 @@ def indic_language(text: str) -> str:
     (42.6%) and nearly useless at Bengali (85.3%); flex bn-mixed is the only system under 50%
     on Bengali and is essentially the archive's only option there.
 
-    Checked against thirty cues classified by reading them: thirty right, none wrong.
+    Checked against thirty cues classified by reading them: thirty right, none wrong. That check
+    was too small. On 30 October 2026 the lists were measured on text whose language is known:
+    held-out KKSongs Bengali lines were 31.5% right, and 7 of 12 Bengali verse checks read by
+    hand from the review packages were called Sanskrit. With the Caitanya-caritāmṛta words
+    added, and each word voting once, those are 49.4% and 12 of 12. Sanskrit is unharmed: SB
+    verses called Bengali 0.6% -> 0.7%, held-out KKSongs Sanskrit lines 96.9% -> 96.6% right.
+    On Melbourne the split moves to 460 Sanskrit and 216 Bengali, and all seven cues that
+    changed are Bengali by reading (`prabhu kahe-kahilāṅ ei mahā-mantra`, `sarva-siddhi haibe
+    sabāra`). Half the Bengali song lines still carry no listed word at all.
+
     Returns "sanskrit" when neither orthography is evident, since that is the larger class
-    and the caller has already decided the line is Indic.
+    and the caller has already decided the line is Indic. A word on the Bengali list is not
+    also Sanskrit evidence: `haya` ends in the Sanskrit "-aya" and used to cancel itself.
     """
-    folded = " ".join(fold(text))
-    return "bengali" if len(_BENGALI.findall(folded)) > len(_SANSKRIT.findall(folded)) else "sanskrit"
+    tokens = fold(text)
+    bengali = sum(1 for t in tokens if _BENGALI.fullmatch(t))
+    sanskrit = sum(1 for t in tokens if not _BENGALI.fullmatch(t) and _SANSKRIT.fullmatch(t))
+    return "bengali" if bengali > sanskrit else "sanskrit"
 
 
 def load_reference(review_path: Path) -> tuple[list[str], list[bool], dict]:

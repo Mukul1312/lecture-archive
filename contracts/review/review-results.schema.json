@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ssggsm-seva:schema:review-results:0",
+  "title": "Review results (sketch)",
+  "description": "SKETCH 0.1, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft; nothing writes it yet. What lecture-archive publishes back after importing answers for one lecture: which answers it applied, and the measured accuracy for each language. lecture-archive owns how these numbers are computed; the app only displays them, in plain words. Major version 0 means the shape may still change without a major bump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lecture",
+    "package",
+    "producer",
+    "imported",
+    "applied",
+    "languages"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^review-results/0\\.(0|[1-9][0-9]*)$"
+    },
+    "lecture": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "package": {
+      "description": "The package whose stops these results cover.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "sha256"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*/v[1-9][0-9]*$"
+        },
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "revision", "published_at"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "published_at": { "$ref": "#/$defs/utc_time" },
+        "notes": { "type": "string", "maxLength": 4000 }
+      }
+    },
+    "imported": {
+      "description": "The export read for these results: the answers file and the app's list of the answers that count.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["answers", "accepted"],
+      "properties": {
+        "answers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["object", "sha256", "records"],
+          "properties": {
+            "object": { "type": "string", "pattern": "^exports/.+\\.jsonl$" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "records": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "accepted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["object", "sha256"],
+          "properties": {
+            "object": { "type": "string", "pattern": "^exports/.+\\.accepted\\.json$" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    },
+    "applied": {
+      "description": "The records lecture-archive applied: those the app's list names whose answer gives text or a marking. The app compares this with its own list and shows any mismatch to the supervisor.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stop", "record"],
+        "properties": {
+          "stop": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*#[0-9]{4,}$"
+          },
+          "record": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          }
+        }
+      }
+    },
+    "languages": {
+      "description": "One entry per language that has stops in the package. Never combined across languages.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "language",
+          "applied_stops",
+          "reference_words",
+          "checked_share",
+          "sources"
+        ],
+        "properties": {
+          "language": {
+            "enum": ["english", "sanskrit", "bengali", "odia", "other", "unknown"]
+          },
+          "applied_stops": { "type": "integer", "minimum": 0 },
+          "reference_words": {
+            "description": "Words of checked text in this language so far.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "checked_share": {
+            "description": "Share of this language's words in the lecture that are now checked, from 0 to 1.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source", "errors", "accuracy"],
+              "properties": {
+                "source": { "enum": ["published", "elevenlabs"] },
+                "errors": { "type": "integer", "minimum": 0 },
+                "accuracy": {
+                  "description": "Share of reference words this source got right, from 0 to 1; null when there are too few checked words to say.",
+                  "type": ["number", "null"],
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          },
+          "agreement_sample": {
+            "description": "Kept separate: how often both versions were wrong where they agreed.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stops", "both_wrong"],
+            "properties": {
+              "stops": { "type": "integer", "minimum": 0 },
+              "both_wrong": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    }
+  }
+}

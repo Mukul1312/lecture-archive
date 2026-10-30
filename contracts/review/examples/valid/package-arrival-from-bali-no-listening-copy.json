@@ -1,0 +1,49 @@
+{
+  "schema": "lecture-review-package/1.0",
+  "package": {"id": "arrival-from-bali-variegated-of-three-modes-of-material-nature-bhubaneswar/v1", "version": 1, "published_at": "2026-10-29T06:00:00Z"},
+  "producer": {
+    "name": "lecture-archive",
+    "command": "publish review package (to be written)",
+    "revision": "0000000000000000000000000000000000000000",
+    "inputs": [
+      {
+        "role": "published-transcript",
+        "path": "data/lectures/arrival-from-bali-variegated-of-three-modes-of-material-nature-bhubaneswar/transcript.txt",
+        "sha256": "1f1df3822a8d51e0dc7b1873b68d14c59ffa685a51480cdfd2c09ac9ee910ea6"
+      },
+      {
+        "role": "alignment",
+        "path": "data/reference/analysis/archive-alignment/arrival-from-bali-variegated-of-three-modes-of-material-nature-bhubaneswar.json",
+        "sha256": "63edf6cf5b29883e8c4fc3022690982d4c32accf9ef7cef000e8c145f42b2c72"
+      },
+      {"role": "scoreable-spans", "path": "data/reference/analysis/scoreable-spans.json", "sha256": "7380ac924f234d42e8866d0278f28184f39ea413ba5098ce169694a7c86522cd"}
+    ],
+    "notes": "EXAMPLE of the format for a lecture with no listening copy. It shows this lecture as it stood early on 29 October 2026, when the length check had rejected its copy. The copy was uploaded later that day (manifests/media-v2.json), so a real package for it would now name the copy. Real: the original audio hash, the decoded duration, trustworthy spans, input hashes and the first published words with their timings. Illustrative: the untranscribed stretches, language labels ('unknown'), producer revision and publishing time. No ElevenLabs output exists for this lecture yet, so it has no stops, and the transcript holds only its first few words."
+  },
+  "lecture": {
+    "id": "arrival-from-bali-variegated-of-three-modes-of-material-nature-bhubaneswar",
+    "title": "Variegated of Three Modes of Material Nature – Bhubaneswar",
+    "duration_seconds": 2103.4
+  },
+  "audio": {
+    "original": {"sha256": "b634073d4f6c713feadf5206e73239ff240ea8656093a79b9e2d075daf9b1001", "object": "audio/b634073d4f6c713feadf5206e73239ff240ea8656093a79b9e2d075daf9b1001.mp3"},
+    "listening_copy": null,
+    "listening_copy_missing": {"reason": "failed-length-check", "detail": "The length check rejected the constant-bitrate copy, so at first only the original was uploaded."}
+  },
+  "alignment_check": {"status": "not-checked"},
+  "trustworthy_spans": [{"start": 36.968, "end": 1730.224}, {"start": 1741.819, "end": 2102.645}],
+  "untranscribed": [{"start": 0.0, "end": 36.968}, {"start": 1730.224, "end": 1741.819}, {"start": 2102.645, "end": 2103.4}],
+  "transcript": {
+    "words": [
+      {"text": "are", "start": 37.248, "end": 37.328, "language": "unknown", "source": "published", "stop": null},
+      {"text": "variations", "start": 37.488, "end": 38.229, "language": "unknown", "source": "published", "stop": null},
+      {"text": "of", "start": 38.63, "end": 38.71, "language": "unknown", "source": "published", "stop": null},
+      {"text": "these", "start": 38.77, "end": 40.312, "language": "unknown", "source": "published", "stop": null},
+      {"text": "three", "start": 40.312, "end": 40.552, "language": "unknown", "source": "published", "stop": null},
+      {"text": "modes:", "start": 40.592, "end": 40.973, "language": "unknown", "source": "published", "stop": null},
+      {"text": "Mode", "start": 42.935, "end": 43.196, "language": "unknown", "source": "published", "stop": null},
+      {"text": "of", "start": 43.216, "end": 43.256, "language": "unknown", "source": "published", "stop": null}
+    ]
+  },
+  "stops": []
+}

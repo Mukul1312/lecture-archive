@@ -1,0 +1,179 @@
+{
+  "what_this_is": "The golden examples for the draft contract. Tests on both sides read this list, and every file must give the stated result. 'valid' passes the schema and every rule. 'fails-schema' is rejected by JSON Schema validation. 'fails-rule' passes the schema but breaks the named rule in contracts-proposal/README.md. A .jsonl file is checked line by line, and its rules are checked across all its lines.",
+  "examples": [
+    {
+      "file": "valid/package-bg-3-37-brisbane.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "valid",
+      "about": "Eight stops covering every kind, from real excerpts of BG 3.37 (Brisbane), including a spelling-only difference (Kṛṣṇa or Krishna).",
+      "illustrative": [
+        "producer.revision",
+        "package.published_at",
+        "audio.listening_copy.seconds",
+        "alignment_check",
+        "untranscribed",
+        "transcript.words[*].language",
+        "transcript.words[*].stop",
+        "stops[*].id",
+        "stops[*].kind",
+        "stops[*].language",
+        "stops[*].start, end and context (the choice of stretch; the word timings inside are real)",
+        "stops[*].versions[*].differs",
+        "stops[*].verse.printed_words",
+        "stops[*].verse.recited"
+      ]
+    },
+    {
+      "file": "valid/package-arrival-from-bali-no-listening-copy.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "valid",
+      "about": "The format for a lecture with no listening copy: listening_copy is null and listening_copy_missing says why. It shows arrival-from-bali as it stood before its copy was uploaded; every lecture now has one.",
+      "illustrative": [
+        "producer.revision",
+        "package.published_at",
+        "untranscribed",
+        "transcript.words[*].language"
+      ]
+    },
+    {
+      "file": "valid/answers-bg-3-37-brisbane.jsonl",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "valid",
+      "about": "Eleven records: answers of several kinds including 'both are right', one changed answer, a supervisor's adjudication of a 'can't tell', a spot check, and a flagged answer still waiting for the supervisor. All answers are invented.",
+      "illustrative": [
+        "every record"
+      ]
+    },
+    {
+      "file": "valid/accepted-bg-3-37-brisbane.json",
+      "schema": "accepted-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "answers": "valid/answers-bg-3-37-brisbane.jsonl",
+      "expect": "valid",
+      "about": "The app's list of the answers that count, sent with the example answers. Every stop appears once. Stop #0176 needs the supervisor, so it names no record.",
+      "illustrative": [
+        "exported_at",
+        "app_revision"
+      ]
+    },
+    {
+      "file": "valid/results-bg-3-37-brisbane.json",
+      "schema": "review-results.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "answers": "valid/answers-bg-3-37-brisbane.jsonl",
+      "accepted": "valid/accepted-bg-3-37-brisbane.json",
+      "expect": "valid",
+      "about": "Sketch. 'applied' must equal the records the app's list names whose answer gives text or a marking (rule R1).",
+      "illustrative": [
+        "languages"
+      ]
+    },
+    {
+      "file": "invalid/package-merged-indic-language.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "fails-schema",
+      "why": "A stop's language is 'sanskrit-or-bengali'. Sanskrit and Bengali are always separate."
+    },
+    {
+      "file": "invalid/package-no-listening-copy-without-reason.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "fails-schema",
+      "why": "listening_copy is null, but listening_copy_missing does not say why."
+    },
+    {
+      "file": "invalid/package-public-audio-url.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "fails-schema",
+      "why": "The listening copy is a public web address instead of an object name in the private bucket."
+    },
+    {
+      "file": "invalid/package-clip-past-recording-end.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "fails-rule",
+      "rule": "P1",
+      "why": "A stop's clip ends 3 seconds after the recording does."
+    },
+    {
+      "file": "invalid/package-stops-out-of-order.json",
+      "schema": "lecture-review-package.schema.json",
+      "expect": "fails-rule",
+      "rule": "P4",
+      "why": "The stops are not in timeline order."
+    },
+    {
+      "file": "invalid/answer-typed-fix-without-text.json",
+      "schema": "review-answers.schema.json",
+      "expect": "fails-schema",
+      "why": "A typed fix with no typed text."
+    },
+    {
+      "file": "invalid/answer-cant-tell-with-a-choice.json",
+      "schema": "review-answers.schema.json",
+      "expect": "fails-schema",
+      "why": "A 'can't tell' answer that also carries a chosen version. Can't tell means no choice was made."
+    },
+    {
+      "file": "invalid/answer-without-reviewer.json",
+      "schema": "review-answers.schema.json",
+      "expect": "fails-schema",
+      "why": "The record does not say who gave the answer."
+    },
+    {
+      "file": "invalid/answer-interval-not-from-package.json",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "fails-rule",
+      "rule": "A1",
+      "why": "The answer's interval is not the interval of the stop it answers."
+    },
+    {
+      "file": "invalid/answers-supersedes-another-person.jsonl",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "fails-rule",
+      "rule": "A3",
+      "why": "reviewer-02's record supersedes reviewer-01's answer. Only the same person can replace their own answer."
+    },
+    {
+      "file": "valid/answer-language-corrected.json",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "valid",
+      "about": "A reviewer answers 'both are right' to Kṛṣṇa or Krishna and says the word was Sanskrit, where the stop is labelled English. The language correction Mukul asked for on 30 October 2026: reviewers see each stop's language and can correct it, so their corrections teach lecture-archive how to label languages.",
+      "illustrative": ["every field"]
+    },
+    {
+      "file": "invalid/answer-language-same-as-stop.json",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "fails-rule",
+      "rule": "A9",
+      "why": "spoken_language corrects the stop's language, so it cannot repeat it: stop #0040 is already labelled Sanskrit."
+    },
+    {
+      "file": "invalid/accepted-answered-without-record.json",
+      "schema": "accepted-answers.schema.json",
+      "expect": "fails-schema",
+      "why": "A stop marked answered names no record."
+    },
+    {
+      "file": "invalid/accepted-stop-left-out.json",
+      "schema": "accepted-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "answers": "valid/answers-bg-3-37-brisbane.jsonl",
+      "expect": "fails-rule",
+      "rule": "C2",
+      "why": "Stop #0176 is missing from the list. Every stop must be accounted for."
+    },
+    {
+      "file": "invalid/accepted-names-replaced-answer.json",
+      "schema": "accepted-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "answers": "valid/answers-bg-3-37-brisbane.jsonl",
+      "expect": "fails-rule",
+      "rule": "C3",
+      "why": "For stop #0088 the list names the reviewer's first answer, which the reviewer later replaced."
+    }
+  ]
+}

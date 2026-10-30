@@ -1,0 +1,22 @@
+{
+  "schema": "accepted-answers/1.0",
+  "lecture": "bg-3-37-the-duty-of-a-human-being-brisbane",
+  "package": {"id": "bg-3-37-the-duty-of-a-human-being-brisbane/v1", "version": 1, "sha256": "9a9787d2fb65c599fadbd682905a8e0fa69bdaf44ef7ce4d1d45b28c6684b193"},
+  "answers": {
+    "object": "exports/2026-11-02/bg-3-37-the-duty-of-a-human-being-brisbane.jsonl",
+    "sha256": "173f569e3771d1a2fd9df3435f6b1d028e24cabdaee3bbe522bce13b33f473fa",
+    "records": 11
+  },
+  "exported_at": "2026-11-02T12:00:00Z",
+  "app_revision": "ffffffffffffffffffffffffffffffffffffffff",
+  "stops": [
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001", "state": "answered", "record": "6761ac77-47e6-563f-b3a3-27e1851a2447"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0012", "state": "answered", "record": "dc294336-b667-5762-b36e-8f091845e2e8"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0040", "state": "settled", "record": "2da57d15-3848-583c-a2da-12899657292c"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088", "state": "checked", "record": "2e9c55dd-2741-52e1-bcb5-97c6b2922542"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0089", "state": "answered", "record": "2ce7ac01-65f4-5d26-b1c4-ee54f19c2083"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130", "state": "answered", "record": "8e64ff64-459e-5953-99e3-7f4794ea5f6a"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175", "state": "answered", "record": "3909d747-906d-526f-8663-92e69a9b30cc"},
+    {"stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176", "state": "needs-decision", "record": null}
+  ]
+}

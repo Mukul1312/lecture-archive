@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ssggsm-seva:schema:lecture-review-package:1",
+  "title": "Lecture review package",
+  "description": "Version 1.0, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft. Everything a reviewer sees for one lecture, precomputed by lecture-archive. The review app shows it and does no language processing. All times are seconds on the original recording's timeline. Rules this schema cannot express (time order and bounds, matching ids and hashes) are listed in contracts/review/README.md in lecture-archive and must be checked as well.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "package",
+    "producer",
+    "lecture",
+    "audio",
+    "alignment_check",
+    "trustworthy_spans",
+    "untranscribed",
+    "transcript",
+    "stops"
+  ],
+  "properties": {
+    "schema": {
+      "description": "Format name and version, MAJOR.MINOR. This file accepts any 1.x; a reader refuses a minor it does not know yet.",
+      "type": "string",
+      "pattern": "^lecture-review-package/1\\.(0|[1-9][0-9]*)$"
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "published_at"],
+      "properties": {
+        "id": {
+          "description": "<lecture id>/v<version>. The id names the package, the version orders it, and the SHA-256 of the published file's bytes (computed by the reader, never stored inside) proves which exact file was shown.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*/v[1-9][0-9]*$"
+        },
+        "version": {
+          "description": "Starts at 1 and goes up by 1 each time lecture-archive republishes a package for this lecture.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "published_at": { "$ref": "#/$defs/utc_time" }
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command", "revision", "inputs"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "revision": {
+          "description": "Git commit of the producer that built this package. Packages are built from a clean working tree.",
+          "$ref": "#/$defs/git_revision"
+        },
+        "inputs": {
+          "description": "The producer's input files and their hashes, so every stop can be traced back to the data it came from.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "path", "sha256"],
+            "properties": {
+              "role": {
+                "enum": [
+                  "published-transcript",
+                  "alignment",
+                  "scoreable-spans",
+                  "elevenlabs",
+                  "sarvam",
+                  "verse-matches",
+                  "media-manifest",
+                  "other"
+                ]
+              },
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "notes": {
+          "description": "Free text for maintainers. Never shown to reviewers.",
+          "type": "string",
+          "maxLength": 4000
+        }
+      }
+    },
+    "lecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "duration_seconds"],
+      "properties": {
+        "id": { "$ref": "#/$defs/lecture_id" },
+        "title": {
+          "description": "The title as the reviewer sees it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "duration_seconds": {
+          "description": "Length of the original recording as decoded, which agrees with the aligner's own measurement. Never the MP3 header's figure: some originals' headers are wrong. Every time in this package lies within 0 to this value.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "audio": {
+      "description": "Object names are relative to the private media bucket (gs://ssggsm-seva-media). The app learns the bucket from its configuration and streams audio only to signed-in reviewers. Never a public URL.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["original", "listening_copy"],
+      "properties": {
+        "original": {
+          "description": "The original recording, named by its content hash. Never altered.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "object"],
+          "properties": {
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "object": {
+              "description": "audio/<sha256>.mp3, with the same hash as sha256.",
+              "type": "string",
+              "pattern": "^audio/[0-9a-f]{64}\\.mp3$"
+            }
+          }
+        },
+        "listening_copy": {
+          "description": "The seek-accurate constant-bitrate copy the app plays, as listed in the current media manifest (manifests/media-v2.json); or null when there is none. When it is null, the app accepts the package but does not offer the lecture to reviewers until a copy exists (agreed 29 October 2026).",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["object", "sha256", "seconds"],
+              "properties": {
+                "object": {
+                  "description": "listen/<original sha256>-cbr128.mp3. The hash in the name is the original's, not the copy's.",
+                  "type": "string",
+                  "pattern": "^listen/[0-9a-f]{64}-cbr128\\.mp3$"
+                },
+                "sha256": {
+                  "description": "Hash of the listening copy's own bytes.",
+                  "$ref": "#/$defs/sha256"
+                },
+                "seconds": {
+                  "description": "Decoded length of the copy. Must be within 0.05 s of the original's decoded duration.",
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            }
+          ]
+        },
+        "listening_copy_missing": {
+          "description": "Required when listening_copy is null, and only then.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {
+            "reason": { "enum": ["failed-length-check", "not-made-yet"] },
+            "detail": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      },
+      "if": {
+        "properties": { "listening_copy": { "type": "null" } }
+      },
+      "then": { "required": ["listening_copy_missing"] },
+      "else": { "not": { "required": ["listening_copy_missing"] } }
+    },
+    "alignment_check": {
+      "description": "Whether the published transcript's word timings passed lecture-archive's placement check. An alignment score is not a check. Anything other than passed is shown to reviewers as 'word timings not yet checked'.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "not-checked"] },
+        "method": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "trustworthy_spans": {
+      "description": "Stretches where the published transcript can be trusted, in time order, not overlapping. Word comparisons happen only inside them.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/interval" }
+    },
+    "untranscribed": {
+      "description": "Stretches the published transcript has no words for, in time order, not overlapping. The app marks them as untranscribed and never labels them (not as kirtan, not as anything else).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/interval" }
+    },
+    "transcript": {
+      "description": "The timed text for 'listen through' mode: the published transcript's words inside trustworthy spans, ElevenLabs words elsewhere. Speaker labels and bracketed editorial notes are already removed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["words"],
+      "properties": {
+        "words": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/transcript_word" }
+        }
+      }
+    },
+    "stops": {
+      "description": "The questions for the reviewer, in timeline order (by start, then end).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/stop" }
+    }
+  },
+  "$defs": {
+    "seconds": { "type": "number", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "git_revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "utc_time": {
+      "description": "UTC, ISO 8601, ending in Z.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "lecture_id": {
+      "description": "The lecture's slug in lecture-archive.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "stop_id": {
+      "description": "<lecture id>#<serial>. lecture-archive assigns the serial and never reuses it within a lecture. It is not the stop's position; the app shows positions ('Stop 41 of 312'), never ids.",
+      "type": "string",
+      "maxLength": 220,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*#[0-9]{4,}$"
+    },
+    "language": {
+      "description": "Sanskrit and Bengali are always separate. 'other' is a known language outside these four; 'unknown' means not labelled.",
+      "enum": ["english", "sanskrit", "bengali", "odia", "other", "unknown"]
+    },
+    "source": {
+      "description": "Where a version's text came from. The app never shows this to reviewers.",
+      "enum": ["published", "elevenlabs"]
+    },
+    "interval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/seconds" },
+        "end": { "$ref": "#/$defs/seconds" }
+      }
+    },
+    "word_text": {
+      "description": "Text exactly as the source has it, in Unicode NFC, with IAST diacritics kept.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "\\S"
+    },
+    "word_time": {
+      "description": "null only for a published word the alignment could not place.",
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "timed_word": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "start", "end"],
+      "properties": {
+        "text": { "$ref": "#/$defs/word_text" },
+        "start": { "$ref": "#/$defs/word_time" },
+        "end": { "$ref": "#/$defs/word_time" }
+      }
+    },
+    "transcript_word": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "start", "end", "language", "source", "stop"],
+      "properties": {
+        "text": { "$ref": "#/$defs/word_text" },
+        "start": { "$ref": "#/$defs/word_time" },
+        "end": { "$ref": "#/$defs/word_time" },
+        "language": { "$ref": "#/$defs/language" },
+        "source": { "$ref": "#/$defs/source" },
+        "stop": {
+          "description": "The stop this word falls in, or null. The app hides a stop's words in 'listen through' mode until the stop is answered, so the transcript cannot reveal which version is published.",
+          "oneOf": [{ "$ref": "#/$defs/stop_id" }, { "type": "null" }]
+        }
+      }
+    },
+    "version": {
+      "description": "One source's text for the stop: a few context words before, the words in question, and a few after.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "before", "words", "after", "differs"],
+      "properties": {
+        "source": { "$ref": "#/$defs/source" },
+        "before": {
+          "type": "array",
+          "maxItems": 30,
+          "items": { "$ref": "#/$defs/word_text" }
+        },
+        "words": {
+          "description": "The words in question. May be empty in a word disagreement, when this source has no words where the other has some.",
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/timed_word" }
+        },
+        "after": {
+          "type": "array",
+          "maxItems": 30,
+          "items": { "$ref": "#/$defs/word_text" }
+        },
+        "differs": {
+          "description": "Positions in words (0-based) that differ from the other version, for highlighting. Computed by lecture-archive.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "verse": {
+      "description": "A suggested printed verse. Only the printed portion the match covers, never the whole verse pasted in.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "printed_text", "printed_words", "recited"],
+      "properties": {
+        "reference": {
+          "description": "For example 'SB 1.2.10' or 'Cc. Madhya 17.186'.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "printed_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "printed_words": {
+          "description": "printed_text split into words by lecture-archive.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/word_text" }
+        },
+        "recited": {
+          "description": "lecture-archive's suggestion: positions in printed_words (0-based) that appear to have been recited. The app neither shows it nor pre-ticks it; reviewers start with no words ticked (agreed 29 October 2026). Only words a reviewer confirms as recited count as spoken text.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "language", "start", "end", "context", "versions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stop_id" },
+        "kind": {
+          "enum": ["word-disagreement", "single-version", "agreement-sample", "verse-check"]
+        },
+        "language": {
+          "description": "One language per stop: lecture-archive splits a passage where the language changes, so every answer counts toward exactly one language.",
+          "$ref": "#/$defs/language"
+        },
+        "start": { "$ref": "#/$defs/seconds" },
+        "end": { "$ref": "#/$defs/seconds" },
+        "context": {
+          "description": "The clip the reviewer hears: a few seconds either side of the stop, inside the recording.",
+          "$ref": "#/$defs/interval"
+        },
+        "versions": {
+          "description": "Each source's text, at most one version per source. The app shows them in random order as A and B, without saying which is which.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/version" }
+        },
+        "verse": { "$ref": "#/$defs/verse" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "word-disagreement" } } },
+          "then": {
+            "properties": {
+              "versions": {
+                "type": "array",
+                "minItems": 2,
+                "contains": {
+                  "type": "object",
+                  "properties": { "differs": { "type": "array", "minItems": 1 } }
+                }
+              }
+            },
+            "not": { "required": ["verse"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "single-version" } } },
+          "then": {
+            "properties": {
+              "versions": {
+                "type": "array",
+                "maxItems": 1,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "words": { "type": "array", "minItems": 1 },
+                    "differs": { "type": "array", "maxItems": 0 }
+                  }
+                }
+              }
+            },
+            "not": { "required": ["verse"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "agreement-sample" } } },
+          "then": {
+            "properties": {
+              "versions": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "words": { "type": "array", "minItems": 1 },
+                    "differs": { "type": "array", "maxItems": 0 }
+                  }
+                }
+              }
+            },
+            "not": { "required": ["verse"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "verse-check" } } },
+          "then": { "required": ["verse"] }
+        }
+      ]
+    }
+  }
+}

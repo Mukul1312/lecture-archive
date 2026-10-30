@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ssggsm-seva:schema:review-answers:1",
+  "title": "Review answer record",
+  "description": "Version 1.0, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft. One record: one line of an answers export (JSON Lines). The review app writes records and never changes or deletes one; a changed answer is a new record that supersedes the old one. Each record stands on its own: it repeats the lecture, the audio hash, the stop's interval and the package it came from. Rules this schema cannot express (supersede chains, matching the package) are listed in contracts/review/README.md in lecture-archive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "record",
+    "lecture",
+    "stop",
+    "package",
+    "audio_sha256",
+    "interval",
+    "by",
+    "answered_at",
+    "active_seconds",
+    "shown_order",
+    "app_revision",
+    "supersedes"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^review-answers/1\\.(0|[1-9][0-9]*)$"
+    },
+    "id": {
+      "description": "Created by the app when the record is written. Never reused.",
+      "$ref": "#/$defs/uuid"
+    },
+    "record": {
+      "description": "answer: a person's answer to a stop. adjudication: a supervisor (or Mukul, as owner) settles a stop. spot-check: a supervisor checks a randomly chosen answer.",
+      "enum": ["answer", "adjudication", "spot-check"]
+    },
+    "lecture": { "$ref": "#/$defs/lecture_id" },
+    "stop": { "$ref": "#/$defs/stop_id" },
+    "package": {
+      "description": "The exact package the stop was shown from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "sha256"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*/v[1-9][0-9]*$"
+        },
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": {
+          "description": "SHA-256 of the package file's bytes as the app downloaded them.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "audio_sha256": {
+      "description": "The original recording's hash, copied from the package.",
+      "$ref": "#/$defs/sha256"
+    },
+    "interval": {
+      "description": "The stop's start and end, copied from the package.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": "number", "minimum": 0 }
+      }
+    },
+    "by": {
+      "description": "Who gave this record. id is the app's stable id for the person, never their email (agreed 29 October 2026); only the app's own database maps it to a Google account.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,39}$"
+        },
+        "role": { "enum": ["reviewer", "supervisor", "owner"] }
+      }
+    },
+    "answered_at": { "$ref": "#/$defs/utc_time" },
+    "active_seconds": {
+      "description": "Seconds the person was actively on this stop (screen in focus, with input or audio playing), measured by the app.",
+      "type": "number",
+      "minimum": 0
+    },
+    "clip_played_seconds": {
+      "description": "Seconds of audio played for this stop. Zero shows the clip was not played; more does not prove anyone listened.",
+      "type": "number",
+      "minimum": 0
+    },
+    "mode": {
+      "description": "Which screen the answer came from.",
+      "enum": ["stop-by-stop", "listen-through"]
+    },
+    "shown_order": {
+      "description": "The sources in the order shown: the first was 'A', the second 'B'. Lets lecture-archive check that blind order worked. Recorded on every record, because the supervisor's screens are blind too (agreed 29 October 2026).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "answer": { "$ref": "#/$defs/answer" },
+    "reviews": {
+      "description": "Adjudication and spot-check only: the id of the record being settled or checked.",
+      "$ref": "#/$defs/uuid"
+    },
+    "outcome": {
+      "description": "Spot-check only. agree: the checked answer is right. corrected: answer holds the right one.",
+      "enum": ["agree", "corrected"]
+    },
+    "flag": {
+      "description": "Answers only: the reviewer asks the supervisor to look at this stop.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": {
+          "enum": ["please-check", "audio-problem", "text-problem", "other"]
+        }
+      }
+    },
+    "note": {
+      "description": "Free text from the person, stored exactly as typed (Unicode NFC).",
+      "type": "string",
+      "maxLength": 2000
+    },
+    "app_revision": {
+      "description": "Git commit of the review app build that wrote the record.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "supersedes": {
+      "description": "The id of this person's own earlier record for the same stop that this one replaces, or null. The earlier record is kept. The earlier record may come from an earlier version of the lecture's package, when the stop carried over.",
+      "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
+    },
+    "spoken_language": {
+      "description": "Optional: the language the person heard, when the stop's language label is wrong or 'unknown' (asked for by Mukul, 30 October 2026). It never repeats the stop's own label (rule A9). lecture-archive collects these corrections to measure and improve how it labels languages; one answer never relabels a stop.",
+      "enum": ["english", "sanskrit", "bengali", "odia", "other"]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "record": { "const": "answer" } } },
+      "then": {
+        "required": ["answer"],
+        "not": {
+          "anyOf": [{ "required": ["reviews"] }, { "required": ["outcome"] }]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "record": { "const": "adjudication" } } },
+      "then": {
+        "required": ["answer", "reviews"],
+        "properties": {
+          "by": {
+            "type": "object",
+            "properties": { "role": { "enum": ["supervisor", "owner"] } }
+          }
+        },
+        "not": {
+          "anyOf": [{ "required": ["outcome"] }, { "required": ["flag"] }]
+        }
+      }
+    },
+    {
+      "if": { "properties": { "record": { "const": "spot-check" } } },
+      "then": {
+        "required": ["reviews", "outcome"],
+        "properties": {
+          "by": {
+            "type": "object",
+            "properties": { "role": { "enum": ["supervisor", "owner"] } }
+          }
+        },
+        "not": { "required": ["flag"] }
+      }
+    },
+    {
+      "if": {
+        "required": ["outcome"],
+        "properties": { "outcome": { "const": "corrected" } }
+      },
+      "then": { "required": ["answer"] }
+    },
+    {
+      "if": {
+        "required": ["outcome"],
+        "properties": { "outcome": { "const": "agree" } }
+      },
+      "then": { "not": { "required": ["answer"] } }
+    },
+    {
+      "if": {
+        "required": ["answer"],
+        "properties": {
+          "answer": {
+            "type": "object",
+            "properties": { "kind": { "const": "escalated" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "record": { "const": "adjudication" },
+          "by": {
+            "type": "object",
+            "properties": { "role": { "const": "supervisor" } }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "utc_time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "lecture_id": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "stop_id": {
+      "type": "string",
+      "maxLength": 220,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*#[0-9]{4,}$"
+    },
+    "source": { "enum": ["published", "elevenlabs"] },
+    "typed_text": {
+      "description": "Exactly as typed, after Unicode NFC normalisation and nothing else.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    },
+    "answer": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "description": "chose-version: one of the shown versions is right. both-right: the versions differ only in spelling, and both are right (agreed 29 October 2026). confirmed: the single text shown is right. typed-fix: neither is right; the person typed what was said. cant-tell, not-lecturer and dont-know-language are always available. verse-confirmed, verse-different and not-a-verse answer a verse check. escalated: the supervisor passes the stop to Mukul.",
+          "enum": [
+            "chose-version",
+            "both-right",
+            "confirmed",
+            "typed-fix",
+            "cant-tell",
+            "not-lecturer",
+            "dont-know-language",
+            "verse-confirmed",
+            "verse-different",
+            "not-a-verse",
+            "escalated"
+          ]
+        },
+        "chosen_source": { "$ref": "#/$defs/source" },
+        "typed_text": { "$ref": "#/$defs/typed_text" },
+        "heard": {
+          "description": "Optional, for not-lecturer: what the person heard instead.",
+          "enum": ["questioner-or-other-speaker", "kirtan-or-singing", "noise-or-silence"]
+        },
+        "recited": {
+          "description": "For verse-confirmed: positions in the stop's verse.printed_words (0-based) that were actually recited. Only these count as spoken text.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 0 }
+        },
+        "other_reference": {
+          "description": "Optional, for verse-different: the verse the person recognised, as typed.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "chose-version" } } },
+          "then": {
+            "required": ["chosen_source"],
+            "propertyNames": { "enum": ["kind", "chosen_source"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "typed-fix" } } },
+          "then": {
+            "required": ["typed_text"],
+            "propertyNames": { "enum": ["kind", "typed_text"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "not-lecturer" } } },
+          "then": { "propertyNames": { "enum": ["kind", "heard"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "verse-confirmed" } } },
+          "then": {
+            "required": ["recited"],
+            "propertyNames": { "enum": ["kind", "recited", "typed_text"] }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "verse-different" } } },
+          "then": { "propertyNames": { "enum": ["kind", "other_reference"] } }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "both-right",
+                  "confirmed",
+                  "cant-tell",
+                  "dont-know-language",
+                  "not-a-verse",
+                  "escalated"
+                ]
+              }
+            }
+          },
+          "then": { "propertyNames": { "const": "kind" } }
+        }
+      ]
+    }
+  }
+}

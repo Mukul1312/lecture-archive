@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ssggsm-seva:schema:accepted-answers:1",
+  "title": "Answers that count",
+  "description": "Version 1.0, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft. Written by the review app with every answers export: for each stop of one package, the record that counts, if any. Only the app decides this (agreed 29 October 2026); lecture-archive checks the list and applies it, and never works it out for itself. Rules this schema cannot express are listed in contracts/review/README.md in lecture-archive.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lecture", "package", "answers", "exported_at", "app_revision", "stops"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^accepted-answers/1\\.(0|[1-9][0-9]*)$"
+    },
+    "lecture": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "package": {
+      "description": "The package whose stops this list covers.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "sha256"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*/v[1-9][0-9]*$"
+        },
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "answers": {
+      "description": "The answers export this list goes with. Each export holds every record for the lecture so far, so the pair stands on its own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object", "sha256", "records"],
+      "properties": {
+        "object": { "type": "string", "pattern": "^exports/.+\\.jsonl$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "records": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "exported_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "app_revision": {
+      "description": "Git commit of the review app build that decided the list.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "stops": {
+      "description": "Every stop in the package, once each, in the package's order. Nothing is left out.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stop", "state", "record"],
+        "properties": {
+          "stop": {
+            "type": "string",
+            "maxLength": 220,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*#[0-9]{4,}$"
+          },
+          "state": {
+            "description": "open: no answer yet. answered: a reviewer's answer counts. checked: a spot check agreed with the answer, or corrected it. needs-decision: waiting for the supervisor (can't tell, I don't know this language, or a flag), or for Mukul (escalated). settled: the supervisor or Mukul settled it.",
+            "enum": ["open", "answered", "checked", "needs-decision", "settled"]
+          },
+          "record": {
+            "description": "The id of the record that counts, or null while the stop is open or needs a decision. lecture-archive reads the record's own answer to see what to apply. When a republished package keeps a stop's id, earlier answers carry over (agreed 29 October 2026), so this may be a record given on an earlier version of the lecture's package; the record's own package fields say which.",
+            "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
+          }
+        },
+        "if": {
+          "properties": { "state": { "enum": ["open", "needs-decision"] } }
+        },
+        "then": {
+          "properties": { "record": { "type": "null" } }
+        },
+        "else": {
+          "properties": { "record": { "$ref": "#/$defs/uuid" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    }
+  }
+}

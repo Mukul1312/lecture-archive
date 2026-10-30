@@ -100,7 +100,8 @@ lecture, and measure the corpus's real average length, which every cost figure m
   its three failure modes for a verbatim archive, and the one finding worth more than it.
 - [The "Sanskrit" column was two languages](sanskrit-and-bengali-2026-09-23.md) — 676 Indic words
   are 486 Sanskrit and 190 Bengali, and no system is best at both. **Corrects several earlier
-  claims.**
+  claims.** Itself corrected on 30 October 2026: 460 and 216, after the classifier was measured
+  on text of known language.
 - [Are the models wrong, or our reference?](who-is-wrong-adjudication-2026-09-23.md) — all 483
   remaining disagreements judged one at a time, with every claim against the reference put to
   a sceptic. **72% are genuinely the model's mistake.**

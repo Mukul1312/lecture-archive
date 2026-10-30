@@ -1,5 +1,15 @@
 # The "Sanskrit" column was two languages (2026-09-23)
 
+> **Correction, 30 October 2026.** The classifier was measured on text whose language is known
+> and improved, because it called 7 of 12 Bengali verse checks in the review packages Sanskrit,
+> and two in three held-out KKSongs Bengali lines. The Melbourne split is now **460 Sanskrit and
+> 216 Bengali**. 26 words in seven cues moved, and every one is Bengali by reading
+> (`prabhu kahe-kahilāṅ ei mahā-mantra`, `sarva-siddhi haibe sabāra`, `upāya nā dekhi`). The
+> per-system table below was computed on the old split and has **not** been recomputed: the
+> script that produced it is not in the repository. Read its Bengali column as 190 words of
+> what is now 216. The measurements and the new word lists are in
+> `scripts.transcript_accuracy.indic_language`.
+
 Every Sanskrit figure in this project has been wrong in the same way, and the error hid a
 routing result.
 

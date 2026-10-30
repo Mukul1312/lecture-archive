@@ -1,0 +1,5 @@
+# The review format's golden examples are checked by their SHA-256 - an answers record names its
+# package by hash - so their bytes must not change on checkout. A CRLF conversion on Windows would
+# break every hash without changing a word.
+contracts/**/*.json text eol=lf
+contracts/**/*.jsonl text eol=lf

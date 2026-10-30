@@ -86,9 +86,13 @@ set:
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-enhance-windows.txt
 .\.venv\Scripts\python.exe -m pip install resemblyzer==0.1.4 --no-deps
+.\.venv\Scripts\python.exe -m pip install -r requirements-contracts.txt
 $activeTestRoots = @(
     "tests/ggsm_transcription",
     "tests/reference_editor",
+    "tests/review_contract",
+    "tests/review_package",
+    "tests/review_publish",
     "tests/transcript_accuracy",
     "tests/youtube_enhance"
 )
@@ -110,7 +114,8 @@ requirements file:
 ```bash
 python3.11 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements-enhance.txt
-for test_root in tests/ggsm_transcription tests/reference_editor tests/transcript_accuracy tests/youtube_enhance; do
+./.venv/bin/python -m pip install -r requirements-contracts.txt
+for test_root in tests/ggsm_transcription tests/reference_editor tests/review_contract tests/review_package tests/review_publish tests/transcript_accuracy tests/youtube_enhance; do
     ./.venv/bin/python -m unittest discover -s "$test_root" -t . -v || exit
 done
 ./.venv/bin/python -m unittest tests.test_legacy_script_paths -v
