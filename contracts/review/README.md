@@ -1,6 +1,16 @@
 # The review format
 
-**Adopted by `lecture-archive` on 29 October 2026 ([ADR-0016](../../docs/decisions/0016-lecture-archive-publishes-the-review-format.md)). No package has been uploaded in this format yet.**
+**Adopted by `lecture-archive` on 29 October 2026 ([ADR-0016](../../docs/decisions/0016-lecture-archive-publishes-the-review-format.md)). The first five packages were published on 30 October 2026, built from commit `213f1d4`, so the format now changes only by the versioning rules below.**
+
+| Published to `gs://ssggsm-seva-media/packages/…/v1.json` | Stops | SHA-256 |
+|---|---:|---|
+| `bg-3-37-the-duty-of-a-human-being-brisbane` | 640 | `bf4b32675e88bf44dea653b2547ccf35132366307789c32e794eb885b197b321` |
+| `cc-adi-lila-7-114-why-lord-buddha-denied-veda-bhubaneswar` | 276 | `57b1d6baac8f9f3bc0993cbc136652518cce6dc44ee3da7b466ade8eb65643e4` |
+| `cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar` | 726 | `89bf159b7bd112153018a6f5e56efe542dfb65c1f04ae89f8ae42a0efbefaf31` |
+| `evening-darshan-about-bhubaneswar-temple-and-preaching-bhubaneswar` | 773 | `92bc9c74bf5cae99174b2f37a5e465301175ae94d0f9bf60f124bb5a39fd6af6` |
+| `arrival-address-from-usa-no-question-of-disappointment-and-pessimism-in-mahaprabhu-s-line-bhubaneswar` | 143 | `f0e628204e2f3755ef2921a54d88bca23a9eccbc84b9b3c58c3b416d75bd2bf4` |
+
+Until `review-assistance` takes this folder into its pinned copy, its schema refuses these packages: their `producer.inputs` use the roles `sarvam` and `media-manifest`, which its copy does not have yet.
 
 `lecture-archive` owns this format (agreed 29 October 2026) and publishes it from this folder. It began as `review-assistance`'s draft, written from the reviewer's side; [the changes made on adoption](#changes-made-on-adoption) are listed at the end. `review-assistance` keeps a pinned copy of this folder, with a test that fails if its copy differs.
 
@@ -187,7 +197,7 @@ Every rule is checked against the examples, but only P1, P4, A1, A3, C2 and C3 h
 - **Ids stay stable.** Lecture, stop, record and reviewer ids, and value words such as `published`, `sanskrit` or `chose-version`, never change meaning and are never reused. A stop keeps its id across package versions while it asks the same question, and small timing shifts keep the id. If what it asks changes (its kind, language, versions' words or verse), it gets a new id and the old one is retired.
 - **Answers carry over** (agreed 29 October 2026). When a republished package keeps a stop's id, the stop's earlier records still apply and the reviewer is not asked again. Stops new in that version start open. Stops it drops are retired, and their records stay in the history. No example covers a republished package yet.
 - **Answers are never rewritten.** After a major change, `lecture-archive` translates old answers when it imports them. The stored records stay as they were written.
-- **Until the first package is uploaded,** the format is edited in place and stays at 1.0 (0.1 for the results sketch), because no published file can depend on it yet. After that, every change follows the rules above. Major version 0 means the results shape may still change.
+- **Until the first package was uploaded,** the format was edited in place and stayed at 1.0 (0.1 for the results sketch), because no published file could depend on it. That ended on 30 October 2026. Every change now follows the rules above. Major version 0 means the results shape may still change.
 
 ## The examples
 

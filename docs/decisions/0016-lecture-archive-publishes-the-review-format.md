@@ -71,7 +71,9 @@ Every figure above was measured on 29 October 2026 by the code named. None of it
    stop's language to reviewers so their corrections teach this repository to label better (see
    decision 4); and publish. `scripts/review_publish.py` uploads a package to
    `gs://ssggsm-seva-media/packages/<lecture>/v1.json`, refusing a DRAFT, a package that fails its
-   checks, one whose audio is not in the bucket, and any overwrite.
+   checks, one whose audio is not in the bucket, and any overwrite. Five packages were published
+   with it on 30 October 2026, built from commit `213f1d4`; their hashes are listed at the top of
+   `contracts/review/README.md`.
 4. **The format changed on adoption** where this repository's knowledge required it. The changes
    are listed in `contracts/review/README.md` ("Changes made on adoption"). There are two schema
    changes. `producer.inputs[].role` gains `sarvam` and `media-manifest`. And on 30 October
