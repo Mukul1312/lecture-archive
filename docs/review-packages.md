@@ -51,6 +51,25 @@ Built from commit `213f1d4` and uploaded on 30 October 2026:
 | `evening-darshan-about-bhubaneswar-temple-and-preaching-bhubaneswar` | 773 | `92bc9c74bf5cae99174b2f37a5e465301175ae94d0f9bf60f124bb5a39fd6af6` |
 | `arrival-address-from-usa-no-question-of-disappointment-and-pessimism-in-mahaprabhu-s-line-bhubaneswar` | 143 | `f0e628204e2f3755ef2921a54d88bca23a9eccbc84b9b3c58c3b416d75bd2bf4` |
 
+Built from commit `60aecc6` with `--every-agreed-piece` and uploaded on 31 October 2026:
+
+| Published to `gs://ssggsm-seva-media/packages/…/v1.json` | Stops | SHA-256 |
+|---|---:|---|
+| `arrival-class-only-a-dear-devotee-can-make-the-lord-appear-new-mayapur` | 840 | `e1f530be2d4a70401cce4d64d8699b1b527dd46d16e01cde33ee871a92c7236c` |
+| `cc-adi-lila-4-256-258-krishna-becomes-a-disciple-of-radharani-bhubaneswar` | 948 | `2994ba076f02aadf36ed8244c5715871519ed5b00ed0ed6b6b80ef60bed94b5e` |
+
+Version 2 of the first five, republished from commit `6b7e87f` and uploaded on 31 October 2026,
+after the review app pinned that commit and shipped carry-over. Each keeps its version 1 stops
+unchanged and adds an agreement stop for every agreed piece:
+
+| Published to `gs://ssggsm-seva-media/packages/…` | Stops | SHA-256 |
+|---|---:|---|
+| `bg-3-37-the-duty-of-a-human-being-brisbane/v2.json` | 1,513 | `70d438614e24465d864ac6bf966be29e2ae80f5cc024e2dc12aee5be1bdcb099` |
+| `cc-adi-lila-7-114-why-lord-buddha-denied-veda-bhubaneswar/v2.json` | 788 | `a5678e071e0834529fc01c5e490eb170f4105132b75a7f24ed83eb6bd50a9d45` |
+| `cc-adi-lila-9-46-a-true-attitude-and-the-process-of-chanting-the-holy-name-bhubaneswar/v2.json` | 1,247 | `629220090716f8a94797c03079824345b6d88335e32526a26eb77f5a1dc3d286` |
+| `evening-darshan-about-bhubaneswar-temple-and-preaching-bhubaneswar/v2.json` | 1,687 | `dbec883ee23fa3ecae2a4664162c86a56d235719d309cd26e2259156abf00d50` |
+| `arrival-address-from-usa-no-question-of-disappointment-and-pessimism-in-mahaprabhu-s-line-bhubaneswar/v2.json` | 279 | `ca2308027da2115939b5645646555217d146d354c9bbb25a8d4073f00420dc78` |
+
 On 30 October 2026 every lecture had a listening copy, listed in `manifests/media-v2.json`.
 
 ## Building, publishing and importing
