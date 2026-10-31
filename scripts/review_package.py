@@ -23,7 +23,8 @@ It is written locally, under the gitignored `data/reference/review/packages/`. U
   differences inside it are not asked separately; the printed text is the better question.
 - *single-version* - outside every trustworthy span, only ElevenLabs has words.
 - *agreement-sample* - a few places where both sources wrote exactly the same words, unmarked,
-  because agreement is not proof.
+  because agreement is not proof. With `--every-agreed-piece`, every such place instead, cut
+  into pieces of up to six words.
 
 **Where the published words cannot be trusted, nothing is compared.** The lecture-level
 placement check (`scripts/compare_hosted`) can pass while a stretch of words sits seconds away
@@ -503,6 +504,108 @@ def agreement_windows(published: list[Word], heard: list[Word], languages: list[
     return found
 
 
+def identical_pairs(published: list[Word], heard: list[Word],
+                    spans: list[TrustedSpan]) -> dict[int, int]:
+    """Each published word in a span, paired with the ElevenLabs word written exactly like it.
+
+    Compared span by span, as `agreement_windows` compares, so a pair never crosses a span.
+    """
+    pairs = {}
+    for span in spans:
+        near = [j for j, w in enumerate(heard) if span.start <= w.middle < span.end]
+        if not near:
+            continue
+        p_lo, h_lo = span.first, near[0]
+        matcher = SequenceMatcher(None, [w.text for w in published[p_lo:span.last + 1]],
+                                  [w.text for w in heard[h_lo:near[-1] + 1]], autojunk=False)
+        for block in matcher.get_matching_blocks():
+            for k in range(block.size):
+                pairs[p_lo + block.a + k] = h_lo + block.b + k
+    return pairs
+
+
+def agreed_pieces(published: list[Word], heard: list[Word], languages: list[str],
+                  spans: list[TrustedSpan], taken_p: set[int], taken_h: set[int],
+                  size: int = AGREEMENT_WORDS) -> list[tuple[int, int, int, int]]:
+    """Every agreed word both sources wrote exactly alike, cut into pieces, as (p_lo, p_hi, h_lo, h_hi).
+
+    A piece is at most `size` words in one language, inside one span, timed, and holds no word
+    of another stop on either side (`taken_p`, `taken_h`); the last piece of a run may be
+    shorter. A pair heard more than `AGREE_SECONDS` apart is not asked: matching text alone once
+    paired `ei` with another occurrence 25 s away, and a piece is one clip. Nor is a recogniser
+    word lasting longer than any word does, since it cannot be placed in a clip.
+    """
+    pairs = identical_pairs(published, heard, spans)
+
+    def askable(i: int) -> bool:
+        j = pairs.get(i)
+        return (j is not None and i not in taken_p and j not in taken_h
+                and published[i].start is not None and languages[i] != "unknown"
+                and heard[j].end - heard[j].start <= MAX_WORD_SECONDS
+                and abs(published[i].middle - heard[j].middle) <= AGREE_SECONDS)
+
+    pieces, piece = [], []
+
+    def close() -> None:
+        if piece:
+            pieces.append((piece[0], piece[-1] + 1, pairs[piece[0]], pairs[piece[-1]] + 1))
+            piece.clear()
+
+    for span in spans:
+        for i in range(span.first, span.last + 1):
+            if not askable(i):
+                close()
+                continue
+            if piece and (pairs[i] != pairs[piece[-1]] + 1 or languages[i] != languages[piece[-1]]
+                          or len(piece) == size):
+                close()
+            piece.append(i)
+        close()
+    return pieces
+
+
+def unasked_agreed(published: list[Word], languages: list[str], spans: list[TrustedSpan],
+                   owned_p: set[int], too_long_p: set[int], pairs: dict[int, int],
+                   taken_h: set[int]) -> Counter:
+    """Why each published word in a span belongs to no stop, counted by (reason, language).
+
+    These words are unchecked, never correct: the import must not count them as either.
+    """
+    found = Counter()
+    for span in spans:
+        for i in range(span.first, span.last + 1):
+            if i in owned_p:
+                continue
+            if published[i].start is None:
+                reason = "untimed"
+            elif i in too_long_p:
+                reason = "inside a disagreement too long to ask"
+            elif i not in pairs:
+                reason = "written differently (agreed only after folding)"
+            elif pairs[i] in taken_h:
+                reason = "its ElevenLabs word is in another stop or an unasked disagreement"
+            else:
+                reason = f"heard over {AGREE_SECONDS:g} s apart, or a recogniser word with no real time"
+            found[(reason, languages[i])] += 1
+    return found
+
+
+def context_words(words: list[Word], lo: int, hi: int,
+                  blocked: set[int] = frozenset()) -> tuple[list[str], list[str]]:
+    """Up to `CONTEXT_WORDS` either side of [lo, hi), stopping short of the first blocked word."""
+    before = []
+    for i in range(lo - 1, max(0, lo - CONTEXT_WORDS) - 1, -1):
+        if i in blocked:
+            break
+        before.insert(0, words[i].text)
+    after = []
+    for i in range(hi, min(len(words), hi + CONTEXT_WORDS)):
+        if i in blocked:
+            break
+        after.append(words[i].text)
+    return before, after
+
+
 def write_package(package: dict, target: Path) -> None:
     """Write `package`, but only if it passes its schema and every package rule.
 
@@ -654,8 +757,97 @@ def span_differences(span: TrustedSpan, published: list[Word], heard: list[Word]
     return stops
 
 
-def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]:
-    """The package for one lecture, and a summary of how it was made, for the report."""
+def make_version(source: str, words: list[Word], all_words: list[Word], lo: int, hi: int,
+                 differs: list[int], blocked: set[int] = frozenset()) -> dict:
+    """One source's version of a stop: its words, and the words around them for context."""
+    before, after = context_words(all_words, lo, hi, blocked)
+    return {"source": source, "before": before,
+            "words": [{"text": w.text, "start": w.start, "end": w.end} for w in words],
+            "after": after, "differs": differs}
+
+
+def disagreement_draft(s: DiffStop, published: list[Word], heard: list[Word]) -> dict:
+    return {"kind": "word-disagreement", "language": s.language, "start": s.start, "end": s.end,
+            "p": (s.p_lo, s.p_hi), "h": (s.h_lo, s.h_hi),
+            "versions": [make_version("published", s.published, published, s.p_lo, s.p_hi,
+                                      s.differs_published),
+                         make_version("elevenlabs", s.heard, heard, s.h_lo, s.h_hi,
+                                      s.differs_heard)]}
+
+
+def piece_draft(piece: tuple[int, int, int, int], published: list[Word], heard: list[Word],
+                languages: list[str], blocked_p: set[int], blocked_h: set[int]) -> dict:
+    """An agreement stop for one agreed piece, its context stopping at the blocked words.
+
+    With no 3-second rule, a piece can sit beside a disagreement. Its context words stop short
+    of that disagreement's words in both versions, or the one text shown would show which of
+    the disagreement's versions is the published one.
+    """
+    a, b, h, h_end = piece
+    mine, theirs = published[a:b], heard[h:h_end]
+    start, end = _times(mine + theirs)
+    return {"kind": "agreement-sample", "language": languages[a], "start": start, "end": end,
+            "p": (a, b), "h": (h, h_end),
+            "versions": [make_version("published", mine, published, a, b, [], blocked_p),
+                         make_version("elevenlabs", theirs, heard, h, h_end, [], blocked_h)]}
+
+
+def stop_from_draft(draft: dict, stop_id: str, duration: float) -> dict:
+    context = clip(draft["start"], draft["end"], duration)
+    stop = {"id": stop_id, "kind": draft["kind"], "language": draft["language"],
+            "start": draft["start"], "end": draft["end"],
+            "context": {"start": context[0], "end": context[1]},
+            "versions": draft["versions"]}
+    if "verse" in draft:
+        stop["verse"] = draft["verse"]
+    return stop
+
+
+def assemble(slug: str, drafts: list[dict], duration: float, published: list[Word],
+             languages: list[str], spans: list[TrustedSpan], heard: list[Word],
+             outside: list[int]) -> tuple[list[dict], list[dict]]:
+    """Every stop in timeline order with its id, and the timed transcript naming each word's stop."""
+    order = {"word-disagreement": 0, "verse-check": 1, "agreement-sample": 2, "single-version": 3}
+    drafts = sorted(drafts, key=lambda d: (d["start"], d["end"], order[d["kind"]]))
+    stops, owner_p, owner_h = [], {}, {}
+    for serial, draft in enumerate(drafts, start=1):
+        stop_id = f"{slug}#{serial:04d}"
+        stops.append(stop_from_draft(draft, stop_id, duration))
+        if draft["kind"] == "single-version":
+            for j in range(*draft["h"]):
+                owner_h[j] = stop_id
+        elif draft["p"]:
+            for i in range(*draft["p"]):
+                if i in owner_p:
+                    raise ValueError(f"published word {i} would belong to two stops")
+                owner_p[i] = stop_id
+
+    # The timed transcript for listening through: published words where they can be trusted,
+    # ElevenLabs's words everywhere else. An unplaced published word sits where its neighbours do.
+    lines, key = [], 0.0
+    for span in spans:
+        for i in range(span.first, span.last + 1):
+            word = published[i]
+            key = word.start if word.start is not None else key
+            lines.append((key, 0, {"text": word.text, "start": word.start, "end": word.end,
+                                   "language": languages[i], "source": "published",
+                                   "stop": owner_p.get(i)}))
+    for j in outside:
+        word = heard[j]
+        lines.append((word.start, 1, {"text": word.text, "start": word.start, "end": word.end,
+                                      "language": "unknown", "source": "elevenlabs",
+                                      "stop": owner_h.get(j)}))
+    lines.sort(key=lambda line: (line[0], line[1]))
+    return stops, [line[2] for line in lines]
+
+
+def build(slug: str, manifest_path: Path, version: int = 1,
+          every_agreed_piece: bool = False) -> tuple[dict, dict]:
+    """The package for one lecture, and a summary of how it was made, for the report.
+
+    By default a few agreement samples are drawn at random, out of earshot of every other stop.
+    With `every_agreed_piece`, every piece both sources wrote exactly alike is asked instead.
+    """
     folder = LECTURES / slug
     paths = {
         "published-transcript": folder / "transcript.txt",
@@ -807,6 +999,29 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
     chosen = sorted(random.Random(seed).sample(candidates, min(wanted, len(candidates))))
     summary["agreement_candidates"] = len(candidates)
 
+    # Or every agreed piece, with no 3-second rule (plan of 31 October 2026): each word both
+    # sources wrote exactly alike is asked once. Pieces stay clear of every stop's words and of
+    # disagreements too long to ask; their context words stop at disagreements and verse checks.
+    pieces, blocked_p, blocked_h = [], set(), set()
+    if every_agreed_piece:
+        chosen = []
+        too_long = oversized + untimed_stops
+        blocked_p = {i for s in differences for i in range(s.p_lo, s.p_hi)} | {
+            i for v in verse_stops for i in range(*v["p"])}
+        blocked_h = {j for s in differences for j in range(s.h_lo, s.h_hi)} | {
+            j for v in verse_stops if v["h"] for j in range(*v["h"])}
+        too_long_p = {i for s in too_long for i in range(s.p_lo, s.p_hi)}
+        too_long_h = {j for s in too_long for j in range(s.h_lo, s.h_hi)}
+        pieces = agreed_pieces(published, heard_all, languages, spans, blocked_p | too_long_p,
+                               blocked_h | too_long_h)
+        owned = blocked_p | {i for a, b, _, _ in pieces for i in range(a, b)}
+        summary["unasked"] = unasked_agreed(published, languages, spans, owned, too_long_p,
+                                            identical_pairs(published, heard_all, spans),
+                                            blocked_h | too_long_h)
+        summary["piece_words"] = Counter()
+        for a, b, _, _ in pieces:
+            summary["piece_words"][languages[a]] += b - a
+
     # Every stop, in timeline order, then given its id.
     original_sha = sha256(folder / "audio.mp3")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -816,22 +1031,7 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
                          f"{duration_aligner} s, so the two do not share a clock")
     original, copy, missing = audio_entry(slug, manifest, original_sha)
 
-    def make_version(source: str, words: list[Word], all_words: list[Word], lo: int, hi: int,
-                differs: list[int]) -> dict:
-        return {"source": source,
-                "before": [w.text for w in all_words[max(0, lo - CONTEXT_WORDS):lo]],
-                "words": [{"text": w.text, "start": w.start, "end": w.end} for w in words],
-                "after": [w.text for w in all_words[hi:hi + CONTEXT_WORDS]],
-                "differs": differs}
-
-    drafts = []
-    for s in differences:
-        drafts.append({"kind": "word-disagreement", "language": s.language, "start": s.start,
-                       "end": s.end, "p": (s.p_lo, s.p_hi), "h": (s.h_lo, s.h_hi),
-                       "versions": [make_version("published", s.published, published, s.p_lo, s.p_hi,
-                                            s.differs_published),
-                                    make_version("elevenlabs", s.heard, heard_all, s.h_lo, s.h_hi,
-                                            s.differs_heard)]})
+    drafts = [disagreement_draft(s, published, heard_all) for s in differences]
     for v in verse_stops:
         lo, hi = v["p"]
         mine = published[lo:hi]
@@ -856,45 +1056,11 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
                        "versions": [make_version("published", published[a:b], published, a, b, []),
                                     make_version("elevenlabs", heard_all[h:h_end], heard_all, h,
                                             h_end, [])]})
+    drafts += [piece_draft(piece, published, heard_all, languages, blocked_p, blocked_h)
+               for piece in pieces]
 
-    order = {"word-disagreement": 0, "verse-check": 1, "agreement-sample": 2, "single-version": 3}
-    drafts.sort(key=lambda d: (d["start"], d["end"], order[d["kind"]]))
-    stops, owner_p, owner_h = [], {}, {}
-    for serial, draft in enumerate(drafts, start=1):
-        stop_id = f"{slug}#{serial:04d}"
-        context = clip(draft["start"], draft["end"], duration)
-        stop = {"id": stop_id, "kind": draft["kind"], "language": draft["language"],
-                "start": draft["start"], "end": draft["end"],
-                "context": {"start": context[0], "end": context[1]},
-                "versions": draft["versions"]}
-        if "verse" in draft:
-            stop["verse"] = draft["verse"]
-        stops.append(stop)
-        if draft["kind"] == "single-version":
-            for j in range(*draft["h"]):
-                owner_h[j] = stop_id
-        elif draft["p"]:
-            for i in range(*draft["p"]):
-                if i in owner_p:
-                    raise ValueError(f"published word {i} would belong to two stops")
-                owner_p[i] = stop_id
-
-    # The timed transcript for listening through: published words where they can be trusted,
-    # ElevenLabs's words everywhere else. An unplaced published word sits where its neighbours do.
-    lines, key = [], 0.0
-    for span in spans:
-        for i in range(span.first, span.last + 1):
-            word = published[i]
-            key = word.start if word.start is not None else key
-            lines.append((key, 0, {"text": word.text, "start": word.start, "end": word.end,
-                                   "language": languages[i], "source": "published",
-                                   "stop": owner_p.get(i)}))
-    for j in outside:
-        word = heard_all[j]
-        lines.append((word.start, 1, {"text": word.text, "start": word.start, "end": word.end,
-                                      "language": "unknown", "source": "elevenlabs",
-                                      "stop": owner_h.get(j)}))
-    lines.sort(key=lambda line: (line[0], line[1]))
+    stops, transcript = assemble(slug, drafts, duration, published, languages, spans, heard_all,
+                                 outside)
 
     revision = git("rev-parse", "HEAD")
     dirty = git("status", "--porcelain", "--", *PRODUCER_FILES)
@@ -922,6 +1088,8 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
     if skipped_verses:
         notes.append(f"{len(skipped_verses)} verse match(es) not asked: "
                      + "; ".join(f"{s:.1f} s {why}" for s, why in skipped_verses))
+    if every_agreed_piece:
+        notes.append(pieces_note(len(pieces), summary["piece_words"], summary["unasked"]))
     meta_path = folder / "meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     ratio_text = ", ".join(f"{name} {r:.2f}" for name, r in ratios.items())
@@ -931,7 +1099,8 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
                     "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
         "producer": {"name": "lecture-archive",
                      "command": f"python -m scripts.review_package {slug} --media-manifest "
-                                f"manifests/{manifest_path.name}",
+                                f"manifests/{manifest_path.name}"
+                                + (" --every-agreed-piece" if every_agreed_piece else ""),
                      "revision": revision, "inputs": inputs, "notes": " ".join(notes)[:4000]},
         "lecture": {"id": slug, "title": meta.get("title") or slug, "duration_seconds": duration},
         "audio": {"original": original, "listening_copy": copy,
@@ -946,12 +1115,26 @@ def build(slug: str, manifest_path: Path, version: int = 1) -> tuple[dict, dict]
         "trustworthy_spans": [{"start": round(s.start, 3), "end": round(s.end, 3)} for s in spans],
         "untranscribed": [{"start": round(a, 3), "end": round(b, 3)}
                           for a, b in untranscribed(timed, duration)],
-        "transcript": {"words": [line[2] for line in lines]},
+        "transcript": {"words": transcript},
         "stops": stops,
     }
     summary.update({"ratios": ratios, "dirty": bool(dirty), "spans": len(spans),
                     "outside_words": len(outside), "dropped": dropped})
     return package, summary
+
+
+def pieces_note(stops: int, words: Counter, unasked: Counter) -> str:
+    """The every-agreed-piece mode in one sentence, for producer.notes and the report."""
+    covered = ", ".join(f"{n} {language}" for language, n in words.most_common())
+    reasons = Counter()
+    for (reason, _), n in unasked.items():
+        reasons[reason] += n
+    left = "; ".join(f"{n} {reason}" for reason, n in reasons.most_common())
+    return (f"Agreement stops: one for every agreed piece where both sources wrote exactly the "
+            f"same text, up to {AGREEMENT_WORDS} words in one language - {stops} stops holding "
+            f"{sum(words.values())} words ({covered or 'none'}). No 3-second rule; context words "
+            f"stop at disagreement and verse-check words. Agreed words not asked, so unchecked: "
+            f"{sum(reasons.values())} ({left or 'none'}).")
 
 
 def report(package: dict, summary: dict) -> str:
@@ -980,8 +1163,14 @@ def report(package: dict, summary: dict) -> str:
         lines.append(f"  not asked, too big: {start:.1f} s, {published} published / {heard} heard words")
     for text, start, seconds in summary["long_words"]:
         lines.append(f"  not asked, untimed recogniser word: {text!r} at {start:.1f} s lasting {seconds:.0f} s")
-    lines.append(f"  {summary['agreement_candidates']} agreement candidates; "
-                 f"{summary['untimed_differences']} differences with no time were not asked")
+    if "unasked" in summary:
+        lines.append(f"  every agreed piece asked: " + pieces_note(
+            by_kind["agreement-sample"], summary["piece_words"], summary["unasked"]))
+        for (reason, language), n in sorted(summary["unasked"].items()):
+            lines.append(f"    not asked, {language}: {n:>5} {reason}")
+    else:
+        lines.append(f"  {summary['agreement_candidates']} agreement candidates")
+    lines.append(f"  {summary['untimed_differences']} differences with no time were not asked")
     for start, why in summary["skipped_verses"]:
         lines.append(f"  verse at {start:.1f} s not asked: {why}")
     if summary["dirty"]:
@@ -998,6 +1187,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replace", action="store_true",
                         help="overwrite this lecture's local v1 - only ever for a draft that was "
                              "never uploaded, since answers name a package by its exact bytes")
+    parser.add_argument("--every-agreed-piece", action="store_true",
+                        help="ask every piece both sources wrote exactly alike, instead of a few "
+                             "random agreement samples out of earshot of every other stop")
     args = parser.parse_args(argv)
 
     target = OUT / args.lecture / "v1.json"
@@ -1005,7 +1197,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{target} exists. A republished package must carry stop ids over, which is not "
               f"built yet; --replace overwrites a local draft that was never uploaded.")
         return 1
-    package, summary = build(args.lecture, args.media_manifest)
+    package, summary = build(args.lecture, args.media_manifest,
+                             every_agreed_piece=args.every_agreed_piece)
     write_package(package, target)
     print(report(package, summary))
     print(f"\nwritten to {target.relative_to(REPO)} "
