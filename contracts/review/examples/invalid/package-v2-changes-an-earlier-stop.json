@@ -1,0 +1,445 @@
+{
+  "schema": "lecture-review-package/1.0",
+  "package": {"id": "bg-3-37-the-duty-of-a-human-being-brisbane/v2", "version": 2, "published_at": "2026-11-01T06:00:00Z"},
+  "producer": {
+    "name": "lecture-archive",
+    "command": "python -m scripts.review_republish bg-3-37-the-duty-of-a-human-being-brisbane",
+    "revision": "0000000000000000000000000000000000000000",
+    "inputs": [
+      {"role": "published-transcript", "path": "data/lectures/bg-3-37-the-duty-of-a-human-being-brisbane/transcript.txt", "sha256": "aad683b634bbc18f31fa98d13923c8304b437cc5a6cb94502b3fd8d20584e986"},
+      {"role": "alignment", "path": "data/reference/analysis/archive-alignment/bg-3-37-the-duty-of-a-human-being-brisbane.json", "sha256": "9bb84b43efa501ddb9d4836023f65ac5cc8f1154b411c80920336350fa51a5f6"},
+      {"role": "scoreable-spans", "path": "data/reference/analysis/scoreable-spans.json", "sha256": "7380ac924f234d42e8866d0278f28184f39ea413ba5098ce169694a7c86522cd"},
+      {"role": "elevenlabs", "path": "data/reference/analysis/hosted/elevenlabs/bg-3-37-the-duty-of-a-human-being-brisbane.json", "sha256": "82da465644561e9f83ad5836362ae8bbd1031ddcd1aaeb3d9ca703b796863cb1"},
+      {"role": "verse-matches", "path": "data/reference/analysis/verse-runs.json", "sha256": "c6fc3760ac7831af0711603072c027dcea1f09136b08316fc148d5b5a6fba3dd"}
+    ],
+    "notes": "EXAMPLE, not a real package, and invalid: a version 2 that asks stop #0088 in different words under the same id."
+  },
+  "lecture": {"id": "bg-3-37-the-duty-of-a-human-being-brisbane", "title": "BG 3.37 – The Duty Of A Human Being – Brisbane", "duration_seconds": 3649.0},
+  "audio": {
+    "original": {"sha256": "a0cda929b65c7d9534995d63ac9fa1fddfd3ab70c029bc5099d9512fe31105ea", "object": "audio/a0cda929b65c7d9534995d63ac9fa1fddfd3ab70c029bc5099d9512fe31105ea.mp3"},
+    "listening_copy": {"object": "listen/a0cda929b65c7d9534995d63ac9fa1fddfd3ab70c029bc5099d9512fe31105ea-cbr128.mp3", "sha256": "723db54713fb79277c618036aea4027cc4d8fb90f259092d864da6df5fec8e1a", "seconds": 3649.0}
+  },
+  "alignment_check": {"status": "not-checked", "detail": "The placement check (scripts/compare_hosted) has not been run for this package."},
+  "trustworthy_spans": [
+    {"start": 130.027, "end": 2506.442},
+    {"start": 2516.495, "end": 3224.545}
+  ],
+  "untranscribed": [
+    {"start": 0.0, "end": 130.027},
+    {"start": 2506.442, "end": 2516.495},
+    {"start": 3224.545, "end": 3649.0}
+  ],
+  "transcript": {
+    "words": [
+      {"text": "Read", "start": 0.72, "end": 0.86, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Srimad", "start": 0.92, "end": 1.18, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Bhagavad", "start": 1.2, "end": 1.38, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Gita.", "start": 1.46, "end": 1.76, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Srimad", "start": 2.46, "end": 2.8, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Bhagavad", "start": 2.82, "end": 3.04, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Gita.", "start": 3.1, "end": 3.48, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0001"},
+      {"text": "Is", "start": 8.48, "end": 8.64, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "a", "start": 8.72, "end": 8.82, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "third", "start": 9.16, "end": 9.4, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "chapter.", "start": 9.48, "end": 9.92, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "for", "start": 322.555, "end": 322.675, "language": "unknown", "source": "published", "stop": null},
+      {"text": "the", "start": 322.715, "end": 322.775, "language": "unknown", "source": "published", "stop": null},
+      {"text": "Supreme,", "start": 322.895, "end": 323.536, "language": "unknown", "source": "published", "stop": null},
+      {"text": "or", "start": 324.337, "end": 324.437, "language": "unknown", "source": "published", "stop": null},
+      {"text": "transformed", "start": 324.557, "end": 325.078, "language": "unknown", "source": "published", "stop": null},
+      {"text": "into", "start": 325.098, "end": 325.258, "language": "unknown", "source": "published", "stop": null},
+      {"text": "Kṛṣṇa", "start": 325.278, "end": 325.539, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0012"},
+      {"text": "consciousness", "start": 325.599, "end": 326.46, "language": "unknown", "source": "published", "stop": null},
+      {"text": "or,", "start": 327.0, "end": 327.081, "language": "unknown", "source": "published", "stop": null},
+      {"text": "in", "start": 327.121, "end": 327.181, "language": "unknown", "source": "published", "stop": null},
+      {"text": "other", "start": 327.301, "end": 327.501, "language": "unknown", "source": "published", "stop": null},
+      {"text": "words,", "start": 327.581, "end": 327.982, "language": "unknown", "source": "published", "stop": null},
+      {"text": "desiring", "start": 328.382, "end": 328.963, "language": "unknown", "source": "published", "stop": null},
+      {"text": "tattva", "start": 910.771, "end": 912.854, "language": "unknown", "source": "published", "stop": null},
+      {"text": "jijñāsā", "start": 912.894, "end": 913.474, "language": "unknown", "source": "published", "stop": null},
+      {"text": "nārtho", "start": 913.554, "end": 913.915, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0040"},
+      {"text": "yaś", "start": 913.995, "end": 914.175, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0040"},
+      {"text": "ceha", "start": 914.255, "end": 914.516, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0040"},
+      {"text": "karmabhiḥ", "start": 914.596, "end": 916.759, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0040"},
+      {"text": "First", "start": 916.779, "end": 916.939, "language": "unknown", "source": "published", "stop": null},
+      {"text": "canto", "start": 916.979, "end": 917.259, "language": "unknown", "source": "published", "stop": null},
+      {"text": "says.", "start": 917.319, "end": 917.56, "language": "unknown", "source": "published", "stop": null},
+      {"text": "'Don't", "start": 918.561, "end": 918.801, "language": "unknown", "source": "published", "stop": null},
+      {"text": "inquire", "start": 918.841, "end": 920.884, "language": "unknown", "source": "published", "stop": null},
+      {"text": "only", "start": 1213.8, "end": 1214.081, "language": "unknown", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0177"},
+      {"text": "for", "start": 1214.141, "end": 1214.261, "language": "unknown", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0177"},
+      {"text": "surviving.", "start": 1214.341, "end": 1215.162, "language": "unknown", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0177"},
+      {"text": "Not", "start": 1215.703, "end": 1216.003, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "you'll", "start": 1216.043, "end": 1216.264, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "live", "start": 1216.284, "end": 1216.524, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "for", "start": 1216.544, "end": 1216.684, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "only", "start": 1216.744, "end": 1216.965, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "eating.", "start": 1217.105, "end": 1217.505, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0088"},
+      {"text": "This", "start": 1218.627, "end": 1219.988, "language": "unknown", "source": "published", "stop": null},
+      {"text": "is", "start": 1220.049, "end": 1220.089, "language": "unknown", "source": "published", "stop": null},
+      {"text": "śreya,", "start": 1220.169, "end": 1220.489, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0089"},
+      {"text": "lābho", "start": 1221.43, "end": 1221.771, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0089"},
+      {"text": "jīveta", "start": 1221.891, "end": 1222.351, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0089"},
+      {"text": "yāvatā.", "start": 1222.452, "end": 1222.892, "language": "sanskrit", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0089"},
+      {"text": "We", "start": 1224.094, "end": 1224.254, "language": "unknown", "source": "published", "stop": null},
+      {"text": "must", "start": 1224.334, "end": 1224.574, "language": "unknown", "source": "published", "stop": null},
+      {"text": "live,", "start": 1224.735, "end": 1225.275, "language": "unknown", "source": "published", "stop": null},
+      {"text": "we", "start": 1225.275, "end": 1225.335, "language": "unknown", "source": "published", "stop": null},
+      {"text": "must", "start": 1225.395, "end": 1225.616, "language": "unknown", "source": "published", "stop": null},
+      {"text": "survive,", "start": 1225.696, "end": 1226.497, "language": "unknown", "source": "published", "stop": null},
+      {"text": "to", "start": 2506.362, "end": 2506.442, "language": "unknown", "source": "published", "stop": null},
+      {"text": "Um,", "start": 2507.842, "end": 2508.062, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "well,", "start": 2509.282, "end": 2509.562, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "talking", "start": 2509.982, "end": 2510.302, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "to", "start": 2510.342, "end": 2511.382, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "devotees,", "start": 2513.222, "end": 2513.342, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "knowing", "start": 2513.382, "end": 2513.682, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "more", "start": 2513.742, "end": 2514.022, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "about", "start": 2514.822, "end": 2514.862, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "Krishna.", "start": 2514.922, "end": 2515.382, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0130"},
+      {"text": "a", "start": 2516.495, "end": 2516.515, "language": "unknown", "source": "published", "stop": null},
+      {"text": "You", "start": 3217.376, "end": 3217.456, "language": "unknown", "source": "published", "stop": null},
+      {"text": "should", "start": 3217.516, "end": 3217.697, "language": "unknown", "source": "published", "stop": null},
+      {"text": "learn", "start": 3217.757, "end": 3218.077, "language": "unknown", "source": "published", "stop": null},
+      {"text": "it", "start": 3218.157, "end": 3218.297, "language": "unknown", "source": "published", "stop": null},
+      {"text": "from", "start": 3219.859, "end": 3220.06, "language": "unknown", "source": "published", "stop": null},
+      {"text": "a", "start": 3220.08, "end": 3220.1, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "proper", "start": 3220.22, "end": 3220.6, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "teacher,", "start": 3220.801, "end": 3221.241, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "bona", "start": 3222.142, "end": 3222.343, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "fide", "start": 3222.443, "end": 3222.743, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "teacher.", "start": 3222.823, "end": 3223.244, "language": "english", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0175"},
+      {"text": "Thank", "start": 3224.225, "end": 3224.445, "language": "unknown", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0178"},
+      {"text": "you.", "start": 3224.465, "end": 3224.545, "language": "unknown", "source": "published", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0178"},
+      {"text": "Gauranga.", "start": 3227.568, "end": 3228.908, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176"},
+      {"text": "Any", "start": 3228.968, "end": 3229.088, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176"},
+      {"text": "question?", "start": 3229.148, "end": 3229.668, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176"},
+      {"text": "Five", "start": 3231.428, "end": 3231.608, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176"},
+      {"text": "minutes.", "start": 3231.628, "end": 3235.888, "language": "english", "source": "elevenlabs", "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176"},
+      {"text": "Anybody", "start": 3235.948, "end": 3236.368, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "has", "start": 3236.408, "end": 3236.528, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "any", "start": 3236.588, "end": 3236.728, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "question?", "start": 3236.768, "end": 3237.208, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "Yes?", "start": 3237.348, "end": 3237.668, "language": "unknown", "source": "elevenlabs", "stop": null},
+      {"text": "Um,", "start": 3238.208, "end": 3238.468, "language": "unknown", "source": "elevenlabs", "stop": null}
+    ]
+  },
+  "stops": [
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0001",
+      "kind": "single-version",
+      "language": "english",
+      "start": 0.72,
+      "end": 3.48,
+      "context": {"start": 0.0, "end": 9.98},
+      "versions": [
+        {
+          "source": "elevenlabs",
+          "before": [],
+          "words": [
+            {"text": "Read", "start": 0.72, "end": 0.86},
+            {"text": "Srimad", "start": 0.92, "end": 1.18},
+            {"text": "Bhagavad", "start": 1.2, "end": 1.38},
+            {"text": "Gita.", "start": 1.46, "end": 1.76},
+            {"text": "Srimad", "start": 2.46, "end": 2.8},
+            {"text": "Bhagavad", "start": 2.82, "end": 3.04},
+            {"text": "Gita.", "start": 3.1, "end": 3.48}
+          ],
+          "after": ["Is", "a", "third", "chapter."],
+          "differs": []
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0012",
+      "kind": "word-disagreement",
+      "language": "english",
+      "start": 325.278,
+      "end": 325.58,
+      "context": {"start": 322.278, "end": 328.58},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["for", "the", "Supreme,", "or", "transformed", "into"],
+          "words": [
+            {"text": "Kṛṣṇa", "start": 325.278, "end": 325.539}
+          ],
+          "after": ["consciousness", "or,", "in", "other", "words,", "desiring"],
+          "differs": [0]
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["love", "for", "the", "Supreme", "or", "transformed", "into"],
+          "words": [
+            {"text": "Krishna", "start": 325.3, "end": 325.58}
+          ],
+          "after": ["consciousness,", "and", "in", "other", "words,", "desiring"],
+          "differs": [0]
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0040",
+      "kind": "word-disagreement",
+      "language": "sanskrit",
+      "start": 913.554,
+      "end": 916.759,
+      "context": {"start": 910.554, "end": 919.759},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["tattva", "jijñāsā"],
+          "words": [
+            {"text": "nārtho", "start": 913.554, "end": 913.915},
+            {"text": "yaś", "start": 913.995, "end": 914.175},
+            {"text": "ceha", "start": 914.255, "end": 914.516},
+            {"text": "karmabhiḥ", "start": 914.596, "end": 916.759}
+          ],
+          "after": ["First", "canto", "says.", "'Don't", "inquire"],
+          "differs": [1, 2, 3]
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["Jivasya", "tattva-jijnasa"],
+          "words": [
+            {"text": "nartho", "start": 913.562, "end": 913.922},
+            {"text": "yasya", "start": 914.002, "end": 914.402},
+            {"text": "hi", "start": 914.462, "end": 914.542},
+            {"text": "karma", "start": 914.602, "end": 914.862},
+            {"text": "bhih.", "start": 914.942, "end": 915.262}
+          ],
+          "after": ["First", "canto", "says.", "Don't", "inquire"],
+          "differs": [1, 2, 3, 4]
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0177",
+      "kind": "agreement-sample",
+      "language": "english",
+      "start": 1213.8,
+      "end": 1215.162,
+      "context": {"start": 1210.8, "end": 1218.162},
+      "versions": [
+        {
+          "source": "published",
+          "before": [],
+          "words": [
+            {"text": "only", "start": 1213.8, "end": 1214.081},
+            {"text": "for", "start": 1214.141, "end": 1214.261},
+            {"text": "surviving.", "start": 1214.341, "end": 1215.162}
+          ],
+          "after": [],
+          "differs": []
+        },
+        {
+          "source": "elevenlabs",
+          "before": [],
+          "words": [
+            {"text": "only", "start": 1213.8, "end": 1214.081},
+            {"text": "for", "start": 1214.141, "end": 1214.261},
+            {"text": "surviving.", "start": 1214.341, "end": 1215.162}
+          ],
+          "after": [],
+          "differs": []
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0088",
+      "kind": "word-disagreement",
+      "language": "english",
+      "start": 1215.703,
+      "end": 1217.534,
+      "context": {"start": 1212.703, "end": 1220.534},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["only", "for", "surviving."],
+          "words": [
+            {"text": "Not", "start": 1215.703, "end": 1216.003},
+            {"text": "you'll", "start": 1216.043, "end": 1216.264},
+            {"text": "live", "start": 1216.284, "end": 1216.524},
+            {"text": "for", "start": 1216.544, "end": 1216.684},
+            {"text": "only", "start": 1216.744, "end": 1216.965},
+            {"text": "eating.", "start": 1217.105, "end": 1217.505}
+          ],
+          "after": ["This", "is", "śreya,"],
+          "differs": [1]
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["only", "for", "surviving."],
+          "words": [
+            {"text": "Not", "start": 1215.714, "end": 1215.994},
+            {"text": "will", "start": 1216.014, "end": 1216.214},
+            {"text": "live", "start": 1216.274, "end": 1216.534},
+            {"text": "for", "start": 1216.554, "end": 1216.674},
+            {"text": "only", "start": 1216.734, "end": 1217.014},
+            {"text": "eating.", "start": 1217.074, "end": 1217.534}
+          ],
+          "after": ["No.", "This", "shreya.", "This", "is", "shreya."],
+          "differs": [1]
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0089",
+      "kind": "verse-check",
+      "language": "sanskrit",
+      "start": 1220.169,
+      "end": 1223.054,
+      "context": {"start": 1217.169, "end": 1226.054},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["This", "is"],
+          "words": [
+            {"text": "śreya,", "start": 1220.169, "end": 1220.489},
+            {"text": "lābho", "start": 1221.43, "end": 1221.771},
+            {"text": "jīveta", "start": 1221.891, "end": 1222.351},
+            {"text": "yāvatā.", "start": 1222.452, "end": 1222.892}
+          ],
+          "after": ["We", "must", "live,", "we", "must", "survive,"],
+          "differs": []
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["No.", "This", "shreya.", "This", "is"],
+          "words": [
+            {"text": "shreya.", "start": 1220.234, "end": 1220.594},
+            {"text": "Lābho", "start": 1221.474, "end": 1221.854},
+            {"text": "jīvetā", "start": 1221.934, "end": 1222.414},
+            {"text": "jāvataḥ.", "start": 1222.494, "end": 1223.054}
+          ],
+          "after": ["We", "must", "live.", "We", "must", "survive,"],
+          "differs": []
+        }
+      ],
+      "verse": {
+        "reference": "SB 1.2.10",
+        "printed_text": "lābho jīveta yāvatā",
+        "printed_words": ["lābho", "jīveta", "yāvatā"],
+        "recited": [0, 1, 2]
+      }
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0130",
+      "kind": "single-version",
+      "language": "english",
+      "start": 2507.842,
+      "end": 2515.382,
+      "context": {"start": 2504.842, "end": 2518.382},
+      "versions": [
+        {
+          "source": "elevenlabs",
+          "before": ["Economic", "student?"],
+          "words": [
+            {"text": "Um,", "start": 2507.842, "end": 2508.062},
+            {"text": "well,", "start": 2509.282, "end": 2509.562},
+            {"text": "talking", "start": 2509.982, "end": 2510.302},
+            {"text": "to", "start": 2510.342, "end": 2511.382},
+            {"text": "devotees,", "start": 2513.222, "end": 2513.342},
+            {"text": "knowing", "start": 2513.382, "end": 2513.682},
+            {"text": "more", "start": 2513.742, "end": 2514.022},
+            {"text": "about", "start": 2514.822, "end": 2514.862},
+            {"text": "Krishna.", "start": 2514.922, "end": 2515.382}
+          ],
+          "after": ["Association", "of", "a", "sadhu", "means"],
+          "differs": []
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0175",
+      "kind": "agreement-sample",
+      "language": "english",
+      "start": 3220.08,
+      "end": 3223.368,
+      "context": {"start": 3217.08, "end": 3226.368},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["You", "should", "learn", "it", "from"],
+          "words": [
+            {"text": "a", "start": 3220.08, "end": 3220.1},
+            {"text": "proper", "start": 3220.22, "end": 3220.6},
+            {"text": "teacher,", "start": 3220.801, "end": 3221.241},
+            {"text": "bona", "start": 3222.142, "end": 3222.343},
+            {"text": "fide", "start": 3222.443, "end": 3222.743},
+            {"text": "teacher.", "start": 3222.823, "end": 3223.244}
+          ],
+          "after": ["Thank", "you."],
+          "differs": []
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["You", "should", "learn", "it,", "and", "from"],
+          "words": [
+            {"text": "a", "start": 3220.128, "end": 3220.188},
+            {"text": "proper", "start": 3220.248, "end": 3220.728},
+            {"text": "teacher,", "start": 3220.808, "end": 3221.268},
+            {"text": "bona", "start": 3222.168, "end": 3222.408},
+            {"text": "fide", "start": 3222.488, "end": 3222.768},
+            {"text": "teacher.", "start": 3222.848, "end": 3223.368}
+          ],
+          "after": ["Thank", "you."],
+          "differs": []
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0178",
+      "kind": "agreement-sample",
+      "language": "english",
+      "start": 3224.225,
+      "end": 3224.545,
+      "context": {"start": 3221.225, "end": 3227.545},
+      "versions": [
+        {
+          "source": "published",
+          "before": ["a", "proper", "teacher,", "bona", "fide", "teacher."],
+          "words": [
+            {"text": "Thank", "start": 3224.225, "end": 3224.445},
+            {"text": "you.", "start": 3224.465, "end": 3224.545}
+          ],
+          "after": [],
+          "differs": []
+        },
+        {
+          "source": "elevenlabs",
+          "before": ["a", "proper", "teacher,", "bona", "fide", "teacher."],
+          "words": [
+            {"text": "Thank", "start": 3224.225, "end": 3224.445},
+            {"text": "you.", "start": 3224.465, "end": 3224.545}
+          ],
+          "after": [],
+          "differs": []
+        }
+      ]
+    },
+    {
+      "id": "bg-3-37-the-duty-of-a-human-being-brisbane#0176",
+      "kind": "single-version",
+      "language": "english",
+      "start": 3227.568,
+      "end": 3235.888,
+      "context": {"start": 3223.968, "end": 3238.888},
+      "versions": [
+        {
+          "source": "elevenlabs",
+          "before": ["Thank", "you."],
+          "words": [
+            {"text": "Gauranga.", "start": 3227.568, "end": 3228.908},
+            {"text": "Any", "start": 3228.968, "end": 3229.088},
+            {"text": "question?", "start": 3229.148, "end": 3229.668},
+            {"text": "Five", "start": 3231.428, "end": 3231.608},
+            {"text": "minutes.", "start": 3231.628, "end": 3235.888}
+          ],
+          "after": ["Anybody", "has", "any", "question?", "Yes?", "Um,"],
+          "differs": []
+        }
+      ]
+    }
+  ]
+}

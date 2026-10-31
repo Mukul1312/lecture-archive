@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.review_publish import object_name, publish
+from scripts.review_publish import app_takes_republished, object_name, publish
 
 EXAMPLE = Path("contracts/review/examples/valid/package-bg-3-37-brisbane.json")
 
@@ -37,8 +37,8 @@ class MemoryBucket:
         self.created.append(name)
 
 
-def write(package: dict, folder: Path) -> Path:
-    path = folder / "v1.json"
+def write(package: dict, folder: Path, name: str = "v1.json") -> Path:
+    path = folder / name
     path.write_bytes((json.dumps(package, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
     return path
 
@@ -107,6 +107,27 @@ class PublishTests(unittest.TestCase):
         path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
         with self.assertRaisesRegex(ValueError, "CR"):
             publish(path, bucket_with_audio(self.package))
+
+    def test_a_later_version_waits_until_the_app_has_pinned_the_republished_example(self):
+        # Until the app carries answers over, a v2 would ask reviewers v1's questions again
+        # (the change order under "Versioning": the app re-pins and ships before the upload).
+        v2 = json.loads(EXAMPLE.with_name("package-bg-3-37-brisbane-v2.json")
+                        .read_text(encoding="utf-8"))
+        v2["producer"]["notes"] = "Built for the test."
+        path = write(v2, self.folder, "v2.json")
+        bucket = bucket_with_audio(v2)
+        with self.assertRaisesRegex(ValueError, "pin"):
+            publish(path, bucket, app_ready=lambda: False)
+        self.assertEqual(bucket.created, [])
+        self.assertEqual(publish(path, bucket, app_ready=lambda: True),
+                         "packages/bg-3-37-the-duty-of-a-human-being-brisbane/v2.json")
+
+    def test_the_apps_pin_of_31_october_does_not_hold_the_republished_example(self):
+        pin = self.folder / "review.pin.json"
+        pin.write_text(json.dumps({"source": {"commit": "d95d2858658a71ef726c20bb7857c279b251e4a2"}}),
+                       encoding="utf-8")
+        self.assertFalse(app_takes_republished(pin))
+        self.assertFalse(app_takes_republished(self.folder / "missing.json"))
 
     def test_the_upload_is_checked_by_reading_it_back(self):
         class Corrupting(MemoryBucket):

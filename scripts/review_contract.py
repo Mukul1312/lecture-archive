@@ -226,6 +226,50 @@ def package_rules(package: dict) -> list[RuleBreak]:
     return found
 
 
+def _serial(stop_id: str) -> int:
+    return int(stop_id.rpartition("#")[2])
+
+
+def republish_rules(previous: dict, current: dict) -> list[RuleBreak]:
+    """Rule P11 for a later version of a lecture's package, against the version before it.
+
+    Answers carry over by stop id (agreed 29 October 2026), so a later version must still ask
+    every earlier question in exactly the same words. It may only add stops, under serials no
+    earlier version can have used, and mark the transcript words they cover.
+    """
+    found: list[RuleBreak] = []
+
+    def add(message: str) -> None:
+        found.append(RuleBreak("P11", message))
+
+    if current["lecture"]["id"] != previous["lecture"]["id"]:
+        add("it is a package for another lecture")
+    if current["package"]["version"] != previous["package"]["version"] + 1:
+        add(f"version {current['package']['version']} does not follow "
+            f"{previous['package']['version']}")
+    now = {s["id"]: s for s in current["stops"]}
+    for stop in previous["stops"]:
+        if stop["id"] not in now:
+            add(f"{stop['id']}: an earlier stop is missing")
+        elif now[stop["id"]] != stop:
+            add(f"{stop['id']}: an earlier stop has changed")
+    earlier = {s["id"] for s in previous["stops"]}
+    highest = max((_serial(i) for i in earlier), default=0)
+    for stop_id in now.keys() - earlier:
+        if _serial(stop_id) <= highest:
+            add(f"{stop_id}: a new stop's serial is not above the earlier version's highest, "
+                f"{highest}")
+    before, after = previous["transcript"]["words"], current["transcript"]["words"]
+    if len(before) != len(after):
+        add(f"the transcript has {len(after)} words where it had {len(before)}")
+    for i, (old, new) in enumerate(zip(before, after)):
+        if {**new, "stop": None} != {**old, "stop": None}:
+            add(f"transcript word {i} has changed")
+        elif new["stop"] != old["stop"] and old["stop"] is not None:
+            add(f"transcript word {i} has moved from {old['stop']} to {new['stop']}")
+    return found
+
+
 def answer_rules(records: list[dict], packages: dict[str, dict]) -> list[RuleBreak]:
     """Rules A1-A9 for an answers file.
 

@@ -18,6 +18,11 @@ package is a new version. So before anything is sent the package must:
 An object already at the name with the same bytes is left alone. One with different bytes is a
 refusal, never an overwrite: the upload itself only creates, and fails if the name is taken.
 Afterwards the object is read back and compared, byte for byte.
+
+A later version (`--version 2`) also waits for the review app. Until it carries answers over by
+stop id, a version 2 would ask reviewers version 1's questions again. So the app's own record of
+the contract it understands, `review-assistance/contracts/review.pin.json`, must name a commit
+holding the republished example (the change order under "Versioning" in the contract).
 """
 
 import argparse
@@ -29,9 +34,11 @@ import tempfile
 from pathlib import Path
 
 from scripts.review_contract import package_rules, schema_errors
-from scripts.review_package import OUT
+from scripts.review_package import OUT, REPO
 
 BUCKET = "gs://ssggsm-seva-media"
+APP_PIN = REPO.parent / "review-assistance/contracts/review.pin.json"
+REPUBLISHED_EXAMPLE = "contracts/review/examples/valid/package-bg-3-37-brisbane-v2.json"
 
 
 def object_name(package: dict) -> str:
@@ -39,7 +46,16 @@ def object_name(package: dict) -> str:
     return f"packages/{lecture}/v{version}.json"
 
 
-def publish(path: Path, bucket) -> str:
+def app_takes_republished(pin: Path = APP_PIN) -> bool:
+    """Has the review app pinned a contract that holds the republished example?"""
+    if not pin.exists():
+        return False
+    commit = json.loads(pin.read_text(encoding="utf-8"))["source"]["commit"]
+    return subprocess.run(["git", "cat-file", "-e", f"{commit}:{REPUBLISHED_EXAMPLE}"], cwd=REPO,
+                          capture_output=True).returncode == 0
+
+
+def publish(path: Path, bucket, app_ready=app_takes_republished) -> str:
     """Upload one package file; return its object name. Refuses rather than overwrites."""
     data = path.read_bytes()
     if b"\r" in data:
@@ -56,6 +72,10 @@ def publish(path: Path, bucket) -> str:
     if package["package"]["id"] != f"{package['lecture']['id']}/v{package['package']['version']}":
         raise ValueError(f"the package id {package['package']['id']} does not name its lecture "
                          f"and version")
+    if package["package"]["version"] > 1 and not app_ready():
+        raise ValueError(f"refused - the review app's pin ({APP_PIN}) does not yet hold the "
+                         f"republished example, so it cannot carry answers over to version "
+                         f"{package['package']['version']}")
     audio = package["audio"]
     for media in (audio["original"], audio.get("listening_copy")):
         if media and not bucket.exists(media["object"]):
@@ -112,11 +132,13 @@ class GcloudBucket:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("lectures", nargs="+", help="lecture slugs whose local v1 to publish")
+    parser.add_argument("lectures", nargs="+", help="lecture slugs whose local package to publish")
+    parser.add_argument("--version", type=int, default=1,
+                        help="which local version to publish (default 1)")
     args = parser.parse_args(argv)
     bucket = GcloudBucket()
     for lecture in args.lectures:
-        path = OUT / lecture / "v1.json"
+        path = OUT / lecture / f"v{args.version}.json"
         name = publish(path, bucket)
         print(f"{BUCKET}/{name}  SHA-256 {hashlib.sha256(path.read_bytes()).hexdigest()}")
     return 0

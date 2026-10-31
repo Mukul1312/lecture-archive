@@ -6,8 +6,8 @@ Python half of one agreement: every golden example must give exactly the result
 `examples/index.json` states. A failing example must break the rule it names and no other,
 because an example that breaks two rules proves nothing about either.
 
-The schema cannot compare one field with another, so the rules in the format's README (P1-P10,
-A1-A9, C1-C3, R1) are code. Only seven of them have an invalid example, so each of the others is
+The schema cannot compare one field with another, so the rules in the format's README (P1-P11,
+A1-A9, C1-C3, R1) are code. Only some of them have an invalid example, so each of the others is
 broken here once, in memory, on a copy of the valid example.
 """
 
@@ -17,8 +17,8 @@ import json
 import unittest
 
 from scripts.review_contract import (CONTRACT, accepted_rules, answer_rules, package_rules,
-                                     read_items, refuse_unknown_version, results_rules,
-                                     schema_errors)
+                                     read_items, refuse_unknown_version, republish_rules,
+                                     results_rules, schema_errors)
 
 EXAMPLES = CONTRACT / "examples"
 INDEX = json.loads((EXAMPLES / "index.json").read_text(encoding="utf-8"))
@@ -36,7 +36,10 @@ def broken(example: dict, found: list) -> set[str]:
     """Which rules the example's records break, checked against the files it names."""
     kind = example["schema"].removesuffix(".schema.json")
     if kind == "lecture-review-package":
-        return {b.rule for b in package_rules(found[0])}
+        rules = {b.rule for b in package_rules(found[0])}
+        if "previous" in example:                       # a later version: P11 against it
+            rules |= {b.rule for b in republish_rules(items(example["previous"])[0], found[0])}
+        return rules
     if kind == "review-answers":
         package = example["package"]
         return {b.rule for b in answer_rules(found, {sha(package): items(package)[0]})}
@@ -222,6 +225,86 @@ class AnswerRuleTests(unittest.TestCase):
         records = valid_answers()
         records[0]["answered_at"] = "2026-10-28T00:00:00Z"
         self.assertBreaks(records, "A8")
+
+
+def republished() -> tuple[dict, dict]:
+    """The example package and a version 2 of it that adds one agreement stop, as a republish does."""
+    previous, current = valid_package(), valid_package()
+    lecture = current["lecture"]["id"]
+    current["package"].update(id=f"{lecture}/v2", version=2, published_at="2026-11-01T06:00:00Z")
+    words = current["transcript"]["words"]
+    at = next(i for i in range(len(words) - 2) if all(
+        w["source"] == "published" and w["stop"] is None and w["start"] is not None
+        for w in words[i:i + 3]))
+    piece = [{"text": w["text"], "start": w["start"], "end": w["end"]} for w in words[at:at + 3]]
+    new = {"id": f"{lecture}#0177", "kind": "agreement-sample", "language": "english",
+           "start": piece[0]["start"], "end": piece[-1]["end"],
+           "context": {"start": round(piece[0]["start"] - 3, 3), "end": round(piece[-1]["end"] + 3, 3)},
+           "versions": [{"source": source, "before": [], "words": piece, "after": [], "differs": []}
+                        for source in ("published", "elevenlabs")]}
+    current["stops"] = sorted(current["stops"] + [new], key=lambda s: (s["start"], s["end"]))
+    for w in words[at:at + 3]:
+        w["stop"] = new["id"]
+    return previous, current
+
+
+class RepublishRuleTests(unittest.TestCase):
+    """P11: a later version keeps every earlier question, so every earlier answer still fits it."""
+
+    def assertBreaks(self, previous: dict, current: dict):
+        self.assertEqual({b.rule for b in republish_rules(previous, current)}, {"P11"})
+
+    def test_a_version_that_only_adds_stops_breaks_nothing(self):
+        previous, current = republished()
+        self.assertEqual(package_rules(current), [])
+        self.assertEqual(republish_rules(previous, current), [])
+
+    def test_p11_another_lecture(self):
+        previous, current = republished()
+        previous["lecture"]["id"] = "another-lecture"
+        self.assertBreaks(previous, current)
+
+    def test_p11_a_version_that_is_not_the_next_one(self):
+        previous, current = republished()
+        lecture = current["lecture"]["id"]
+        current["package"].update(id=f"{lecture}/v3", version=3)
+        self.assertBreaks(previous, current)
+
+    def test_p11_an_earlier_stop_left_out(self):
+        previous, current = republished()
+        dropped = stop(current, "#0088")["id"]
+        current["stops"] = [s for s in current["stops"] if s["id"] != dropped]
+        for word in current["transcript"]["words"]:
+            if word["stop"] == dropped:
+                word["stop"] = None
+        self.assertBreaks(previous, current)
+
+    def test_p11_an_earlier_stop_changed(self):
+        previous, current = republished()
+        stop(current, "#0012")["versions"][0]["after"].append("now")
+        self.assertBreaks(previous, current)
+
+    def test_p11_a_new_id_that_does_not_come_after_every_earlier_one(self):
+        # An id may have been retired by a version in between, so only a higher serial is
+        # certainly unused.
+        previous, current = republished()
+        new = stop(current, "#0177")
+        for word in current["transcript"]["words"]:
+            if word["stop"] == new["id"]:
+                word["stop"] = new["id"].replace("#0177", "#0002")
+        new["id"] = new["id"].replace("#0177", "#0002")
+        self.assertBreaks(previous, current)
+
+    def test_p11_a_transcript_word_whose_text_changed(self):
+        previous, current = republished()
+        current["transcript"]["words"][0]["text"] = "Changed"
+        self.assertBreaks(previous, current)
+
+    def test_p11_a_transcript_word_moved_from_one_stop_to_another(self):
+        previous, current = republished()
+        word = next(w for w in current["transcript"]["words"] if w["stop"] and w["stop"].endswith("#0088"))
+        word["stop"] = stop(current, "#0177")["id"]
+        self.assertBreaks(previous, current)
 
 
 class AcceptedAndResultsRuleTests(unittest.TestCase):

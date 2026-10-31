@@ -74,6 +74,7 @@ Four choices to note:
 - A known limit: single-version stops lie outside trustworthy spans, mostly in untranscribed stretches, which are marked on screen. Agreement samples lie inside trustworthy spans. A reviewer who watches the marking could tell the two apart.
 - Another: agreement samples need both versions to be exactly the same text, punctuation included, because the app shows them as one. The published text writes Indic words in IAST and ElevenLabs does not, so in practice every agreement sample is English: all 23 in the Brisbane package are. For Indic words, agreement is the spelling-only word disagreements, which reviewers see anyway (42 of Brisbane's 86 Sanskrit stops).
 - Another known limit: spelling style can give the source away. The published text uses IAST (Kṛṣṇa, Śrīla), while ElevenLabs writes plain spellings (Krishna, Srila), so on such stops a reviewer can guess which version is published.
+- Another known limit, from 31 October 2026: `lecture-archive` may ask **every** agreed piece of a lecture, not a few samples. Then a single-text stop inside a trustworthy span is almost always agreed text, and reviewers may learn to confirm it too easily. This is not measured yet. Such pieces have no 3-second rule: a piece may sit beside another stop, and its clip may play that stop's audio, which does not show which text is published. Its context words stop at the first word of a word disagreement or verse check, in both versions, so the one text shown never shows which version of a disagreement is the published one.
 
 ### When there is no listening copy
 
@@ -148,6 +149,14 @@ JSON Schema checks each field by itself. It cannot compare one field with anothe
 | P9 | All text is in Unicode NFC. |
 | P10 | Every timed word in a version lies inside the stop's clip. |
 
+**A later version of a package** (checked against the version before it, since 31 October 2026)
+
+| Rule | What it requires |
+|---|---|
+| P11 | The same lecture, and the version one higher. Every stop of the version before is present and unchanged under its id, so an answer carried over still answers exactly what was shown. Every new stop's serial is higher than every serial before, so no id is ever reused, even one a version in between retired. The transcript has the same words; only `stop` may change, and only on a word that had none. |
+
+P11 does not yet let a version drop a stop or shift one's times, although "Versioning" below allows for both. A version that needs to will change this rule first, in the order given there.
+
 **Answers** (checked against the package they name)
 
 | Rule | What it requires |
@@ -178,7 +187,7 @@ JSON Schema checks each field by itself. It cannot compare one field with anothe
 |---|---|
 | R1 | `applied` lists exactly the records the app's list names whose answer gives text or a marking. The package, answers and list hashes match. |
 
-Every rule is checked against the examples, but only P1, P4, A1, A3, C2 and C3 have their own invalid example so far. `tests/review_contract/` breaks each of the others once, in memory, on a copy of the valid example.
+Every rule is checked against the examples, but only P1, P4, P11, A1, A3, C2 and C3 have their own invalid example so far. `tests/review_contract/` breaks each of the others once, in memory, on a copy of the valid example.
 
 ## Versioning
 
@@ -194,7 +203,7 @@ Every rule is checked against the examples, but only P1, P4, A1, A3, C2 and C3 h
 
   The example is the handoff between the two sides.
 - **Ids stay stable.** Lecture, stop, record and reviewer ids, and value words such as `published`, `sanskrit` or `chose-version`, never change meaning and are never reused. A stop keeps its id across package versions while it asks the same question, and small timing shifts keep the id. If what it asks changes (its kind, language, versions' words or verse), it gets a new id and the old one is retired.
-- **Answers carry over** (agreed 29 October 2026). When a republished package keeps a stop's id, the stop's earlier records still apply and the reviewer is not asked again. Stops new in that version start open. Stops it drops are retired, and their records stay in the history. No example covers a republished package yet.
+- **Answers carry over** (agreed 29 October 2026). When a republished package keeps a stop's id, the stop's earlier records still apply and the reviewer is not asked again. Stops new in that version start open. Stops it drops are retired, and their records stay in the history. [The republished example](examples/valid/package-bg-3-37-brisbane-v2.json) is version 2 of the example package, and rule P11 holds every later version to this. A record carried over keeps naming the version it was given on (its id, version and SHA-256), and is checked against that version (A1); the app's list may name it for the same stop in the later version (C3).
 - **Answers are never rewritten.** After a major change, `lecture-archive` translates old answers when it imports them. The stored records stay as they were written.
 - **Until the first package was uploaded,** the format was edited in place and stayed at 1.0 (0.1 for the results sketch), because no published file could depend on it. That ended on 30 October 2026. Every change now follows the rules above. Major version 0 means the results shape may still change.
 
@@ -205,6 +214,7 @@ Every rule is checked against the examples, but only P1, P4, A1, A3, C2 and C3 h
 - **Real excerpts,** copied read-only from `lecture-archive` on 29 October 2026, for BG 3.37 (Brisbane): word text and timings from the alignment and ElevenLabs files, the trustworthy spans, the SB 1.2.10 verse match, the original audio hash, the listening copy's hash (from `manifests/media-v2.json`), and the input hashes.
 - **Illustrative, not computed by `lecture-archive`:** which stretches form stops, the stop ids, every language label, the `differs` positions, the verse's word split and recited suggestion, the untranscribed stretches, the listening copy's length, the Git commits, every time of publishing or answering, every answer, and every number in the results. Words outside stops are marked `unknown` rather than guessed. `producer.notes` in the packages and the results, and `index.json`, say what is illustrative.
 - The answers example holds the example package's real SHA-256. `.gitattributes` keeps these files' line endings fixed, so the hash survives a Windows checkout.
+- **The republished examples** (31 October 2026) are version 2 of the example package: [valid](examples/valid/package-bg-3-37-brisbane-v2.json), and [invalid](examples/invalid/package-v2-changes-an-earlier-stop.json), which asks stop #0088 in different words under the same id and so breaks P11. Their index entries name the `previous` version, against which P11 is checked. They are step 1 of the change order under "Versioning": the first republished package is something the app has not handled before.
 
 Adoption did not change the examples: their bytes, and so their hashes, are the draft's. Both sides run every example: `lecture-archive` in `tests/review_contract/`, with Python `jsonschema` 4.23.0 and `scripts/review_contract.py`; the review app in `src/contract/conformance.test.ts`, with Ajv 8.20.0 and its TypeScript rule checks.
 

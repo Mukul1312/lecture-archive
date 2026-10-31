@@ -1,5 +1,5 @@
 {
-  "what_this_is": "The golden examples for the draft contract. Tests on both sides read this list, and every file must give the stated result. 'valid' passes the schema and every rule. 'fails-schema' is rejected by JSON Schema validation. 'fails-rule' passes the schema but breaks the named rule in contracts-proposal/README.md. A .jsonl file is checked line by line, and its rules are checked across all its lines.",
+  "what_this_is": "The golden examples for the draft contract. Tests on both sides read this list, and every file must give the stated result. 'valid' passes the schema and every rule. 'fails-schema' is rejected by JSON Schema validation. 'fails-rule' passes the schema but breaks the named rule in contracts-proposal/README.md. A .jsonl file is checked line by line, and its rules are checked across all its lines. A package with 'previous' is a later version of that package, and rule P11 is checked against it as well.",
   "examples": [
     {
       "file": "valid/package-bg-3-37-brisbane.json",
@@ -100,6 +100,26 @@
       "expect": "fails-rule",
       "rule": "P4",
       "why": "The stops are not in timeline order."
+    },
+    {
+      "file": "valid/package-bg-3-37-brisbane-v2.json",
+      "schema": "lecture-review-package.schema.json",
+      "previous": "valid/package-bg-3-37-brisbane.json",
+      "expect": "valid",
+      "about": "Version 2 of the example package, as lecture-archive republishes one: every stop of version 1 unchanged under its id, and two new agreement stops, #0177 and #0178, whose serials come after version 1's highest. Answers given on version 1 carry over to it by stop id; the two new stops start open. #0177 ends where the disagreement #0088 begins, so its context words after it stop there, in both versions. Rule P11 is checked against the previous version.",
+      "illustrative": [
+        "package.published_at",
+        "stops #0177 and #0178: which agreed words became stops (a real republish adds one for every piece both sources wrote exactly alike; the excerpt holds no ElevenLabs text for the rest), their language, their ElevenLabs timings and their context words before them",
+        "everything the previous version marks illustrative"
+      ]
+    },
+    {
+      "file": "invalid/package-v2-changes-an-earlier-stop.json",
+      "schema": "lecture-review-package.schema.json",
+      "previous": "valid/package-bg-3-37-brisbane.json",
+      "expect": "fails-rule",
+      "rule": "P11",
+      "why": "Version 2 asks stop #0088 in different words under the same id: ElevenLabs's 'we'll' became 'will'. An answer carried over from version 1 would answer a question nobody was shown."
     },
     {
       "file": "invalid/answer-typed-fix-without-text.json",

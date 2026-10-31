@@ -62,10 +62,16 @@ On 30 October 2026 every lecture had a listening copy, listed in `manifests/medi
 This builds one lecture's package from this repository's own tested code: `spoken_words`, the trustworthy spans, the placement check in `compare_hosted`, `read_along`'s word check, `indic_language` and the verse matches. It checks the package against the schema and P1 to P10, refuses to write one that fails, and writes it locally to `data/reference/review/packages/<lecture>/v1.json`. The listening copies come from a copy of the bucket's `manifests/media-v2.json` kept in `data/reference/review/manifests/`. With `--every-agreed-piece` it asks every agreed piece instead of a few random agreement samples (see the builder table below); the report then lists the agreed words left unasked, by reason.
 
 ```
-.venv/Scripts/python.exe -m scripts.review_publish <lecture> [<lecture> ...]
+.venv/Scripts/python.exe -m scripts.review_republish <lecture>
 ```
 
-This uploads it to `gs://ssggsm-seva-media/packages/<lecture>/v1.json` (Mukul's go-ahead, 30 October 2026). Before sending anything it checks the file again: LF bytes only, the schema and P1 to P10, not a DRAFT, and the original and listening copy it names both in the bucket. A published package is never changed, because answers name it by its bytes. The same bytes again are left alone. Different bytes under the same name are refused, and the upload itself can only create (`--if-generation-match=0`). The object is read back and compared after upload.
+This writes the next version of a published package, `v2.json` beside `v1.json`, adding one agreement stop for every agreed piece (the builder's `--every-agreed-piece` mode). It starts from the published bytes and never builds v1 again: the code has moved on since, and a rebuild could draw different stops under the same ids. So it refuses unless `v1.json` has the SHA-256 recorded in the table above and every input v1 names still has its hash. It finds each v1 word and stop among the words read again from those inputs, by text and times, and runs the comparison again on v1's spans only to find disagreements too long to ask. If that comparison does not draw v1's disagreements exactly, it writes nothing. Spans are read at the aligner's unrounded edges: on the evening darshan a span starts at 1414.378210 s, the package stores 1414.378, and ElevenLabs's "So" at 1414.3780 lies between the two. The result must pass P1 to P11.
+
+```
+.venv/Scripts/python.exe -m scripts.review_publish <lecture> [<lecture> ...] [--version 2]
+```
+
+This uploads it to `gs://ssggsm-seva-media/packages/<lecture>/v<version>.json` (Mukul's go-ahead, 30 October 2026). A version above 1 is refused until `../review-assistance/contracts/review.pin.json` names a commit holding the republished example: before the app carries answers over, a v2 would ask reviewers v1's questions again. Before sending anything it checks the file again: LF bytes only, the schema and P1 to P10, not a DRAFT, and the original and listening copy it names both in the bucket. A published package is never changed, because answers name it by its bytes. The same bytes again are left alone. Different bytes under the same name are refused, and the upload itself can only create (`--if-generation-match=0`). The object is read back and compared after upload.
 
 ```
 .venv/Scripts/python.exe -m scripts.review_import gs://<exports bucket>/exports/<folder> --configuration <gcloud configuration>
@@ -91,7 +97,7 @@ A package built from producer code with uncommitted changes says so at the start
 | Single-version stops | ElevenLabs's words outside every trustworthy span, broken at pauses over 1 s and at 12 words | A ten-second question |
 | Misplaced words | The spans lose every stretch `read_along.word_check` finds misplaced. They also lose every stretch where a disagreement pairs words more than 1 s apart, which is the same fault in places the word check cannot measure. Then the comparison runs again | A stop built on misplaced words plays the wrong audio |
 | Recogniser words with no real time | An ElevenLabs word lasting over 5 s is never part of a stop. Brisbane has one: `Kama.`, stretched across 55 s of chanting | It cannot be placed in a clip |
-| Stop ids | Serial numbers in timeline order. Republishing, which must carry ids over, is not built, so the builder will not make a v2 | Ids must never be reused for a different question |
+| Stop ids | Serial numbers in timeline order. A later version (`scripts.review_republish`, 31 October 2026) keeps every earlier stop under its id, and new stops take serials after the previous version's highest, in timeline order among themselves. Ids are then no longer in timeline order; the stops array still is (P4) | Ids must never be reused for a different question, and answers carry over by id (rule P11) |
 
 **Evidence on one language per stop.** The proposed rule works, but word-level labels needed two repairs, both found by reading the Brisbane stops:
 

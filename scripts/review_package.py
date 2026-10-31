@@ -105,6 +105,8 @@ MIN_AGREEMENT = 3
 VERSE_MARGIN = 0.25
 # A lecture's length, decoded, may differ from the aligner's own figure by its rounding (0.1 s).
 ALIGNER_TOLERANCE = 0.1
+# Stops that start and end together are ordered by kind.
+STOP_ORDER = {"word-disagreement": 0, "verse-check": 1, "agreement-sample": 2, "single-version": 3}
 
 
 @dataclass
@@ -757,6 +759,37 @@ def span_differences(span: TrustedSpan, published: list[Word], heard: list[Word]
     return stops
 
 
+def lecture_words(text: str, record: dict,
+                  eleven: dict) -> tuple[list[Word], list[Word], list[dict], int]:
+    """The published words with their times, ElevenLabs's words, the timed alignment, and how
+    many timed words were dropped as editorial notes.
+
+    The published words are numbered as the aligner numbered them. An alignment made under an
+    older cleanup rule is carried over the way the read-along page carries it, or refused.
+    """
+    spoken = spoken_words(text)
+    paras = paragraphs(text)
+    timed = record["words"]
+    try:
+        check_alignment(paras, timed)
+        dropped = 0
+    except ValueError:
+        timed, dropped = renumber(paras, timed)
+        check_alignment(paras, timed)
+    timed = sorted(timed, key=lambda w: w["index"])
+    duration_aligner = record["audio_seconds"]
+    if problems([Word(w["word"], w["start"], w["end"]) for w in timed], duration_aligner):
+        raise ValueError(f"the alignment breaks its timing invariants: "
+                         f"{problems([Word(w['word'], w['start'], w['end']) for w in timed], duration_aligner)}")
+    by_index = {w["index"]: w for w in timed}
+    published = [Word(word, round(by_index[i]["start"], 3) if i in by_index else None,
+                      round(by_index[i]["end"], 3) if i in by_index else None)
+                 for i, word in enumerate(spoken)]
+    heard = [Word(w["w"], round(w["s"], 3), round(w["e"], 3))
+             for w in sorted(eleven["words"], key=lambda w: w["s"]) if w.get("s") is not None]
+    return published, heard, timed, dropped
+
+
 def make_version(source: str, words: list[Word], all_words: list[Word], lo: int, hi: int,
                  differs: list[int], blocked: set[int] = frozenset()) -> dict:
     """One source's version of a stop: its words, and the words around them for context."""
@@ -807,8 +840,7 @@ def assemble(slug: str, drafts: list[dict], duration: float, published: list[Wor
              languages: list[str], spans: list[TrustedSpan], heard: list[Word],
              outside: list[int]) -> tuple[list[dict], list[dict]]:
     """Every stop in timeline order with its id, and the timed transcript naming each word's stop."""
-    order = {"word-disagreement": 0, "verse-check": 1, "agreement-sample": 2, "single-version": 3}
-    drafts = sorted(drafts, key=lambda d: (d["start"], d["end"], order[d["kind"]]))
+    drafts = sorted(drafts, key=lambda d: (d["start"], d["end"], STOP_ORDER[d["kind"]]))
     stops, owner_p, owner_h = [], {}, {}
     for serial, draft in enumerate(drafts, start=1):
         stop_id = f"{slug}#{serial:04d}"
@@ -872,31 +904,11 @@ def build(slug: str, manifest_path: Path, version: int = 1,
         raise ValueError("ElevenLabs output is not word-timed")
     summary: dict = {"notes": []}
 
-    # The published words, numbered as the aligner numbered them. An alignment made under an
-    # older cleanup rule is carried over the way the read-along page carries it, or refused.
-    spoken = spoken_words(text)
-    paras = paragraphs(text)
-    timed = record["words"]
-    try:
-        check_alignment(paras, timed)
-        dropped = 0
-    except ValueError:
-        timed, dropped = renumber(paras, timed)
-        check_alignment(paras, timed)
+    published, heard_all, timed, dropped = lecture_words(text, record, eleven)
     if dropped:
         summary["notes"].append(f"{dropped} timed words are editorial notes under the current "
                                 f"cleanup rule and were dropped with their timings.")
-    timed = sorted(timed, key=lambda w: w["index"])
     duration_aligner = record["audio_seconds"]
-    if problems([Word(w["word"], w["start"], w["end"]) for w in timed], duration_aligner):
-        raise ValueError(f"the alignment breaks its timing invariants: "
-                         f"{problems([Word(w['word'], w['start'], w['end']) for w in timed], duration_aligner)}")
-    by_index = {w["index"]: w for w in timed}
-    published = [Word(word, round(by_index[i]["start"], 3) if i in by_index else None,
-                      round(by_index[i]["end"], 3) if i in by_index else None)
-                 for i, word in enumerate(spoken)]
-    heard_all = [Word(w["w"], round(w["s"], 3), round(w["e"], 3))
-                 for w in sorted(eleven["words"], key=lambda w: w["s"]) if w.get("s") is not None]
 
     if not span_manifest_is_current(record["words"], entry):
         raise ValueError("the span manifest does not match this alignment; run scripts.scoreable")
