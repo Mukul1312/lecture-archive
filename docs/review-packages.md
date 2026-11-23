@@ -70,6 +70,27 @@ unchanged and adds an agreement stop for every agreed piece:
 | `evening-darshan-about-bhubaneswar-temple-and-preaching-bhubaneswar/v2.json` | 1,687 | `dbec883ee23fa3ecae2a4664162c86a56d235719d309cd26e2259156abf00d50` |
 | `arrival-address-from-usa-no-question-of-disappointment-and-pessimism-in-mahaprabhu-s-line-bhubaneswar/v2.json` | 279 | `ca2308027da2115939b5645646555217d146d354c9bbb25a8d4073f00420dc78` |
 
+Lectures 8 to 10, under Mukul's decisions of 22 November 2026 (see "How the builder chooses
+stops"). Built from commit `66d216e` with `--every-agreed-piece` and uploaded on 23 November
+2026. They were chosen for Sanskrit and Bengali: the three short Caitanya-caritāmṛta classes in the
+proposed thirteen. ElevenLabs transcribed them that day on the original account:
+
+| Published to `gs://ssggsm-seva-media/packages/…/v1.json` | Stops | SHA-256 |
+|---|---:|---|
+| `cc-adi-lila-3-19-21-gopi-bhava-bhubaneswar` | 1,167 | `5dc91fb322ec8afb4bbbbe2eb14e4bf50841bdea41c46134125951f3f570362e` |
+| `cc-adi-lila-4-231-233-unripe-and-ripe-mango-bhubaneswar` | 619 | `03bd88248da9245ce962a528903474d84d54e0bd1915336ca3edfe5fa2a17bb6` |
+| `cc-adi-lila-7-108-109-mayavada-defined-bhubaneswar` | 676 | `3023e5b6700fd352695b765a3a99096e200c7a35cd46509763d2525bb021d449` |
+
+The other ten of the thirteen wait for the rules to be revised after ten lectures are reviewed.
+All ten pass the timing check: the builder's timing rules hold, and the decoded audio length
+matches the aligner's. The placement check needs ElevenLabs' words, so on 23 November it had run
+on only two of the ten: the evening darshan on taṭastha-śakti
+(`evening-darshan-manifestation-of-the-material-world-is-from-tatastha-shakti-bhubaneswar`,
+1.21) and SB 7.7.24 (`sb-7-7-24-the-science-of-the-soul-bhubaneswar`, 1.00). Both pass. The other
+eight are not yet transcribed: SB 4.2.29 (Singapore), SB 1.19.36 (Denver), Cc. Ādi 11.14–15, SB
+8.9.26, SB 8.16.26–30, SB 8.16.33–39, the special class on Haridāsa Ṭhākura, and "I and Mine and
+Nāmābhāsa stage".
+
 On 30 October 2026 every lecture had a listening copy, listed in `manifests/media-v2.json`.
 
 ## Building, publishing and importing
@@ -102,7 +123,15 @@ A package built from producer code with uncommitted changes says so at the start
 
 ## How the builder chooses stops
 
-**These choices are `lecture-archive`'s proposals to Mukul, not agreements.** Mukul ruled on 29 October 2026 that they are not to be settled on one lecture: `lecture-archive` decides them once four or five lectures have been reviewed (ADR-0016). The figures in the table are from the first real package, BG 3.37 (Brisbane): 640 stops for a 61-minute lecture.
+**These choices are `lecture-archive`'s proposals to Mukul, not agreements.** Mukul ruled on 29 October 2026 that they are not to be settled on one lecture: `lecture-archive` decides them once four or five lectures have been reviewed (ADR-0016). On 22 November 2026 he replaced that with ten lectures (below). The figures in the table are from the first real package, BG 3.37 (Brisbane): 640 stops for a 61-minute lecture.
+
+**Mukul's decisions of 22 November 2026, in his words:**
+
+- "currently I think we have around 7 lectures we can extend them to 20 no issues in that."
+- On asking about every agreed piece for the new lectures: "We don't have problem with doubling the questions. And I liked this idea very much."
+- On changing how questions are built: "After review completes to lecture 10 we will update it then for remaining 20 we will check."
+
+So 13 new lectures join the seven. Lectures 8–10 are built with today's rules and `--every-agreed-piece`. Lectures 11–20 wait until ten lectures have been reviewed and the rules are revised. This replaces the earlier "after four or five lectures".
 
 | Question | What the builder does now | Why |
 |---|---|---|
