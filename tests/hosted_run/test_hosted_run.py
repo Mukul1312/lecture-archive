@@ -147,3 +147,48 @@ class PeriodTests(unittest.TestCase):
         # 31 March has no 31 February; the period began on the last day of February.
         start = period_start_ms(1806451200)  # 2027-03-31 00:00 UTC
         self.assertEqual(start, 1803772800000)  # 2027-02-28 00:00 UTC
+
+
+class KeyChoiceTests(unittest.TestCase):
+    """The balance check and the upload must ask the same account.
+
+    `.env.local` now holds several ElevenLabs keys, one per account. Checking one account's
+    balance and then charging another is the 401 storm again by a different road: the check
+    says there is room, and the upload lands on an account that has none.
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        self.mock = mock
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.audio = Path(folder.name) / "lecture.mp3"
+        self.audio.write_bytes(b"not really audio")
+        patcher = mock.patch("scripts.hosted_run.secret", side_effect=lambda name: f"value-of-{name}")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def response(self, payload):
+        reply = self.mock.Mock(status_code=200)
+        reply.json.return_value = payload
+        return reply
+
+    def test_the_upload_is_charged_to_the_named_key(self):
+        from scripts.hosted_run import run_elevenlabs
+        with self.mock.patch("requests.post", return_value=self.response(
+                {"text": "", "words": [], "language_code": "en"})) as post:
+            run_elevenlabs(self.audio, [], key="ELEVENLABS_API_KEY_2")
+        self.assertEqual(post.call_args.kwargs["headers"]["xi-api-key"],
+                         "value-of-ELEVENLABS_API_KEY_2")
+
+    def test_the_balance_is_read_from_the_named_key(self):
+        from scripts.hosted_run import credits_left
+        plan = {"next_character_count_reset_unix": 1792892776, "character_limit": 10_000,
+                "character_count": 0}
+        with self.mock.patch("requests.get", side_effect=[
+                self.response(plan), self.response({"usage": {}})]) as get:
+            credits_left(key="ELEVENLABS_API_KEY_2")
+        self.assertEqual({call.kwargs["headers"]["xi-api-key"] for call in get.call_args_list},
+                         {"value-of-ELEVENLABS_API_KEY_2"})

@@ -19,6 +19,7 @@ nothing but reads exactly like a refusal from Sarvam.
 
     .venv-api/Scripts/python.exe -m scripts.hosted_run plan
     .venv-api/Scripts/python.exe -m scripts.hosted_run send --service elevenlabs
+    .venv-api/Scripts/python.exe -m scripts.hosted_run send --service elevenlabs --key ELEVENLABS_API_KEY_2 --slug SLUG
     .venv-api/Scripts/python.exe -m scripts.hosted_run send --service sarvam --slug SLUG
 """
 
@@ -50,6 +51,11 @@ CREDITS_PER_MINUTE = 80.0
 # wall actually sits is unmeasured, so the ceiling here is the longest proven success and
 # nothing is claimed above it.
 SARVAM_PROVEN_CEILING = 61.0 * 60
+
+# The .env.local entry holding the ElevenLabs key, unless --key names another. One entry per
+# account: the balance check and the upload must both use the one named, or the check reads
+# one account and the upload charges another.
+DEFAULT_ELEVENLABS_KEY = "ELEVENLABS_API_KEY"
 
 # A gap between lectures. Nine large uploads back to back tripped ElevenLabs' limiter on the
 # first run; nothing here is urgent enough to push a stranger's servers that hard.
@@ -164,7 +170,7 @@ def period_start_ms(next_reset_unix: int) -> int:
     return int(start.timestamp() * 1000)
 
 
-def credits_left() -> int:
+def credits_left(key: str = DEFAULT_ELEVENLABS_KEY) -> int:
     """What the ElevenLabs account can actually pay for, asked before anything is sent.
 
     Free and instant, and it is the check whose absence turned one exhausted quota into three
@@ -172,7 +178,7 @@ def credits_left() -> int:
     file: it succeeded because it cost 22 credits and 90 remained.
     """
     import requests
-    headers = {"xi-api-key": secret("ELEVENLABS_API_KEY")}
+    headers = {"xi-api-key": secret(key)}
     subscription = requests.get("https://api.elevenlabs.io/v1/user/subscription",
                                 headers=headers, timeout=60)
     if subscription.status_code != 200:
@@ -219,14 +225,14 @@ def too_long_for_sarvam(lecture: dict) -> bool:
     return lecture["audio_seconds"] > SARVAM_PROVEN_CEILING
 
 
-def run_elevenlabs(audio: Path, terms: list[str]) -> dict:
+def run_elevenlabs(audio: Path, terms: list[str], key: str = DEFAULT_ELEVENLABS_KEY) -> dict:
     import requests
     fields = [("model_id", (None, "scribe_v2")), ("timestamps_granularity", (None, "word")),
               ("diarize", (None, "false")), ("no_verbatim", (None, "false")),
               ("file", (audio.name, audio.read_bytes(), "audio/mpeg"))]
     fields += [("keyterms", (None, t)) for t in terms]
     response = requests.post("https://api.elevenlabs.io/v1/speech-to-text",
-                             headers={"xi-api-key": secret("ELEVENLABS_API_KEY")},
+                             headers={"xi-api-key": secret(key)},
                              files=fields, timeout=3600)
     if response.status_code != 200:
         raise HostedFailure(response.status_code, response.text)
@@ -287,6 +293,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--slug", action="append", default=None,
                         help="one named lecture; repeat for several")
+    parser.add_argument("--key", default=DEFAULT_ELEVENLABS_KEY,
+                        help="the .env.local entry holding the ElevenLabs key to charge")
     args = parser.parse_args()
 
     lectures = chosen(solo_only=not args.all and not args.slug, limit=args.limit)
@@ -329,7 +337,7 @@ def main() -> None:
             pending = [l for l in pending if not too_long_for_sarvam(l)]
 
         if service == "elevenlabs" and pending:
-            balance = credits_left()
+            balance = credits_left(args.key)
             other = {p.stem for p in (OUT / "sarvam").glob("*.json")}
             affordable = fits_the_budget(pending, balance, other)
             print(f"  {balance:,} credits in the account "
@@ -353,7 +361,7 @@ def main() -> None:
             started = time.time()
             try:
                 if service == "elevenlabs":
-                    result = with_backoff(lambda: run_elevenlabs(audio, terms))
+                    result = with_backoff(lambda: run_elevenlabs(audio, terms, args.key))
                 else:
                     result = with_backoff(
                         lambda: run_sarvam(audio, terms, OUT / service / f"{slug}-raw"))
