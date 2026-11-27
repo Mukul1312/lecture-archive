@@ -62,6 +62,8 @@ Four choices to note:
 
 - **Reviewers see each stop's language and can correct it** (Mukul, 30 October 2026). The label is `lecture-archive`'s guess, and the guess is measurably imperfect: before 30 October it called 7 of 12 Bengali verse checks Sanskrit, and it has no Odia at all. Reviewers and the producer are a feedback loop, so on any stop a reviewer may say which language was actually spoken (`spoken_language`). It never repeats the stop's own label (A9). It sits beside the answer and does not replace it. "I don't know this language" with `spoken_language: odia` is a useful answer: the reviewer recognised Odia but cannot check it. `lecture-archive` collects the corrections as a test set for its language rule, the way `verse_truth.json` is the test set for verse matching. One answer never relabels a stop.
 
+  **A reviewer may also say `mixed`** (answers 1.1, agreed with Mukul on 27 November 2026): the stop holds more than one language, such as English with a Sanskrit phrase. The package still gives every stop exactly one language, and `mixed` is never a stop's label; it is only the reviewer's correction. So it is allowed on any stop, and it never repeats the stop's label (A9). Results count a stop heard as `mixed` under `mixed`, not under its label (see the results file). `lecture-archive` collects these stops as a second test set: passages where the language changes, for testing how it splits them.
+
 - **Spelling-only differences get "both are right"** (agreed 29 October 2026). The two versions may differ only in spelling, such as Kṛṣṇa and Krishna, or Śrīla and Srila. The app cannot tell which differences are spelling only, because it does no language processing, so the answer is offered on every word disagreement and the reviewer judges. `lecture-archive` decides which spelling goes into the checked text. Neither version counts as wrong for that stop.
 - **Agreement samples show one text.** The requirements say they appear like any other stop. Showing two identical versions as A and B would give them away, so the app shows them like a single-version stop. That is why there is a `confirmed` answer beside `chose-version`.
 - **A verse is never pasted in whole.** The package carries only the printed portion the match covers. Only the words a reviewer confirms as recited count as spoken text. Reviewers start with no words ticked (agreed 29 October 2026). The package keeps `lecture-archive`'s suggestion of which words were recited, but the app neither shows it nor pre-ticks it.
@@ -130,6 +132,8 @@ The results file lists the package and the export it read (the answers file and 
 
 `lecture-archive` decides how these numbers are computed. The app only shows them in plain words, such as "English: 96 in 100 checked words right; 12% of the lecture checked".
 
+Stops are counted under the language the package gave them. One exception, since results 0.2 (Mukul, 27 November 2026): **a stop whose counting answer says `spoken_language: mixed` is counted under `mixed`**, an entry of its own like `unknown`, and not under its label. So no language's accuracy includes words from another language. Every other language correction is collected but does not move its stop.
+
 ## Rules the schema cannot check
 
 JSON Schema checks each field by itself. It cannot compare one field with another, so these rules must be checked in code on both sides. A file that breaks one is refused. Each rule has a stable id, which the invalid examples refer to.
@@ -169,7 +173,7 @@ P11 does not yet let a version drop a stop or shift one's times, although "Versi
 | A6 | No two records share an id. Each export repeats every record so far, so the same id always holds the same, unchanged record. |
 | A7 | Typed text, notes and typed references are in Unicode NFC. |
 | A8 | No record is earlier than its package's publishing time. |
-| A9 | `spoken_language`, when given, is not the stop's own language: it is a correction. |
+| A9 | `spoken_language`, when given, is not the stop's own language: it is a correction. `mixed` is allowed on any stop, because no stop is labelled `mixed`. |
 
 **Answers that count** (checked against the package and the answers file)
 
@@ -240,7 +244,15 @@ For `review-assistance` to take into its pinned copy:
 
 9. **`review-answers.schema.json`: an optional `spoken_language` and rule A9** (30 October 2026, before any package was uploaded, so still 1.0). The app shows each stop's language and lets the reviewer correct it; see "Four choices to note". Two examples go with it: `valid/answer-language-corrected.json` and `invalid/answer-language-same-as-stop.json`.
 
-The examples from the draft are unchanged, byte for byte. The two above are new.
+10. **Answers 1.1 and results 0.2: `mixed`** (27 November 2026, asked for by `review-assistance` and agreed with Mukul). Both changes only add values, so every file published before stays valid.
+    - `review-answers.schema.json`: `spoken_language` gains `mixed`, for a stop that holds more than one language.
+    - A9 now says `mixed` is allowed on any stop. The package still has one language per stop (see "Four choices to note").
+    - `review-results.schema.json`: a language entry may be `mixed`. Results count a stop heard as `mixed` there and never under its label (see the results file).
+    - A record that says `mixed` must name answers 1.1 or later, and results that report it 0.2 or later. Each schema checks this, because the value is not valid in the earlier version.
+    - `scripts/review_contract.py` reads answers up to 1.1 and results up to 0.2, and refuses anything newer.
+    - Two examples: `valid/answer-mixed-language.json` and `invalid/answer-mixed-in-version-1-0.json`.
+
+The examples from the draft are unchanged, byte for byte. The two in item 9 and the two in item 10 are new.
 
 **Proposed, not made, because they need Mukul or the app:**
 
@@ -254,7 +266,7 @@ The examples from the draft are unchanged, byte for byte. The two above are new.
 3. ~~**Verse checks: pre-tick the suggested words?**~~ Settled 29 October: start with none ticked.
 4. ~~**Who decides which answer counts.**~~ Settled 29 October: the app decides, and sends the list with each export (option B).
 5. ~~**Spelling-only differences.**~~ Settled 29 October: reviewers get a "both are right" answer. Still open: which spelling the checked text keeps, which is part of requirements question 4.
-6. **One language per stop:** `lecture-archive` splits a passage where the language changes, so each answer counts toward one language. Built that way, with the two repairs described above. Agreed?
+6. **One language per stop:** `lecture-archive` splits a passage where the language changes, so each answer counts toward one language. Built that way, with the two repairs described above. Agreed? Since 27 November 2026 reviewers can say a stop was `mixed`. Those stops are where the split failed, and they become its test set.
 7. ~~**Strict versions.**~~ Settled 29 October: the app refuses a package with a newer minor version until it is updated.
 8. ~~**Republished packages.**~~ Settled 29 October: answers carry over when a stop keeps its id.
 9. ~~**The supervisor's screens.**~~ Settled 29 October: they hide which version is the published one too.

@@ -34,9 +34,9 @@ CONTRACT = REPO / "contracts/review"
 # new field anyway - better to say why (agreed 29 October 2026: update the reader first).
 KNOWN = {
     "lecture-review-package": (1, 0),
-    "review-answers": (1, 0),
+    "review-answers": (1, 1),
     "accepted-answers": (1, 0),
-    "review-results": (0, 1),
+    "review-results": (0, 2),
 }
 
 # Answer kinds that give this repository text or a marking to apply; the rest close a stop or

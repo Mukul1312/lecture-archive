@@ -1,0 +1,20 @@
+{
+  "schema": "review-answers/1.0",
+  "id": "3707938e-c237-5ac4-9e5b-ef8555bd8f2b",
+  "record": "answer",
+  "lecture": "bg-3-37-the-duty-of-a-human-being-brisbane",
+  "stop": "bg-3-37-the-duty-of-a-human-being-brisbane#0176",
+  "package": {"id": "bg-3-37-the-duty-of-a-human-being-brisbane/v1", "version": 1, "sha256": "9a9787d2fb65c599fadbd682905a8e0fa69bdaf44ef7ce4d1d45b28c6684b193"},
+  "audio_sha256": "a0cda929b65c7d9534995d63ac9fa1fddfd3ab70c029bc5099d9512fe31105ea",
+  "interval": {"start": 3227.568, "end": 3235.888},
+  "by": {"id": "reviewer-01", "role": "reviewer"},
+  "answered_at": "2026-11-02T08:04:40Z",
+  "active_seconds": 11.5,
+  "clip_played_seconds": 8.3,
+  "mode": "stop-by-stop",
+  "shown_order": ["elevenlabs"],
+  "answer": {"kind": "confirmed"},
+  "spoken_language": "mixed",
+  "app_revision": "ffffffffffffffffffffffffffffffffffffffff",
+  "supersedes": null
+}

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ssggsm-seva:schema:review-answers:1",
   "title": "Review answer record",
-  "description": "Version 1.0, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft. One record: one line of an answers export (JSON Lines). The review app writes records and never changes or deletes one; a changed answer is a new record that supersedes the old one. Each record stands on its own: it repeats the lecture, the audio hash, the stop's interval and the package it came from. Rules this schema cannot express (supersede chains, matching the package) are listed in contracts/review/README.md in lecture-archive.",
+  "description": "Version 1.1, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft. Version 1.1 (27 November 2026) adds the value mixed to spoken_language; every 1.0 record is still a valid 1.1 record. One record: one line of an answers export (JSON Lines). The review app writes records and never changes or deletes one; a changed answer is a new record that supersedes the old one. Each record stands on its own: it repeats the lecture, the audio hash, the stop's interval and the package it came from. Rules this schema cannot express (supersede chains, matching the package) are listed in contracts/review/README.md in lecture-archive.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -137,11 +137,16 @@
       "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }]
     },
     "spoken_language": {
-      "description": "Optional: the language the person heard, when the stop's language label is wrong or 'unknown' (asked for by Mukul, 30 October 2026). It never repeats the stop's own label (rule A9). lecture-archive collects these corrections to measure and improve how it labels languages; one answer never relabels a stop.",
-      "enum": ["english", "sanskrit", "bengali", "odia", "other"]
+      "description": "Optional: the language the person heard, when the stop's language label is wrong or 'unknown' (asked for by Mukul, 30 October 2026). It never repeats the stop's own label (rule A9). mixed (version 1.1, 27 November 2026) means the stop holds more than one language, such as English with a Sanskrit phrase; it is allowed on any stop, since no stop is labelled mixed. lecture-archive collects these corrections to measure and improve how it labels languages, and collects the stops heard as mixed to test how it splits a passage where the language changes. One answer never relabels a stop in the package; results count a stop heard as mixed under mixed, not under its label.",
+      "enum": ["english", "sanskrit", "bengali", "odia", "other", "mixed"]
     }
   },
   "allOf": [
+    {
+      "description": "mixed arrived in version 1.1, so a record that says it names 1.1 or later.",
+      "if": { "required": ["schema"], "properties": { "schema": { "const": "review-answers/1.0" } } },
+      "then": { "properties": { "spoken_language": { "not": { "const": "mixed" } } } }
+    },
     {
       "if": { "properties": { "record": { "const": "answer" } } },
       "then": {

@@ -172,6 +172,20 @@
       "why": "spoken_language corrects the stop's language, so it cannot repeat it: stop #0040 is already labelled Sanskrit."
     },
     {
+      "file": "valid/answer-mixed-language.json",
+      "schema": "review-answers.schema.json",
+      "package": "valid/package-bg-3-37-brisbane.json",
+      "expect": "valid",
+      "about": "Version 1.1 (27 November 2026). A reviewer confirms stop #0176 ('Gauranga. Any question? Five minutes.'), labelled English, and says it was mixed: a chanted name, then English. The package still gives every stop one language; mixed is only the reviewer's correction, allowed on any stop because no stop is labelled mixed (A9). Results count the stop under mixed, not English, and lecture-archive collects it as a test case for splitting a passage where the language changes.",
+      "illustrative": ["every field"]
+    },
+    {
+      "file": "invalid/answer-mixed-in-version-1-0.json",
+      "schema": "review-answers.schema.json",
+      "expect": "fails-schema",
+      "why": "The record says mixed but names version 1.0. The value mixed arrived in version 1.1, so a record that uses it must say so."
+    },
+    {
       "file": "invalid/accepted-answered-without-record.json",
       "schema": "accepted-answers.schema.json",
       "expect": "fails-schema",

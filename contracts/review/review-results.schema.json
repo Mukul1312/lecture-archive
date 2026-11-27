@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:ssggsm-seva:schema:review-results:0",
   "title": "Review results (sketch)",
-  "description": "SKETCH 0.1, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft; nothing writes it yet. What lecture-archive publishes back after importing answers for one lecture: which answers it applied, and the measured accuracy for each language. lecture-archive owns how these numbers are computed; the app only displays them, in plain words. Major version 0 means the shape may still change without a major bump.",
+  "description": "SKETCH 0.2, published by lecture-archive (adopted 29 October 2026, ADR-0016) from review-assistance's draft; nothing writes it yet. What lecture-archive publishes back after importing answers for one lecture: which answers it applied, and the measured accuracy for each language. lecture-archive owns how these numbers are computed; the app only displays them, in plain words. Major version 0 means the shape may still change without a major bump. Version 0.2 (27 November 2026) adds the language mixed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -96,7 +96,7 @@
       }
     },
     "languages": {
-      "description": "One entry per language that has stops in the package. Never combined across languages.",
+      "description": "One entry per language that has stops in the package, and one for mixed when an applied answer heard a stop as mixed. Never combined across languages: a stop heard as mixed is counted under mixed and not under its label.",
       "type": "array",
       "items": {
         "type": "object",
@@ -110,7 +110,7 @@
         ],
         "properties": {
           "language": {
-            "enum": ["english", "sanskrit", "bengali", "odia", "other", "unknown"]
+            "enum": ["english", "sanskrit", "bengali", "odia", "other", "mixed", "unknown"]
           },
           "applied_stops": { "type": "integer", "minimum": 0 },
           "reference_words": {
@@ -156,6 +156,17 @@
       }
     }
   },
+  "allOf": [
+    {
+      "description": "mixed arrived in version 0.2, so results that report it name 0.2 or later.",
+      "if": { "required": ["schema"], "properties": { "schema": { "const": "review-results/0.1" } } },
+      "then": {
+        "properties": {
+          "languages": { "items": { "properties": { "language": { "not": { "const": "mixed" } } } } }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "utc_time": {

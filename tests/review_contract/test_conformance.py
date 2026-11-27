@@ -327,3 +327,54 @@ class AcceptedAndResultsRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MixedLanguageTests(unittest.TestCase):
+    """Answers 1.1 and results 0.2: a reviewer may hear a stop as `mixed` (27 November 2026).
+
+    A stop can hold two languages, such as English with a Sanskrit phrase. The package still gives
+    every stop one language, so `mixed` is only ever the reviewer's correction: it is allowed on
+    any stop, and it never repeats a label because no stop is labelled mixed. Results count such
+    stops under `mixed`, never inside English or Sanskrit, so each language's figures stay clean.
+    """
+
+    def corrected(self, name: str) -> dict:
+        record = items(name)[0]
+        record["schema"] = "review-answers/1.1"
+        record["spoken_language"] = "mixed"
+        return record
+
+    def test_mixed_is_allowed_on_a_stop_of_any_label(self):
+        package = {sha("valid/package-bg-3-37-brisbane.json"): valid_package()}
+        for name in ("valid/answer-language-corrected.json",       # stop #0012, labelled English
+                     "invalid/answer-language-same-as-stop.json"):  # stop #0040, labelled Sanskrit
+            record = self.corrected(name)
+            self.assertEqual(schema_errors("review-answers", record), [], name)
+            self.assertEqual(answer_rules([record], package), [], name)
+
+    def test_no_stop_can_be_labelled_mixed(self):
+        # Why A9 can never trip on mixed: the package has one language per stop, and mixed is not one.
+        package = valid_package()
+        stop(package, "#0012")["language"] = "mixed"
+        self.assertNotEqual(schema_errors("lecture-review-package", package), [])
+
+    def test_a_version_1_0_record_cannot_say_mixed(self):
+        record = self.corrected("valid/answer-language-corrected.json")
+        record["schema"] = "review-answers/1.0"
+        self.assertNotEqual(schema_errors("review-answers", record), [])
+
+    def test_the_reader_takes_answers_1_1_and_refuses_1_2(self):
+        record = self.corrected("valid/answer-language-corrected.json")
+        refuse_unknown_version("review-answers", record)
+        record["schema"] = "review-answers/1.2"
+        with self.assertRaises(ValueError):
+            refuse_unknown_version("review-answers", record)
+
+    def test_results_report_mixed_as_a_language_of_its_own_from_0_2(self):
+        results = items("valid/results-bg-3-37-brisbane.json")[0]
+        results["schema"] = "review-results/0.2"
+        results["languages"].append({**copy.deepcopy(results["languages"][0]), "language": "mixed"})
+        self.assertEqual(schema_errors("review-results", results), [])
+        refuse_unknown_version("review-results", results)
+        results["schema"] = "review-results/0.1"
+        self.assertNotEqual(schema_errors("review-results", results), [])
